@@ -140,10 +140,30 @@ describe('engine', () => {
     const [job] = first.dispatch([{ title: 't', type: 'writing', prompt: 'q' }]);
     // simulate a crash: write the job as running and start a new process
     const { files, writeJson } = await import('../src/store.js');
-    writeJson(path.join(files.jobs(), `${job!.id}.json`), { ...first.getJob(job!.id), status: 'running', updatedAt: Date.now() });
+    writeJson(path.join(files.jobs(), `${job!.id}.json`), { ...first.getJob(job!.id), status: 'running', updatedAt: Date.now(), pid: 2_000_000_000 });
     const second = new Engine();
     expect(second.getJob(job!.id)!.status).toBe('failed');
     expect(second.getJob(job!.id)!.error).toMatch(/interrupted/);
+  });
+
+  it('leaves jobs of another live process alone (dashboard, list, a second server)', async () => {
+    const p = await mockProvider(() => ({ json: chatReply('ok'), delayMs: 1500 }));
+    closers.push(p.close);
+    writeConfig([account({ id: 'a', baseUrl: p.url, local: true, concurrency: 1 })]);
+    const server = new Engine();
+    const [running, waiting] = server.dispatch([
+      { title: 'first', type: 'bulk', prompt: 'x' },
+      { title: 'second', type: 'bulk', prompt: 'y' },
+    ]);
+    // a dashboard or "omnitrix list" starting up while the server works
+    const viewer = new Engine();
+    expect(viewer.getJob(running!.id)!.status).toBe('running');
+    expect(viewer.getJob(waiting!.id)!.status).toBe('queued');
+    viewer.pool();
+    const done = await server.wait([running!.id, waiting!.id], 10);
+    expect(done.map((j) => j.status)).toEqual(['done', 'done']);
+    // the queued job ran once, on the server, not a second time from the viewer
+    expect(p.calls).toHaveLength(2);
   });
 });
 

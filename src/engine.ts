@@ -23,6 +23,18 @@ const EDIT_RULES = [
   'If something blocks you, say exactly what is missing instead of guessing.',
 ].join('\n');
 
+export function processAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0); // signal 0 only checks that the process exists
+    return true;
+  } catch (err) {
+    // EPERM means it exists but belongs to someone else
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 function newId(prefix: string): string {
   return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -58,7 +70,10 @@ export class Engine {
     this.recoverJobs();
   }
 
-  /** Jobs left "running" by a previous process can never finish; mark them so Claude is not left waiting. */
+  /**
+   * Jobs left unfinished by a process that has since stopped can never finish; mark them so Claude is not left waiting.
+   * Jobs owned by another process that is still alive (an MCP server, a dashboard, a CLI run) are left alone.
+   */
   private recoverJobs(): void {
     let names: string[] = [];
     try {
@@ -72,7 +87,7 @@ export class Engine {
       const job = readJson<Job | null>(path.join(files.jobs(), name), null);
       if (!job) continue;
       if (job.updatedAt < cutoff) continue;
-      if (job.status === 'queued' || job.status === 'running') {
+      if ((job.status === 'queued' || job.status === 'running') && !processAlive(job.pid)) {
         job.status = 'failed';
         job.error = 'interrupted: the omnitrix server stopped before this job finished';
         job.updatedAt = Date.now();
@@ -147,7 +162,7 @@ export class Engine {
     const batchId = newId('b');
     const now = Date.now();
     const created = tasks.map((task) => {
-      const job: Job = { id: newId('j'), batchId, task, status: 'queued', createdAt: now, updatedAt: now, attempts: [] };
+      const job: Job = { id: newId('j'), batchId, task, status: 'queued', createdAt: now, updatedAt: now, attempts: [], pid: process.pid };
       this.jobs.set(job.id, job);
       this.saveJob(job);
       return job;
@@ -235,7 +250,8 @@ export class Engine {
   /** Start every queued job that has a free account. */
   private pump(): void {
     const cfg = this.config();
-    const queued = [...this.jobs.values()].filter((j) => j.status === 'queued').sort((a, b) => a.createdAt - b.createdAt);
+    // only start our own jobs; another live process is responsible for its queue
+    const queued = [...this.jobs.values()].filter((j) => j.status === 'queued' && j.pid === process.pid).sort((a, b) => a.createdAt - b.createdAt);
     for (const job of queued) {
       const ctx = this.routeContext(cfg);
       const tried = new Set(job.attempts.map((a) => a.accountId));

@@ -158,6 +158,8 @@ export interface Job {
   createdAt: number;
   updatedAt: number;
   attempts: Attempt[];
+  /** process that runs this job */
+  pid?: number;
   accountId?: string;
   model?: string;
   outputFile?: string;
