@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// The omnitrix command line: add and manage accounts, check usage, and wire omnitrix into Claude Code.
+// It reads and writes the same files in ~/.omnitrix that the MCP server uses.
 import { Command, Option } from 'commander';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -113,6 +115,7 @@ limitOptions(
   let apiKey: string | undefined;
   if (o.keyEnv) apiKey = `env:${o.keyEnv}`;
   else if (o.key) apiKey = 'secret';
+  // a key already sitting in the usual environment variable is used without asking
   else if (spec.keyEnv && process.env[spec.keyEnv] && driver !== 'cli') apiKey = `env:${spec.keyEnv}`;
   if (!apiKey && driver !== 'cli' && !spec.local) die(`an API key is needed: --key-env ${spec.keyEnv ?? 'NAME'} or --key <value>`);
 
@@ -370,6 +373,7 @@ program
     const engine = new Engine();
     const prompt = words.join(' ');
     const [job] = engine.dispatch([{ title: prompt.slice(0, 60), type: o.type as TaskType, prompt, privacy: o.privacy, use: o.use, repo: o.repo ? path.resolve(o.repo) : undefined }]);
+    // wait a moment first so the chosen account is printed before the answer arrives
     let done = await engine.wait([job!.id], 1);
     if (done[0]?.accountId) process.stderr.write(`-> ${done[0].accountId}/${done[0].model}\n`);
     while (done[0] && (done[0].status === 'queued' || done[0].status === 'running')) done = await engine.wait([job!.id], 30);
@@ -499,11 +503,14 @@ program
           } catch {
             die(`${settingsFile} is not valid JSON; fix it first`);
           }
+          // keep a copy so the user can always get their old settings back
           fs.copyFileSync(settingsFile, `${settingsFile}.bak-omnitrix`);
         }
+        // never replace a status line someone set up themselves
         if (settings.statusLine && !String(settings.statusLine.command ?? '').includes('omnitrix') && !String(settings.statusLine.command ?? '').includes('statusline')) {
           console.log(`   you already have a status line (${settings.statusLine.command}); left it alone. Use --no-statusline to skip this step.`);
         } else {
+          // Claude Code stops redrawing while it waits on tools, so refresh on a timer as well
           settings.statusLine = { type: 'command', command, refreshInterval: 15 };
           fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
           fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');

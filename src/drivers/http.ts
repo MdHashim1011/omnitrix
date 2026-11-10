@@ -1,3 +1,5 @@
+// Shared pieces for the API drivers: requests with a timeout, and turning provider errors and
+// rate-limit headers into something the router can act on.
 import { redact } from '../store.js';
 import { DriverError, type ErrorKind } from '../types.js';
 

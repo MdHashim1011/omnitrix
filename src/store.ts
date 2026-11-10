@@ -1,3 +1,4 @@
+// Everything omnitrix keeps lives in one folder, ~/.omnitrix unless OMNITRIX_HOME says otherwise.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

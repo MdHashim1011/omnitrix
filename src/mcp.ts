@@ -1,3 +1,5 @@
+// The MCP server Claude Code talks to. Tools answer right away with job ids, so a long task never
+// holds a tool call open; Claude collects the results with get_results.
 import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
@@ -6,6 +8,7 @@ import { TASK_TYPES, type Job, type TaskSpec } from './types.js';
 import { formatTokens } from './usage.js';
 import { VERSION } from './version.js';
 
+// Sent to Claude when it connects. It is the whole playbook for using the pool well.
 export const INSTRUCTIONS = `omnitrix gives you a team of other AI models (ChatGPT/Codex, DeepSeek, Kimi, GLM, Qwen, Groq, OpenRouter, local Ollama models and more) that run on the user's own accounts. You are the lead: you plan, they do the heavy work, you check it.
 
 How to work:
@@ -140,6 +143,7 @@ export function buildServer(engine: Engine): McpServer {
       description: 'Wait for jobs and return their status and a short preview of each result. Waits up to wait_seconds (default 45) for unfinished jobs.',
       inputSchema: z.object({
         job_ids: z.array(z.string()).min(1).max(50),
+        // Claude Code moves tool calls that run past two minutes into the background
         wait_seconds: z.number().int().min(0).max(110).optional(),
         full: z.boolean().optional().describe('return complete outputs instead of previews (uses more context)'),
       }),

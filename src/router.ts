@@ -1,3 +1,5 @@
+// Picks the account and model for a task. Hard rules go first (privacy, health, quota, what the driver
+// can do); whatever is left gets a score, and the highest score gets the task.
 import { acceptanceFactor } from './stats.js';
 import { headroom, type UsageSummary } from './usage.js';
 import type { Account, AccountHealth, Config, ModelInfo, Privacy, Skills, TaskSpec, TaskType } from './types.js';
@@ -47,6 +49,7 @@ function costFactor(model: ModelInfo, account: Account, mode: Config['settings']
   if (mode === 'quality') return 1;
   const price = (model.inputPrice ?? 0) + (model.outputPrice ?? 0) * 3;
   if (account.local || price === 0) return 1; // free, local, or already paid for by a plan
+  // bulk work is where paying per token adds up, so cost counts for more there
   const strength = mode === 'saver' ? 1 : type === 'bulk' ? 0.6 : 0.25;
   return 1 / (1 + (price / 20) * strength);
 }
@@ -99,6 +102,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       let score = settings.mode === 'quality' ? f * f : f;
       why.push(`fit ${f.toFixed(2)}`);
 
+      // an account with little quota left still qualifies, it just stops being the first pick
       const q = 0.4 + 0.6 * room;
       score *= q;
       why.push(`quota ${(room * 100).toFixed(0)}% left${usage?.source === 'measured' ? ' (measured)' : usage?.source === 'estimated' ? ' (estimated)' : ''}`);

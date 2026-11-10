@@ -1,3 +1,4 @@
+// Works out what each account has used per time window, from an append-only log of every request.
 import fs from 'node:fs';
 import { ensureHome, files } from './store.js';
 import type { Account, AccountHealth, UsageRecord } from './types.js';

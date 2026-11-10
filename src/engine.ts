@@ -1,3 +1,5 @@
+// Runs jobs: picks an account for each task, starts it, and hands it to the next account when one fails.
+// Job records are kept on disk so the dashboard and other omnitrix processes can see them.
 import fs from 'node:fs';
 import path from 'node:path';
 import { runDriver } from './drivers/index.js';

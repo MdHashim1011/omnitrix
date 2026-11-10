@@ -1,3 +1,4 @@
+// A small local web page with the same numbers as `omnitrix list`, refreshed every few seconds.
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
