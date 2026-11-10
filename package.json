@@ -1,0 +1,60 @@
+{
+  "name": "omnitrix",
+  "version": "0.1.0",
+  "description": "Let Claude Code plan the work and hand it out to every AI account you have: ChatGPT, Claude, DeepSeek, Kimi, GLM, Qwen, OpenRouter, Groq, Ollama and more.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build && npm test",
+    "prepare": "tsc -p tsconfig.json"
+  },
+  "keywords": [
+    "claude-code",
+    "mcp",
+    "llm",
+    "ai-agents",
+    "orchestration",
+    "router",
+    "deepseek",
+    "ollama",
+    "codex"
+  ],
+  "author": "Mohamed Hashim",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
+    "commander": "^14.0.3",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^24.19.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "bin": {
+    "omnitrix": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MdHashim1011/omnitrix.git"
+  },
+  "homepage": "https://github.com/MdHashim1011/omnitrix#readme",
+  "bugs": {
+    "url": "https://github.com/MdHashim1011/omnitrix/issues"
+  }
+}
