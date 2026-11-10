@@ -108,6 +108,8 @@ export async function readCodexQuota(profileDir: string, timeoutMs = 20000): Pro
         clearTimeout(timer);
         lines.close();
         try {
+          // Killing a shell wrapper can leave Codex running, but Codex exits by itself when stdin closes.
+          child.stdin.end();
           child.kill();
         } catch {
           // The process may already be gone.

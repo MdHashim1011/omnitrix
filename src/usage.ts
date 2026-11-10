@@ -105,7 +105,8 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
 
   let percentUsed: number | undefined;
   for (const w of windows) {
-    const p = Math.min(100, Math.round((w.used / w.limit) * 100));
+    // Rounding up would mark an account with 0.5% left as exhausted and stop routing to it.
+    const p = Math.min(100, w.unit === 'percent' ? Math.floor(w.used) : Math.round((w.used / w.limit) * 100));
     percentUsed = Math.max(percentUsed ?? 0, p);
   }
 
