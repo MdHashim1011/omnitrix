@@ -4,7 +4,7 @@ Claude plans the work. Your other AI accounts do it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
-  <img alt="Claude in the middle sends each task to the best of six connected accounts. When Kimi is rate limited, its task moves to GLM." src="assets/hero-light.svg" width="100%">
+  <img alt="Claude splits 'add rate limiting to the public API' into six tasks. Gemini reads the logs, Codex writes the middleware, DeepSeek reviews it, Kimi is rate limited so the tests move to GLM, Groq drafts the changelog and a local Ollama model checks for leaked keys." src="assets/hero-light.svg" width="100%">
 </picture>
 
 I kept running out of Claude credits while my ChatGPT Plus subscription, and the ones my friends pay for, sat mostly unused. omnitrix is how I fixed that.
