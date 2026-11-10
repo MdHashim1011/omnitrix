@@ -65,3 +65,16 @@ export function discardWorktree(repoRoot: string, dir: string, branch: string): 
   spawnSync('git', ['branch', '-D', branch], { cwd: repoRoot, windowsHide: true });
   fs.rmSync(dir, { recursive: true, force: true });
 }
+
+/** Remove a finished job's checkout but keep its branch, so accepted work can still be merged later. */
+export function pruneWorktree(dir: string): boolean {
+  if (!fs.existsSync(dir)) return false;
+  const common = spawnSync('git', ['rev-parse', '--git-common-dir'], { cwd: dir, encoding: 'utf8', windowsHide: true });
+  if (common.status === 0) {
+    const root = path.dirname(path.resolve(dir, common.stdout.trim()));
+    removeWorktree(root, dir);
+    spawnSync('git', ['worktree', 'prune'], { cwd: root, windowsHide: true });
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+  return true;
+}

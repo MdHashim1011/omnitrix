@@ -13,8 +13,9 @@ import { describeAccount } from './mcp.js';
 import { isChatModel, makeModel } from './models.js';
 import { PROVIDERS, getProvider } from './providers.js';
 import { renderStatusLine } from './statusline.js';
-import { deleteSecret, ensureHome, files, findAccount, homeDir, loadConfig, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
-import { DriverError, TASK_TYPES, type Account, type Limits, type TaskType } from './types.js';
+import { deleteSecret, ensureHome, files, findAccount, homeDir, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
+import { pruneWorktree } from './worktree.js';
+import { DriverError, TASK_TYPES, type Account, type Job, type Limits, type TaskType } from './types.js';
 import { recordUsage } from './usage.js';
 import { VERSION } from './version.js';
 
@@ -65,7 +66,10 @@ program
     ];
     for (const [title, test] of groups) {
       console.log(`\n${title}`);
-      for (const p of PROVIDERS.filter(test)) console.log(`  ${p.id.padEnd(17)} ${p.name}${p.note ? `\n  ${''.padEnd(17)} ${p.note}` : ''}`);
+      for (const p of PROVIDERS.filter(test)) {
+        const pad = `\n  ${''.padEnd(17)} `;
+        console.log(`  ${p.id.padEnd(17)} ${p.name}${p.signup ? `${pad}${p.signup}` : ''}${p.note ? `${pad}${p.note}` : ''}`);
+      }
     }
     console.log('\nAdd one with: omnitrix add <provider> --key-env NAME   (or --key, --base-url, --model)');
   });
@@ -508,6 +512,26 @@ program
       }
     }
     console.log('Restart Claude Code, then ask it to "use omnitrix" for big jobs.');
+  });
+
+program
+  .command('clean')
+  .description('delete old job records, outputs and worktrees (branches are kept)')
+  .option('--days <n>', 'only things older than this many days', int, 14)
+  .action((o) => {
+    const cutoff = Date.now() - o.days * 24 * 3600_000;
+    let jobs = 0;
+    let trees = 0;
+    for (const name of fs.existsSync(files.jobs()) ? fs.readdirSync(files.jobs()) : []) {
+      const file = path.join(files.jobs(), name);
+      const job = readJson<Job | null>(file, null);
+      if (!job || job.updatedAt > cutoff || job.status === 'queued' || job.status === 'running') continue;
+      if (job.worktree && pruneWorktree(job.worktree.path)) trees++;
+      if (job.outputFile) fs.rmSync(job.outputFile, { force: true });
+      fs.rmSync(file, { force: true });
+      jobs++;
+    }
+    console.log(`removed ${jobs} old jobs and ${trees} worktrees`);
   });
 
 program

@@ -24,13 +24,15 @@ npm install -g github:MdHashim1011/omnitrix
 ## Quick start
 
 ```bash
-omnitrix providers                                  # see what you can connect
-omnitrix add ollama                                 # local models, found automatically
-omnitrix add deepseek --key-env DEEPSEEK_API_KEY    # key read from an environment variable
+omnitrix providers
+omnitrix add ollama
+omnitrix add deepseek --key-env DEEPSEEK_API_KEY
 omnitrix add codex --label "My ChatGPT Plus" --login
 omnitrix test deepseek
-omnitrix setup-claude                               # adds the MCP server and status line to Claude Code
+omnitrix setup-claude
 ```
+
+That lists what you can connect, adds your local Ollama models and a DeepSeek key, signs in to Codex with your ChatGPT plan, checks that DeepSeek answers, and registers omnitrix with Claude Code (the MCP server plus the status line).
 
 Restart Claude Code and give it something big, like "add tests for the billing module and document the API". It sees the omnitrix tools and a short playbook on when to hand work out.
 
@@ -135,6 +137,7 @@ omnitrix run <prompt>           run one task and print the answer
 omnitrix settings               mode, privacy, pinned and banned providers
 omnitrix dashboard              live web dashboard on 127.0.0.1
 omnitrix setup-claude           register with Claude Code
+omnitrix clean                  delete old jobs and worktrees (branches stay)
 omnitrix doctor                 check the setup
 ```
 
