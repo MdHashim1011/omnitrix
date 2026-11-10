@@ -18,6 +18,7 @@ import { renderStatusLine } from './statusline.js';
 import { deleteSecret, ensureHome, files, findAccount, homeDir, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
 import { pruneWorktree } from './worktree.js';
 import { DriverError, TASK_TYPES, type Account, type Job, type Limits, type TaskType } from './types.js';
+import { refreshQuotas } from './quota.js';
 import { recordUsage } from './usage.js';
 import { VERSION } from './version.js';
 
@@ -201,7 +202,8 @@ program
   .alias('status')
   .description('show all accounts with usage and what is left')
   .option('--json', 'print JSON')
-  .action((o) => {
+  .action(async (o) => {
+    await refreshQuotas(loadConfig().accounts);
     const pool = new Engine().pool();
     if (o.json) return console.log(JSON.stringify(pool, null, 2));
     if (!pool.length) return console.log('no accounts yet. Start with: omnitrix providers');

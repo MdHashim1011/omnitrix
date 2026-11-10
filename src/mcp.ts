@@ -4,8 +4,9 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
 import { Engine, type PoolAccountView } from './engine.js';
+import { refreshQuotas } from './quota.js';
 import { TASK_TYPES, type Job, type TaskSpec } from './types.js';
-import { formatTokens } from './usage.js';
+import { formatTokens, type WindowUse } from './usage.js';
 import { VERSION } from './version.js';
 
 // Sent to Claude when it connects. It is the whole playbook for using the pool well.
@@ -41,12 +42,21 @@ function fail(t: string) {
   return { content: [{ type: 'text' as const, text: t }], isError: true };
 }
 
+export function describeWindow(w: WindowUse): string {
+  if (w.unit === 'percent') {
+    const reset = w.resetsAt ? ` (resets ${new Date(w.resetsAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })})` : '';
+    return `${w.name}: ${Math.round(w.remaining)}% left${reset}`;
+  }
+  const n = (v: number) => (w.unit === 'tokens' ? formatTokens(v) : String(v));
+  return `${w.name}: ${n(w.remaining)}/${n(w.limit)} ${w.unit} left`;
+}
+
 export function describeAccount(a: PoolAccountView): string {
   const u = a.usage;
   const bits = [`${a.id} [${a.state}]`, `${a.provider}`, `owner ${a.owner}`];
+  if (u.plan) bits.push(`${u.plan} plan`);
   if (u.windows.length) {
-    const n = (v: number, unit: string) => (unit === 'tokens' ? formatTokens(v) : String(v));
-    bits.push(u.windows.map((w) => `${w.name}: ${n(w.remaining, w.unit)}/${n(w.limit, w.unit)} ${w.unit} left`).join(', ') + (u.source === 'measured' ? ' (measured)' : ' (estimated)'));
+    bits.push(u.windows.map(describeWindow).join(', ') + (u.source === 'measured' ? ' (measured)' : ' (estimated)'));
   } else {
     bits.push('no limits set');
   }
@@ -89,11 +99,12 @@ export function buildServer(engine: Engine): McpServer {
       annotations: { readOnlyHint: true },
     },
     async () => {
+      await refreshQuotas(engine.config().accounts);
       const pool = engine.pool();
       if (!pool.length) return text('No accounts yet. The user can add some with: omnitrix add <provider> (run "omnitrix providers" for the list).');
       const ready = pool.filter((a) => a.state === 'ready' || a.state === 'busy').length;
       const lines = [`${ready}/${pool.length} accounts available`, ...pool.map(describeAccount)];
-      return text(lines.join('\n'), { accounts: pool.map((a) => ({ id: a.id, state: a.state, provider: a.provider, owner: a.owner, percentUsed: a.usage.percentUsed ?? null, source: a.usage.source })) });
+      return text(lines.join('\n'), { accounts: pool.map((a) => ({ id: a.id, state: a.state, provider: a.provider, owner: a.owner, percentUsed: a.usage.percentUsed ?? null, source: a.usage.source, plan: a.usage.plan ?? null, quota: a.usage.windows.map(describeWindow) })) });
     },
   );
 

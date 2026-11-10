@@ -13,6 +13,7 @@ export const files = {
   secrets: () => path.join(homeDir(), 'secrets.json'),
   ledger: () => path.join(homeDir(), 'usage.jsonl'),
   health: () => path.join(homeDir(), 'health.json'),
+  quota: () => path.join(homeDir(), 'quota.json'),
   stats: () => path.join(homeDir(), 'stats.json'),
   jobs: () => path.join(homeDir(), 'jobs'),
   outputs: () => path.join(homeDir(), 'outputs'),

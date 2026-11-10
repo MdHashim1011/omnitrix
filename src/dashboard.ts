@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { Engine } from './engine.js';
+import { refreshQuotas } from './quota.js';
 import { files, readJson } from './store.js';
 import type { Job } from './types.js';
 import { VERSION } from './version.js';
@@ -49,6 +50,7 @@ export function startDashboard(port: number): string {
       return;
     }
     if (req.url === '/api/status') {
+      void refreshQuotas(engine.config().accounts);
       const body = JSON.stringify({ version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs() });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body);
       return;
@@ -104,6 +106,7 @@ h2{font-size:15px;margin:26px 0 4px}.err{color:var(--bad);font-size:12px}
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n);
 const ago=t=>{const s=Math.round((Date.now()-t)/1000);return s<60?s+'s ago':s<3600?Math.round(s/60)+'m ago':Math.round(s/3600)+'h ago'};
+const at=t=>new Date(t).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'});
 async function load(){
   let d;try{d=await (await fetch('/api/status',{cache:'no-store'})).json()}catch(e){document.getElementById('when').textContent='offline';return}
   document.getElementById('ver').textContent='v'+d.version;
@@ -113,10 +116,10 @@ async function load(){
   document.getElementById('sum').innerHTML=[[ready+'/'+acc.length,'accounts ready'],[req,'requests today'],[fmt(tok),'tokens today'],['$'+cost.toFixed(2),'known cost today']].map(([b,s])=>'<div><b>'+esc(b)+'</b><span>'+esc(s)+'</span></div>').join('');
   document.getElementById('accounts').innerHTML=acc.length?acc.map(a=>{
     const u=a.usage;
-    const wins=u.windows.map(w=>{const p=Math.min(100,Math.round(w.used/w.limit*100));return '<div class="win"><div class="lbl"><span>'+esc(w.name)+' ('+esc(w.unit)+')</span><span>'+fmt(w.remaining)+' of '+fmt(w.limit)+' left</span></div><div class="bar"><i class="'+(p>=100?'full':p>=80?'hi':'')+'" style="width:'+p+'%"></i></div></div>'}).join('');
+    const wins=u.windows.map(w=>{const p=Math.min(100,Math.round(w.used/w.limit*100));const pct=w.unit==='percent';return '<div class="win"><div class="lbl"><span>'+esc(w.name)+(pct?'':' ('+esc(w.unit)+')')+'</span><span>'+(pct?Math.round(w.remaining)+'% left'+(w.resetsAt?', resets '+esc(at(w.resetsAt)):''):fmt(w.remaining)+' of '+fmt(w.limit)+' left')+'</span></div><div class="bar"><i class="'+(p>=100?'full':p>=80?'hi':'')+'" style="width:'+p+'%"></i></div></div>'}).join('');
     const meas=u.measured&&u.measured.remainingRequests!==undefined?'<div class="kv">provider says '+u.measured.remainingRequests+' requests left</div>':'';
     return '<div class="acc"><h3><span>'+esc(a.label)+'</span><span class="pill '+esc(a.state)+'">'+esc(a.state.replace('_',' '))+'</span></h3>'
-      +'<div class="meta">'+esc(a.id)+(a.id!==a.provider?' ('+esc(a.provider)+')':'')+', owned by '+esc(a.owner)+(a.local?', runs on this PC':'')+'</div>'
+      +'<div class="meta">'+esc(a.id)+(a.id!==a.provider?' ('+esc(a.provider)+')':'')+', owned by '+esc(a.owner)+(u.plan?', '+esc(u.plan)+' plan':'')+(a.local?', runs on this PC':'')+'</div>'
       +(wins||'<div class="kv">No limits set for this account.</div>')+meas
       +'<div class="kv">Today '+u.requestsToday+' requests and '+fmt(u.tokensToday)+' tokens'+(u.costToday?', $'+u.costToday.toFixed(3):'')+'. Numbers are '+esc(u.source==='measured'?'from the provider':u.source==='estimated'?'counted by omnitrix':'not tracked')+'.</div>'
       +(a.reason?'<div class="err">'+esc(a.reason)+'</div>':'')

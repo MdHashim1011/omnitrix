@@ -1,3 +1,4 @@
+import { loadQuotas } from './quota.js';
 import { loadConfig, loadHealth } from './store.js';
 import { readLedger, summarize } from './usage.js';
 
@@ -11,6 +12,7 @@ export function renderStatusLine(stdinJson: string, now = Date.now()): string {
     const cfg = loadConfig();
     const health = loadHealth();
     const records = readLedger(now - 32 * 24 * 3600_000);
+    const quotas = loadQuotas();
     const accounts = cfg.accounts.filter((a) => a.enabled);
     if (accounts.length) {
       let ready = 0;
@@ -18,7 +20,7 @@ export function renderStatusLine(stdinJson: string, now = Date.now()): string {
       for (const a of accounts) {
         const h = health[a.id];
         const blocked = h && (h.state === 'auth_error' || ((h.state === 'cooling' || h.state === 'exhausted' || h.state === 'offline') && (h.until ?? 0) > now));
-        const s = summarize(a, records, h, now);
+        const s = summarize(a, records, h, now, quotas[a.id]);
         const full = s.percentUsed === 100;
         if (!blocked && !full) ready++;
         let tag: string;

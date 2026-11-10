@@ -1,5 +1,6 @@
 // Works out what each account has used per time window, from an append-only log of every request.
 import fs from 'node:fs';
+import type { AccountQuota } from './quota.js';
 import { ensureHome, files } from './store.js';
 import type { Account, AccountHealth, UsageRecord } from './types.js';
 
@@ -48,7 +49,8 @@ export interface WindowUse {
   used: number;
   limit: number;
   remaining: number;
-  unit: 'requests' | 'tokens';
+  unit: 'requests' | 'tokens' | 'percent';
+  resetsAt?: number;
 }
 
 export interface UsageSummary {
@@ -63,6 +65,8 @@ export interface UsageSummary {
   /** where the numbers come from */
   source: 'measured' | 'estimated' | 'untracked';
   measured?: AccountHealth['measured'];
+  /** subscription plan, when the provider reports one */
+  plan?: string;
 }
 
 /** Start of the current calendar month in local time. */
@@ -71,7 +75,7 @@ function monthStart(now: number): number {
   return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
 }
 
-export function summarize(account: Account, records: UsageRecord[], health: AccountHealth | undefined, now = Date.now()): UsageSummary {
+export function summarize(account: Account, records: UsageRecord[], health: AccountHealth | undefined, now = Date.now(), quota?: AccountQuota): UsageSummary {
   const mine = records.filter((r) => r.accountId === account.id);
   // failed calls that never reached the model do not count against a quota
   const counted = mine.filter((r) => r.ok || r.errorKind === 'rate_limit' || r.errorKind === 'quota');
@@ -92,6 +96,13 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
   add('24 hours', tokens(day), l.tokensPerDay, 'tokens');
   add('this month', tokens(month), l.tokensPerMonth, 'tokens');
 
+  // Use only climbs inside a window, so an old reading stays a safe lower bound until the window resets.
+  // Without a reset time there is no telling when it stopped being true.
+  const live = quota?.windows.filter((w) => (w.resetsAt ? w.resetsAt > now : now - quota.at < 10 * MIN)) ?? [];
+  for (const w of live) {
+    windows.push({ name: w.name, used: w.usedPercent, limit: 100, remaining: 100 - w.usedPercent, unit: 'percent', resetsAt: w.resetsAt });
+  }
+
   let percentUsed: number | undefined;
   for (const w of windows) {
     const p = Math.min(100, Math.round((w.used / w.limit) * 100));
@@ -101,7 +112,7 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
   // A fresh number straight from the provider beats our own count.
   const m = health?.measured;
   const fresh = m && now - m.at < 10 * MIN && (!m.resetAt || m.resetAt > now);
-  const source: UsageSummary['source'] = fresh ? 'measured' : windows.length ? 'estimated' : 'untracked';
+  const source: UsageSummary['source'] = fresh || live.length ? 'measured' : windows.length ? 'estimated' : 'untracked';
 
   return {
     accountId: account.id,
@@ -113,6 +124,7 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
     percentUsed,
     source,
     measured: fresh ? m : undefined,
+    plan: quota?.plan,
   };
 }
 

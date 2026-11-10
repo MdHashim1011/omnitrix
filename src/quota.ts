@@ -2,6 +2,8 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { resolveCommand } from './drivers/cli.js';
+import { files, readJson, writeJson } from './store.js';
+import type { Account } from './types.js';
 import { VERSION } from './version.js';
 
 export interface QuotaWindow {
@@ -46,6 +48,44 @@ export function parseCodexRateLimits(result: unknown, now = Date.now()): Account
   } catch {
     return undefined;
   }
+}
+
+export function loadQuotas(): Record<string, AccountQuota> {
+  return readJson<Record<string, AccountQuota>>(files.quota(), {});
+}
+
+const reading = new Map<string, Promise<void>>();
+// Failed reads count too, or a logged-out account would start Codex on every dashboard poll.
+const lastTried = new Map<string, number>();
+
+async function refreshOne(account: Account, profileDir: string): Promise<void> {
+  try {
+    const quota = await readCodexQuota(profileDir);
+    if (quota) writeJson(files.quota(), { ...loadQuotas(), [account.id]: quota });
+  } catch {
+    // Quota is a nice-to-have; a failed read must never fail the caller.
+  } finally {
+    reading.delete(account.id);
+  }
+}
+
+/** Never rejects, so callers can start it without waiting. */
+export async function refreshQuotas(accounts: Account[], maxAgeMs = 60_000): Promise<void> {
+  const now = Date.now();
+  const saved = loadQuotas();
+  const pending: Promise<void>[] = [];
+  for (const account of accounts) {
+    if (!account.enabled || account.provider !== 'codex' || !account.profileDir) continue;
+    let read = reading.get(account.id);
+    if (!read) {
+      if (now - Math.max(saved[account.id]?.at ?? 0, lastTried.get(account.id) ?? 0) < maxAgeMs) continue;
+      lastTried.set(account.id, now);
+      read = refreshOne(account, account.profileDir);
+      reading.set(account.id, read);
+    }
+    pending.push(read);
+  }
+  await Promise.all(pending);
 }
 
 export async function readCodexQuota(profileDir: string, timeoutMs = 20000): Promise<AccountQuota | undefined> {

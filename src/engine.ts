@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runDriver } from './drivers/index.js';
+import { loadQuotas, refreshQuotas } from './quota.js';
 import { route, effectivePrivacy, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { ensureHome, files, findAccount, loadConfig, loadHealth, readJson, redact, saveHealth, writeJson } from './store.js';
@@ -117,8 +118,9 @@ export class Engine {
     for (const [id, h] of Object.entries(loadHealth())) {
       if ((h.at ?? 0) > (this.health[id]?.at ?? 0)) this.health[id] = h;
     }
+    const quotas = loadQuotas();
     const usage: Record<string, UsageSummary> = {};
-    for (const a of cfg.accounts) usage[a.id] = summarize(a, records, this.health[a.id]);
+    for (const a of cfg.accounts) usage[a.id] = summarize(a, records, this.health[a.id], Date.now(), quotas[a.id]);
     return { config: cfg, health: this.health, usage, running: this.running, stats: loadStats() };
   }
 
@@ -172,6 +174,7 @@ export class Engine {
       return job;
     });
     this.pump();
+    void refreshQuotas(this.config().accounts);
     return created;
   }
 

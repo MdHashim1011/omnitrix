@@ -74,7 +74,7 @@ Each account shows its name, who owns it, what it has used today and what's left
 omnitrix 5/6 ready · codex-main 38% · deepseek 788 left · kimi wait · groq-free 36% │ Claude 5h 34% 7d 12%
 ```
 
-Most subscriptions don't publish exact limits or offer a way to ask how much is left, so omnitrix tells you where each number comes from. When a provider sends rate-limit headers, you see those. Otherwise omnitrix counts the requests and tokens it sent against the limits you gave it. A `429` or `402` from the provider always wins over the count.
+Most subscriptions don't publish exact limits or offer a way to ask how much is left, so omnitrix tells you where each number comes from. For a ChatGPT plan it asks Codex directly and shows the percent left in the 5-hour and 7-day windows, with the time each one resets. When a provider sends rate-limit headers, you see those. Otherwise omnitrix counts the requests and tokens it sent against the limits you gave it. A `429` or `402` from the provider always wins over the count.
 
 ## Privacy
 
@@ -154,7 +154,7 @@ omnitrix is an independent project. It isn't affiliated with OpenAI, Google, Ant
 
 ## What it can't do yet
 
-Remaining quota on subscription plans is an estimate, because the big providers don't offer an API for it. The Codex and Claude Code drivers follow those tools' current flags and may need an update when they change. The other agent CLIs are less tested than Codex.
+Remaining quota is measured for ChatGPT plans, but on other subscriptions it's still an estimate, because those providers don't offer an API for it. The Codex and Claude Code drivers follow those tools' current flags and may need an update when they change. The other agent CLIs are less tested than Codex.
 
 Next on my list is friend nodes. A friend would run a small agent on their own computer with their own login and a daily cap they can pause at any time, so their account never leaves their machine. After that I want a second model to double-check critical results, and drivers for Aider and Goose.
 
