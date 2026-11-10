@@ -7,11 +7,11 @@ Claude plans the work. Your other AI accounts do it.
   <img alt="Claude splits 'add rate limiting to the public API' into six tasks. Gemini reads the logs, Codex writes the middleware, DeepSeek reviews it, Kimi is rate limited so the tests move to GLM, Groq drafts the changelog and a local Ollama model checks for leaked keys." src="assets/job-light.svg" width="100%">
 </picture>
 
-I kept running out of Claude credits while my ChatGPT Plus subscription, and the ones my friends pay for, sat mostly unused. omnitrix is how I fixed that.
+I kept running out of Claude credits while the ChatGPT Plus and Gemini subscriptions my friends and I pay for sat mostly unused. omnitrix is how I fixed that.
 
-Claude Code stays in charge. It breaks the job into tasks and checks what comes back. omnitrix sends each task to whichever of your other accounts suits it and still has quota left. That might be Codex on your ChatGPT plan, a DeepSeek or Kimi API key, Groq's free tier or a model on your own PC. Anything that speaks the OpenAI or Anthropic API works too.
+Most of the routers I tried exist to stretch free, low-tier models. omnitrix is for the frontier models you already pay for, and it works inside the Claude Code session you already use. Claude stays in charge: it breaks the job into tasks and checks what comes back. omnitrix sends each task to the account that suits it and still has quota left, like Codex on your ChatGPT plan for edits, Gemini for reading huge logs, DeepSeek or Kimi for reasoning and review, or a model on your own PC for anything private. Anything that speaks the OpenAI or Anthropic API works too.
 
-Claude only reads short results instead of doing every step itself, so your Claude limit goes a lot further.
+You never leave Claude Code to keep track of it. Each account's name, owner, usage today and remaining quota sits in the status line, and Claude checks the same numbers before it hands out work. Because Claude only reads short results instead of doing every step itself, your Claude limit goes a lot further.
 
 ## Install
 
@@ -87,6 +87,7 @@ Tasks are `private` by default, which keeps them away from providers that may tr
 | ChatGPT plan through Codex | `omnitrix add codex --login` |
 | Your own Claude subscription | `omnitrix add claude-code --login` |
 | An API key | `omnitrix add kimi --key-env MOONSHOT_API_KEY` |
+| Gemini | `omnitrix add gemini --key-env GEMINI_API_KEY` with a key from Google AI Studio. A Google AI Pro sign-in only works through `antigravity`, which is experimental. |
 | A coding plan (GLM, Kimi, MiniMax) | `omnitrix add claude-code --base-url https://api.z.ai/api/anthropic --key-env ZAI_API_KEY` |
 | A model on your PC | `omnitrix add ollama` (also LM Studio, llama.cpp, vLLM) |
 | Anything else | `omnitrix add custom-openai --base-url https://host/v1 --key-env MY_KEY --model my-model` |
