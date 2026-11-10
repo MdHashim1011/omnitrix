@@ -18,7 +18,7 @@ You never leave Claude Code to keep track of it. Each account's name, owner, usa
 You need Node.js 20 or newer.
 
 ```bash
-npm install -g github:MdHashim1011/omnitrix
+npm install -g https://github.com/MdHashim1011/omnitrix/releases/latest/download/omnitrix.tgz
 ```
 
 ## Quick start
@@ -164,6 +164,7 @@ Next on my list is friend nodes. A friend would run a small agent on their own c
 git clone https://github.com/MdHashim1011/omnitrix.git
 cd omnitrix
 npm install
+npm run build
 npm test
 ```
 

@@ -22,3 +22,10 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - name: Install the packed package and run it
+        shell: bash
+        run: |
+          npm pack
+          npm install -g ./omnitrix-*.tgz
+          omnitrix --version
+          omnitrix providers > /dev/null

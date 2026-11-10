@@ -9,7 +9,7 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "npm run build && npm test",
-    "prepare": "tsc -p tsconfig.json"
+    "prepack": "npm run build"
   },
   "keywords": [
     "claude-code",
