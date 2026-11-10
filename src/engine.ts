@@ -111,11 +111,9 @@ export class Engine {
 
   private routeContext(cfg: Config): RouteContext {
     const records = this.records();
-    // merge health written by other omnitrix processes (e.g. the CLI "test" command)
-    const disk = loadHealth();
-    for (const [id, h] of Object.entries(disk)) {
-      const mine = this.health[id];
-      if (!mine || (h.measured?.at ?? 0) > (mine.measured?.at ?? 0) || (h.until ?? 0) > (mine.until ?? 0)) this.health[id] = h;
+    // another process (a CLI "set" or "test", a second server) may have seen the account more recently
+    for (const [id, h] of Object.entries(loadHealth())) {
+      if ((h.at ?? 0) > (this.health[id]?.at ?? 0)) this.health[id] = h;
     }
     const usage: Record<string, UsageSummary> = {};
     for (const a of cfg.accounts) usage[a.id] = summarize(a, records, this.health[a.id]);
@@ -158,11 +156,15 @@ export class Engine {
     return route(task, this.routeContext(cfg));
   }
 
+  /** Throws before queuing anything if a task can never run. */
   dispatch(tasks: TaskSpec[]): Job[] {
-    const batchId = newId('b');
+    for (const t of tasks) {
+      // without a repo the agent would edit a temp folder that is deleted afterwards
+      if (t.type === 'code' && !t.repo) throw new Error(`task "${t.title}": code tasks need "repo", the absolute path of a git repository`);
+    }
     const now = Date.now();
     const created = tasks.map((task) => {
-      const job: Job = { id: newId('j'), batchId, task, status: 'queued', createdAt: now, updatedAt: now, attempts: [], pid: process.pid };
+      const job: Job = { id: newId('j'), task, status: 'queued', createdAt: now, updatedAt: now, attempts: [], pid: process.pid };
       this.jobs.set(job.id, job);
       this.saveJob(job);
       return job;
@@ -243,8 +245,9 @@ export class Engine {
   }
 
   private setHealth(accountId: string, h: AccountHealth): void {
-    this.health[accountId] = h;
-    saveHealth({ [accountId]: h });
+    const stamped = { ...h, at: Date.now() };
+    this.health[accountId] = stamped;
+    saveHealth({ [accountId]: stamped });
   }
 
   /** Start every queued job that has a free account. */

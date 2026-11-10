@@ -32,7 +32,6 @@ export interface Skills {
 export interface ModelInfo {
   id: string;
   skills: Skills;
-  contextWindow?: number;
   /** USD per million tokens, if known. 0 for local or included in a plan. */
   inputPrice?: number;
   outputPrice?: number;
@@ -102,6 +101,8 @@ export interface AccountHealth {
   reason?: string;
   /** latest rate-limit numbers the provider told us */
   measured?: { remainingRequests?: number; remainingTokens?: number; resetAt?: number; at: number; source: string };
+  /** when this entry was written */
+  at?: number;
 }
 
 export interface UsageRecord {
@@ -135,7 +136,6 @@ export interface TaskSpec {
   use?: string;
   /** small, medium or large; used to estimate tokens */
   size?: 'small' | 'medium' | 'large';
-  critical?: boolean;
 }
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -152,7 +152,6 @@ export interface Attempt {
 
 export interface Job {
   id: string;
-  batchId: string;
   task: TaskSpec;
   status: JobStatus;
   createdAt: number;

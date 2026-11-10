@@ -104,10 +104,12 @@ export function loadHealth(): Record<string, AccountHealth> {
   return readJson<Record<string, AccountHealth>>(files.health(), {});
 }
 
+/** Stamps each entry with the time it was written, so readers can tell which process saw the account last. */
 export function saveHealth(update: Record<string, AccountHealth>): void {
-  // merge with what other processes wrote, newest entry per account wins
-  const current = loadHealth();
-  writeJson(files.health(), { ...current, ...update });
+  const now = Date.now();
+  const merged = loadHealth();
+  for (const [id, h] of Object.entries(update)) merged[id] = { ...h, at: h.at ?? now };
+  writeJson(files.health(), merged);
 }
 
 export function slug(text: string): string {

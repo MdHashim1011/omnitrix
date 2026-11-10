@@ -146,6 +146,23 @@ describe('engine', () => {
     expect(second.getJob(job!.id)!.error).toMatch(/interrupted/);
   });
 
+  it('picks up a fix saved by another process, like "omnitrix set --key"', async () => {
+    const { saveHealth } = await import('../src/store.js');
+    writeConfig([account({ id: 'a', local: true })]);
+    saveHealth({ a: { state: 'auth_error', reason: 'bad key', at: Date.now() - 5000 } });
+    const server = new Engine();
+    expect(server.pool()[0]!.state).toBe('auth_error');
+    saveHealth({ a: { state: 'ready' } }); // what the CLI writes after a new key
+    expect(server.pool()[0]!.state).toBe('ready');
+  });
+
+  it('refuses code tasks without a repo before queuing anything', () => {
+    writeConfig([account({ id: 'a', local: true })]);
+    const engine = new Engine();
+    expect(() => engine.dispatch([{ title: 'ok', type: 'bulk', prompt: 'x' }, { title: 'edit', type: 'code', prompt: 'y' }])).toThrow(/need "repo"/);
+    expect(engine.listJobs()).toHaveLength(0);
+  });
+
   it('leaves jobs of another live process alone (dashboard, list, a second server)', async () => {
     const p = await mockProvider(() => ({ json: chatReply('ok'), delayMs: 1500 }));
     closers.push(p.close);

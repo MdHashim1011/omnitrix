@@ -28,7 +28,6 @@ const taskSchema = z.object({
   repo: z.string().optional().describe('absolute path of a git repo; required for type "code"'),
   use: z.string().optional().describe('force an account ("accountId") or model ("accountId/modelId")'),
   size: z.enum(['small', 'medium', 'large']).optional(),
-  critical: z.boolean().optional().describe('important result; review it extra carefully'),
 });
 
 function text(t: string, structured?: Record<string, unknown>) {
@@ -123,10 +122,12 @@ export function buildServer(engine: Engine): McpServer {
       inputSchema: z.object({ tasks: z.array(taskSchema).min(1).max(30) }),
     },
     async ({ tasks }) => {
-      for (const t of tasks) {
-        if (t.type === 'code' && !t.repo) return fail(`task "${t.title}": type "code" needs "repo" (absolute path of a git repository)`);
+      let jobs: Job[];
+      try {
+        jobs = engine.dispatch(tasks as TaskSpec[]);
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
       }
-      const jobs = engine.dispatch(tasks as TaskSpec[]);
       const lines = jobs.map((j) => `${j.id}  ${j.task.title}  -> ${j.status === 'failed' ? `FAILED: ${j.error}` : j.accountId ? `${j.accountId}/${j.model}` : 'queued'}`);
       return text(lines.join('\n') + '\n\nCall get_results with these job ids.', { job_ids: jobs.map((j) => j.id) });
     },
