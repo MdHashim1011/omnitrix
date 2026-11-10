@@ -8,7 +8,6 @@ import type { ModelInfo, Skills } from './types.js';
 interface Rule {
   match: RegExp;
   set: Partial<Skills>;
-  contextWindow?: number;
 }
 
 const RULES: Rule[] = [

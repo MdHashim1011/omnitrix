@@ -62,7 +62,6 @@ export interface UsageSummary {
   /** where the numbers come from */
   source: 'measured' | 'estimated' | 'untracked';
   measured?: AccountHealth['measured'];
-  lastUsedAt?: number;
 }
 
 /** Start of the current calendar month in local time. */
@@ -113,7 +112,6 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
     percentUsed,
     source,
     measured: fresh ? m : undefined,
-    lastUsedAt: mine.length ? mine[mine.length - 1]!.ts : undefined,
   };
 }
 

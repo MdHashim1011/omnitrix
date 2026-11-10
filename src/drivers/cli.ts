@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { getProvider } from '../providers.js';
 import { redact, resolveKey } from '../store.js';
 import { DriverError, type Account, type DriverRequest, type DriverResult, type ErrorKind } from '../types.js';
 
@@ -343,9 +344,9 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
   });
 }
 
+/** Which CLI tool a provider runs, from the provider catalog. */
 export function providerTool(provider: string): string {
-  const map: Record<string, string> = { codex: 'codex', 'claude-code': 'claude', 'gemini-cli': 'gemini', 'qwen-code': 'qwen', antigravity: 'agy', opencode: 'opencode' };
-  return map[provider] ?? provider;
+  return getProvider(provider)?.cli ?? provider;
 }
 
 /** Run the tool's own login inside the account's profile folder, in this terminal. */
