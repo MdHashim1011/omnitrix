@@ -64,7 +64,7 @@ omnitrix route --type review "check this diff for auth bugs"
 
 ## Seeing what's left
 
-![The omnitrix dashboard with six accounts, their remaining quota, and the latest jobs](assets/dashboard.png)
+![The omnitrix dashboard with six accounts, their remaining quota, and the latest jobs](assets/dashboard-example.png)
 
 <sub>The dashboard, shown here with example data. Run `omnitrix dashboard` to open yours.</sub>
 
