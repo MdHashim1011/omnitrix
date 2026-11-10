@@ -1,21 +1,21 @@
 # omnitrix
 
-Claude plans the work. Your other AI accounts do it.
+Claude plans the work, and your other AI accounts carry it out.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/job-dark.svg">
   <img alt="Claude splits 'add rate limiting to the public API' into six tasks. Gemini reads the logs, Codex writes the middleware, DeepSeek reviews it, Kimi is rate limited so the tests move to GLM, Groq drafts the changelog and a local Ollama model checks for leaked keys." src="assets/job-light.svg" width="100%">
 </picture>
 
-I kept running out of Claude credits while the ChatGPT Plus and Gemini subscriptions my friends and I pay for sat mostly unused. omnitrix is how I fixed that.
+I built omnitrix because I repeatedly ran out of Claude credits while the ChatGPT Plus and Gemini subscriptions that my friends and I pay for remained largely unused.
 
-Most of the routers I tried exist to stretch free, low-tier models. omnitrix is for the frontier models you already pay for, and it works inside the Claude Code session you already use. Claude stays in charge: it breaks the job into tasks and checks what comes back. omnitrix sends each task to the account that suits it and still has quota left, like Codex on your ChatGPT plan for edits, Gemini for reading huge logs, DeepSeek or Kimi for reasoning and review, or a model on your own PC for anything private. Anything that speaks the OpenAI or Anthropic API works too.
+Many routers are designed to stretch free, low-tier models. omnitrix is designed for the frontier models you already pay for, and it runs inside your existing Claude Code session. Claude remains in charge: it divides the job into tasks and reviews the results. omnitrix sends each task to an account that suits the work and still has quota available. For example, it can use Codex on your ChatGPT plan for code edits, Gemini for reading very large logs, DeepSeek or Kimi for reasoning and review, or a local model for private work. It also supports any service that implements the OpenAI or Anthropic API.
 
-You never leave Claude Code to keep track of it. Each account's name, owner, usage today and remaining quota sits in the status line, and Claude checks the same numbers before it hands out work. Because Claude only reads short results instead of doing every step itself, your Claude limit goes a lot further.
+You can monitor the pool without leaving Claude Code. The status line shows the remaining quota for each account, and Claude checks the same data before it assigns work. Because Claude reads short results instead of performing every step itself, your Claude usage limit lasts longer.
 
-## Install
+## Installation
 
-You need Node.js 20 or newer.
+omnitrix requires Node.js 20 or later.
 
 ```bash
 npm install -g https://github.com/MdHashim1011/omnitrix/releases/latest/download/omnitrix.tgz
@@ -32,29 +32,29 @@ omnitrix test deepseek
 omnitrix setup-claude
 ```
 
-That lists what you can connect, adds your local Ollama models and a DeepSeek key, signs in to Codex with your ChatGPT plan, checks that DeepSeek answers, and registers omnitrix with Claude Code (the MCP server plus the status line).
+These commands list the available providers, add your local Ollama models and a DeepSeek key, sign in to Codex with your ChatGPT plan, confirm that DeepSeek responds, and register omnitrix with Claude Code as both an MCP server and a status line.
 
-Restart Claude Code and give it something big, like "add tests for the billing module and document the API". It sees the omnitrix tools and a short playbook on when to hand work out.
+Restart Claude Code and give it a substantial task, such as "add tests for the billing module and document the API". Claude receives the omnitrix tools along with brief instructions on when to delegate work.
 
-## How a task finds its model
+## How tasks are routed
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/routing-dark.svg">
   <img alt="A review task marked private. Kimi is skipped because it is cooling down, Groq because its free tier may train on prompts. DeepSeek scores highest and gets the task, with GLM and Codex as fallbacks." src="assets/routing-light.svg" width="100%">
 </picture>
 
-Every task Claude sends has a type, like code, review or bulk work, and a privacy level. omnitrix first sets aside any account that can't take it right now:
+Every task that Claude sends has a type, such as code, review or bulk work, and a privacy level. omnitrix first excludes any account that cannot accept the task at that moment because it is:
 
-- switched off or logged out
+- disabled or signed out
 - cooling down after a rate limit
 - out of quota for the current window
-- not allowed to see private work
+- not permitted to receive private work
 
-The rest get a score from four things: how well the model fits the task, how much quota is left, what it costs, and how often its past work was accepted. The best one gets the task. If that call fails, the next one in line takes over and Claude never has to step in.
+Each remaining account receives a score based on four factors: how well the model fits the task, how much quota remains, what the model costs, and how often its past work was accepted. The highest-scoring account receives the task. If that call fails, the next account in the ranking takes over without any action from Claude.
 
-Code tasks only go to agent CLIs that can edit files, and each one runs in its own git worktree on a new branch, so two workers never touch the same checkout.
+Code tasks go only to agent CLIs that can edit files. Each task runs on a new branch in its own git worktree, so two workers never share a checkout.
 
-The skill scores start as a guess from the model's name. You can set them yourself, and omnitrix also learns: when Claude accepts or rejects a result, that model's record for that kind of task moves up or down.
+Skill scores begin as an estimate based on the model's name. You can set them yourself, and omnitrix also adjusts its ranking over time: when Claude accepts or rejects a result, the model's record for that type of task is updated.
 
 ```bash
 omnitrix models deepseek
@@ -62,39 +62,39 @@ omnitrix model deepseek deepseek-v4-pro --coding 9 --reasoning 9
 omnitrix route --type review "check this diff for auth bugs"
 ```
 
-## Seeing what's left
+## Monitoring quota
 
 ![The omnitrix dashboard with six accounts, their remaining quota, and the latest jobs](assets/dashboard-example.png)
 
-<sub>The dashboard, shown here with example data. Run `omnitrix dashboard` to open yours.</sub>
+<sub>The dashboard, shown with example data. Run `omnitrix dashboard` to open your own.</sub>
 
-Each account shows its name, who owns it, what it has used today and what's left in each window you've set. Inside Claude Code the same numbers sit in the status line:
+The dashboard shows each account's name, owner, usage today and the quota remaining in each tracked window. In Claude Code, the status line gives a compact summary:
 
 ```
 omnitrix 5/6 ready · codex-main 38% · deepseek 788 left · kimi wait · groq-free 36% │ Claude 5h 34% 7d 12%
 ```
 
-Most subscriptions don't publish exact limits or offer a way to ask how much is left, so omnitrix tells you where each number comes from. For a ChatGPT plan it asks Codex directly and shows the percent left in the 5-hour and 7-day windows, with the time each one resets. When a provider sends rate-limit headers, you see those. Otherwise omnitrix counts the requests and tokens it sent against the limits you gave it. A `429` or `402` from the provider always wins over the count.
+Most subscriptions neither publish exact limits nor provide a way to query the remaining allowance, so omnitrix states the source of each figure. For a ChatGPT plan, it queries Codex directly and shows the percentage remaining in the 5-hour and 7-day windows, along with the time each window resets. When a provider sends rate-limit headers, omnitrix displays those values. In all other cases, it counts the requests and tokens it has sent against the limits you configured. A `429` or `402` response from the provider always overrides the count.
 
 ## Privacy
 
-Tasks are `private` by default, which keeps them away from providers that may train on prompts (several free tiers do). Mark a task `secret` and it only runs on models on your own machine. Nothing else leaves your computer except the requests to the providers you connected, and there's no telemetry.
+Tasks are `private` by default, which keeps them away from providers that may train on prompts, as several free tiers do. A task marked `secret` runs only on models on your own machine. omnitrix sends data only to the providers you connect, and it collects no telemetry.
 
 ## Connecting accounts
 
-| What you have | How to add it |
+| Account type | Command |
 |---|---|
 | ChatGPT plan through Codex | `omnitrix add codex --login` |
 | Your own Claude subscription | `omnitrix add claude-code --login` |
 | An API key | `omnitrix add kimi --key-env MOONSHOT_API_KEY` |
-| Gemini | `omnitrix add gemini --key-env GEMINI_API_KEY` with a key from Google AI Studio. A Google AI Pro sign-in only works through `antigravity`, which is experimental. |
+| Gemini | `omnitrix add gemini --key-env GEMINI_API_KEY` with a key from Google AI Studio. A Google AI Pro sign-in works only through `antigravity`, which is experimental. |
 | A coding plan (GLM, Kimi, MiniMax) | `omnitrix add claude-code --base-url https://api.z.ai/api/anthropic --key-env ZAI_API_KEY` |
-| A model on your PC | `omnitrix add ollama` (also LM Studio, llama.cpp, vLLM) |
-| Anything else | `omnitrix add custom-openai --base-url https://host/v1 --key-env MY_KEY --model my-model` |
+| A local model | `omnitrix add ollama` (LM Studio, llama.cpp and vLLM are also supported) |
+| Any other service | `omnitrix add custom-openai --base-url https://host/v1 --key-env MY_KEY --model my-model` |
 
-Run `omnitrix providers` for the full list. Each CLI account gets its own profile folder, so two Codex logins never mix. Keys are stored in `~/.omnitrix/secrets.json`, or not at all if you use `--key-env`.
+Run `omnitrix providers` for the full list. Each CLI account has its own profile folder, so two Codex logins never mix. Keys are stored in `~/.omnitrix/secrets.json`. If you use `--key-env`, omnitrix does not store the key at all.
 
-To track a limit, pass it when you add the account or later with `omnitrix set`:
+To track a limit, specify it when you add the account or later with `omnitrix set`:
 
 ```bash
 omnitrix set codex-main --r5h 120        # requests per 5 hours
@@ -102,61 +102,63 @@ omnitrix set groq-free --rpm 30 --rpd 1000
 omnitrix set deepseek --tpd 4000000      # tokens per day
 ```
 
-The full set is `--rpm`, `--r5h`, `--rpd`, `--rpw`, `--tpd` and `--tpm`.
+The available options are `--rpm`, `--r5h`, `--rpd`, `--rpw`, `--tpd` and `--tpm`.
 
-## What Claude gets
+## MCP tools
 
-omnitrix runs as an MCP server. Claude sees these tools:
+omnitrix runs as an MCP server and gives Claude the following tools:
 
-| Tool | What it does |
+| Tool | Purpose |
 |---|---|
-| `pool_status` | Every account with its state, owner, models and remaining quota |
-| `route_preview` | Who would get each task, and why, without running anything |
-| `dispatch` | Sends up to 30 tasks at once; independent ones run in parallel |
+| `pool_status` | Lists every account with its state, owner, models and remaining quota |
+| `route_preview` | Shows which account would receive each task, and why, without running anything |
+| `dispatch` | Sends up to 30 tasks at once and runs independent tasks in parallel |
 | `get_results` | Waits for jobs and returns a short preview of each result |
-| `read_output` | Pages through a full result when the preview isn't enough |
-| `rate_result` | Accepts or rejects a result so the router learns |
-| `cancel_job`, `list_jobs` | Job housekeeping |
+| `read_output` | Reads a full result in pages when the preview is not sufficient |
+| `rate_result` | Accepts or rejects a result so that the router can learn from it |
+| `cancel_job`, `list_jobs` | Cancels a job or lists recent jobs |
 
-Previews are capped at 1,500 characters so reading them costs Claude very little. Full outputs stay on disk.
+Previews are limited to 1,500 characters to keep Claude's token usage low. Full outputs remain on disk.
 
 ## Commands
 
 ```
-omnitrix providers              providers you can connect
+omnitrix providers              list the providers you can connect
 omnitrix add <provider>         connect an account
 omnitrix login <id>             sign in a CLI account in its own profile
-omnitrix list                   accounts, usage and what's left
-omnitrix test <id>              send a tiny request to check an account
+omnitrix list                   show accounts, usage and remaining quota
+omnitrix test <id>              send a small request to check an account
 omnitrix set <id>               change limits, owner, key or concurrency
-omnitrix enable|disable <id>    switch an account on or off
+omnitrix enable|disable <id>    enable or disable an account
 omnitrix remove <id>            remove an account (--purge also deletes its login)
-omnitrix models <id>            model scores (--refresh asks the provider again)
-omnitrix model <id> <model>     set scores or prices, --add or --remove a model
-omnitrix route <prompt>         show which model would get a task
+omnitrix models <id>            show model scores (--refresh queries the provider again)
+omnitrix model <id> <model>     set scores or prices, or --add or --remove a model
+omnitrix route <prompt>         show which model would receive a task
 omnitrix run <prompt>           run one task and print the answer
-omnitrix settings               mode, privacy, pinned and banned providers
-omnitrix dashboard              live web dashboard on 127.0.0.1
+omnitrix settings               set the mode, privacy, and pinned or banned providers
+omnitrix dashboard              open a live web dashboard on 127.0.0.1
 omnitrix setup-claude           register with Claude Code
-omnitrix clean                  delete old jobs and worktrees (branches stay)
+omnitrix clean                  delete old jobs and worktrees (branches are kept)
 omnitrix doctor                 check the setup
 ```
 
-`omnitrix settings --mode saver` prefers free and cheap models, `--mode quality` prefers the strongest ones, and `--pin code=codex-main` always tries that account first for code.
+`omnitrix settings --mode saver` prefers free and low-cost models, `--mode quality` prefers the strongest models, and `--pin code=codex-main` always tries that account first for code tasks.
 
-## Provider rules
+## Provider terms
 
-omnitrix only drives official CLIs and APIs with credentials you entered yourself. It has no way to import someone else's login, and it won't get one.
+omnitrix uses only official CLIs and APIs with credentials that you enter yourself. It provides no means of importing another person's login, and that will not change.
 
-OpenAI, Google and Anthropic all forbid sharing a consumer account, so connect accounts you own. If a friend wants to chip in, the clean way is an API key billed to them. Anthropic allows Claude subscriptions for ordinary individual use only. Google has suspended accounts that used Antigravity sign-in through outside tools, which is why omnitrix marks Antigravity as experimental and points you to Gemini API keys instead. Free tiers often limit per organization, so extra keys from the same org add nothing.
+OpenAI, Google and Anthropic all prohibit sharing a consumer account, so connect only accounts that you own. A friend who wishes to contribute should use an API key billed to them. Anthropic permits Claude subscriptions for ordinary individual use only. Google has suspended accounts that used Antigravity sign-in through third-party tools, so omnitrix marks Antigravity as experimental and recommends Gemini API keys instead. Free tiers are often limited per organization, so additional keys from the same organization provide no extra quota.
 
-omnitrix is an independent project. It isn't affiliated with OpenAI, Google, Anthropic or any other AI provider, or with Cartoon Network and Warner Bros. Discovery. Product names and trademarks belong to their owners.
+omnitrix is an independent project. It is not affiliated with OpenAI, Google, Anthropic or any other AI provider, or with Cartoon Network and Warner Bros. Discovery. Product names and trademarks belong to their respective owners.
 
-## What it can't do yet
+## Current limitations
 
-Remaining quota is measured for ChatGPT plans, but on other subscriptions it's still an estimate, because those providers don't offer an API for it. The Codex and Claude Code drivers follow those tools' current flags and may need an update when they change. The other agent CLIs are less tested than Codex.
+Remaining quota is measured for ChatGPT plans. For other subscriptions it is an estimate, because those providers do not offer an API for it. The Codex and Claude Code drivers depend on the current flags of those tools and may need updating when the flags change. The other agent CLIs have been tested less thoroughly than Codex.
 
-Next on my list is friend nodes. A friend would run a small agent on their own computer with their own login and a daily cap they can pause at any time, so their account never leaves their machine. After that I want a second model to double-check critical results, and drivers for Aider and Goose.
+## Roadmap
+
+The next planned feature is friend nodes. A friend would run a small agent on their own computer with their own login and a daily cap that they can pause at any time, so their account never leaves their machine. Later plans include a second model to verify critical results, and drivers for Aider and Goose.
 
 ## Development
 
@@ -168,7 +170,7 @@ npm run build
 npm test
 ```
 
-The tests use fake providers and a fake agent CLI, so they need no keys and no network.
+The tests use fake providers and a fake agent CLI, so they require neither API keys nor network access.
 
 ## License
 

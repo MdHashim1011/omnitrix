@@ -1,21 +1,21 @@
 # Security
 
-## Reporting a problem
+## Reporting a vulnerability
 
-Please don't open a public issue for a security problem. Use GitHub's private vulnerability reporting instead (Security tab, then "Report a vulnerability"). I'll reply within 7 days.
+Please do not open a public issue for a security vulnerability. Instead, use GitHub's private vulnerability reporting, which is available under the Security tab as "Report a vulnerability". I will respond within seven days.
 
-## What omnitrix does to keep you safe
+## Security measures
 
-API keys live in `~/.omnitrix/secrets.json`, which is readable only by you on macOS and Linux. If you'd rather not store a key at all, add the account with `--key-env` and omnitrix reads it from the environment each time. Keys are stripped from every error message, log line and job record.
+API keys are stored in `~/.omnitrix/secrets.json`, which on macOS and Linux is readable only by your user account. To avoid storing a key at all, add the account with `--key-env`, and omnitrix will read the key from the environment each time. Keys are removed from every error message, log line and job record.
 
-CLI logins stay inside each account's own profile folder. omnitrix starts the official tool with that folder and never reads, copies or uploads the files in it.
+CLI logins remain inside each account's own profile folder. omnitrix starts the official tool with that folder and never reads, copies or uploads its contents.
 
-Code tasks run in a separate git worktree. Before a worker starts, omnitrix deletes agent settings that came with the repository (`.claude`, `.mcp.json`, `.codex`, `.gemini`, `.qwen`), so a repo can't sneak hooks or MCP servers into a worker run.
+Code tasks run in a separate git worktree. Before a worker starts, omnitrix deletes any agent settings included in the repository (`.claude`, `.mcp.json`, `.codex`, `.gemini`, `.qwen`), which prevents a repository from injecting hooks or MCP servers into a worker run.
 
-Prompts reach agent CLIs on standard input, never on the command line, and model names have to match a strict pattern before they're passed on.
+Prompts reach agent CLIs through standard input and never appear on the command line. Model names must match a strict pattern before they are passed on.
 
-The dashboard listens on 127.0.0.1 only and answers nothing addressed to another host name.
+The dashboard listens only on 127.0.0.1 and rejects requests addressed to any other host name.
 
 ## Supported versions
 
-Only the latest release gets security fixes.
+Security fixes are provided for the latest release only.
