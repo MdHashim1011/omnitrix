@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 440" width="960" height="440" role="img" aria-labelledby="t d">
+<title id="t">omnitrix at work</title><desc id="d">Claude sits in the middle and plans. A selector turns to the best account for each task: Codex, DeepSeek, Kimi, GLM, Groq and a local Ollama model. Tasks travel out, results come back. When Kimi is rate limited, its task moves to GLM. A job log on the right follows along.</desc>
+<defs><radialGradient id="g" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#1677c9" stop-opacity=".35"/><stop offset="1" stop-color="#1677c9" stop-opacity="0"/></radialGradient></defs>
+<rect width="960" height="440" rx="18" fill="#f5f8fc"/>
+<circle cx="236" cy="220" r="142" fill="none" stroke="#d6dfec" stroke-width="1.5" stroke-dasharray="3 7"/>
+<line x1="236" y1="154" x2="236" y2="114" stroke="#d6dfec" stroke-width="1.5"/>
+<line x1="293.158" y1="187" x2="327.799" y2="167" stroke="#d6dfec" stroke-width="1.5"/>
+<line x1="293.158" y1="253" x2="327.799" y2="273" stroke="#d6dfec" stroke-width="1.5"/>
+<line x1="236" y1="286" x2="236" y2="326" stroke="#d6dfec" stroke-width="1.5"/>
+<line x1="178.842" y1="253" x2="144.201" y2="273" stroke="#d6dfec" stroke-width="1.5"/>
+<line x1="178.842" y1="187" x2="144.201" y2="167" stroke="#d6dfec" stroke-width="1.5"/>
+<g><path d="M300,213 L340,220 L300,227 Z" fill="#1677c9"/><animateTransform attributeName="transform" type="rotate" dur="12s" repeatCount="indefinite" values="-90 236 220;-90 236 220;-90 236 220;-90 236 220;-30 236 220;-30 236 220;30 236 220;30 236 220;90 236 220;90 236 220;150 236 220;150 236 220;210 236 220;210 236 220;270 236 220;270 236 220" keyTimes="0;0.06;0.09;0.21;0.24;0.35;0.38;0.44;0.47;0.59;0.62;0.7;0.73;0.84;0.97;1" calcMode="spline" keySplines=".45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1;.45 0 .25 1"/></g>
+<circle cx="236" cy="220" r="96" fill="url(#g)" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;.9;0;0;.9;.9;0" keyTimes="0;.03;.07;.86;.89;.95;1"/></circle>
+<circle cx="236" cy="220" r="62" fill="#e9f0f9" stroke="#1677c9" stroke-width="2.5"/>
+<circle cx="236" cy="220" r="52" fill="none" stroke="#d6dfec" stroke-width="1"/>
+<text x="236" y="218" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="19" font-weight="650" fill="#14233d">Claude</text>
+<text x="236" y="240" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#5d7190" opacity="0">planning<animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0;0.01;0.07;0.08;1"/></text>
+<text x="236" y="240" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#5d7190" opacity="0">sending work<animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.07;0.08;0.85;0.86;1"/></text>
+<text x="236" y="240" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#5d7190" opacity="0">reviewing<animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.85;0.86;0.965;0.975;1"/></text>
+<g>
+<circle cx="236" cy="78" r="38" fill="none" stroke="#d6dfec" stroke-width="5"/>
+<circle cx="236" cy="78" r="38" fill="none" stroke="#17945b" stroke-width="5" stroke-linecap="round" stroke-dasharray="238.761" stroke-dashoffset="90.729" transform="rotate(-90 236 78)"><animate attributeName="stroke-dashoffset" dur="12s" repeatCount="indefinite" values="90.729;90.729;109.83;109.83;90.729" keyTimes="0;0.14;0.16;0.97;1"/></circle>
+<circle cx="236" cy="78" r="31" fill="#ffffff" stroke="#d6dfec" stroke-width="1"/>
+<circle cx="236" cy="78" r="31" fill="none" stroke="#1677c9" stroke-width="2.5" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.14;0.15;0.19;0.2;1"/></circle>
+<text x="236" y="79" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="650" fill="#14233d">Codex</text>
+<text x="236" y="93" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#5d7190">ChatGPT Plus</text>
+</g>
+<g>
+<circle cx="358.976" cy="149" r="38" fill="none" stroke="#d6dfec" stroke-width="5"/>
+<circle cx="358.976" cy="149" r="38" fill="none" stroke="#17945b" stroke-width="5" stroke-linecap="round" stroke-dasharray="238.761" stroke-dashoffset="47.752" transform="rotate(-90 358.976 149)"><animate attributeName="stroke-dashoffset" dur="12s" repeatCount="indefinite" values="47.752;47.752;66.853;66.853;47.752" keyTimes="0;0.28;0.3;0.97;1"/></circle>
+<circle cx="358.976" cy="149" r="31" fill="#ffffff" stroke="#d6dfec" stroke-width="1"/>
+<circle cx="358.976" cy="149" r="31" fill="none" stroke="#1677c9" stroke-width="2.5" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.28;0.29;0.33;0.34;1"/></circle>
+<text x="358.976" y="150" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="650" fill="#14233d">DeepSeek</text>
+<text x="358.976" y="164" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#5d7190">API key</text>
+</g>
+<g>
+<circle cx="358.976" cy="291" r="38" fill="none" stroke="#d6dfec" stroke-width="5"/>
+<circle cx="358.976" cy="291" r="38" fill="none" stroke="#17945b" stroke-width="5" stroke-linecap="round" stroke-dasharray="238.761" stroke-dashoffset="107.442" transform="rotate(-90 358.976 291)"><animate attributeName="stroke" dur="12s" repeatCount="indefinite" values="#17945b;#17945b;#c98a06;#c98a06;#17945b;#17945b" keyTimes="0;.415;.43;.96;.975;1"/></circle>
+<circle cx="358.976" cy="291" r="31" fill="#ffffff" stroke="#d6dfec" stroke-width="1"/>
+<circle cx="358.976" cy="291" r="31" fill="none" stroke="#c98a06" stroke-width="2.5" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.42;0.43;0.44;0.45;1"/></circle>
+<text x="358.976" y="292" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="650" fill="#14233d">Kimi</text>
+<text x="358.976" y="306" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#5d7190">API key</text>
+<text x="358.976" y="349" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="600" fill="#c98a06" opacity="0">cooling down<animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.43;0.445;0.96;0.975;1"/></text>
+</g>
+<g>
+<circle cx="236" cy="362" r="38" fill="none" stroke="#d6dfec" stroke-width="5"/>
+<circle cx="236" cy="362" r="38" fill="none" stroke="#17945b" stroke-width="5" stroke-linecap="round" stroke-dasharray="238.761" stroke-dashoffset="62.078" transform="rotate(-90 236 362)"><animate attributeName="stroke-dashoffset" dur="12s" repeatCount="indefinite" values="62.078;62.078;81.179;81.179;62.078" keyTimes="0;0.51;0.53;0.97;1"/></circle>
+<circle cx="236" cy="362" r="31" fill="#ffffff" stroke="#d6dfec" stroke-width="1"/>
+<circle cx="236" cy="362" r="31" fill="none" stroke="#1677c9" stroke-width="2.5" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.51;0.52;0.57;0.58;1"/></circle>
+<text x="236" y="363" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="650" fill="#14233d">GLM</text>
+<text x="236" y="377" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#5d7190">coding plan</text>
+</g>
+<g>
+<circle cx="113.024" cy="291" r="38" fill="none" stroke="#d6dfec" stroke-width="5"/>
+<circle cx="113.024" cy="291" r="38" fill="none" stroke="#17945b" stroke-width="5" stroke-linecap="round" stroke-dasharray="238.761" stroke-dashoffset="152.807" transform="rotate(-90 113.024 291)"><animate attributeName="stroke-dashoffset" dur="12s" repeatCount="indefinite" values="152.807;152.807;171.908;171.908;152.807" keyTimes="0;0.65;0.67;0.97;1"/></circle>
+<circle cx="113.024" cy="291" r="31" fill="#ffffff" stroke="#d6dfec" stroke-width="1"/>
+<circle cx="113.024" cy="291" r="31" fill="none" stroke="#1677c9" stroke-width="2.5" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.65;0.66;0.68;0.69;1"/></circle>
+<text x="113.024" y="292" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="650" fill="#14233d">Groq</text>
+<text x="113.024" y="306" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#5d7190">free tier</text>
+</g>
+<g>
+<circle cx="113.024" cy="149" r="38" fill="none" stroke="#d6dfec" stroke-width="5"/>
+<circle cx="113.024" cy="149" r="38" fill="none" stroke="#17945b" stroke-width="5" stroke-linecap="round" stroke-dasharray="238.761" stroke-dashoffset="0" transform="rotate(-90 113.024 149)"></circle>
+<circle cx="113.024" cy="149" r="31" fill="#ffffff" stroke="#d6dfec" stroke-width="1"/>
+<circle cx="113.024" cy="149" r="31" fill="none" stroke="#1677c9" stroke-width="2.5" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.76;0.77;0.81;0.82;1"/></circle>
+<text x="113.024" y="150" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="650" fill="#14233d">Ollama</text>
+<text x="113.024" y="164" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#5d7190">this PC</text>
+</g>
+<circle r="6" fill="#1677c9" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M236,156 L236,118" keyPoints="0;0;1;1" keyTimes="0;0.09;0.14;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.09;0.096;0.14;0.146;1"/></circle>
+<circle r="5" fill="#17945b" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M236,118 L236,156" keyPoints="0;0;1;1" keyTimes="0;0.17;0.21;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.17;0.176;0.21;0.216;1"/></circle>
+<circle r="6" fill="#1677c9" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M291.426,188 L324.335,169" keyPoints="0;0;1;1" keyTimes="0;0.24;0.28;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.24;0.246;0.28;0.286;1"/></circle>
+<circle r="5" fill="#17945b" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M324.335,169 L291.426,188" keyPoints="0;0;1;1" keyTimes="0;0.31;0.34;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.31;0.316;0.34;0.346;1"/></circle>
+<circle r="6" fill="#1677c9" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M291.426,252 L324.335,271" keyPoints="0;0;1;1" keyTimes="0;0.38;0.42;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.38;0.386;0.42;0.426;1"/></circle>
+<circle r="5" fill="#c98a06" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M324.335,271 L291.426,252" keyPoints="0;0;1;1" keyTimes="0;0.42;0.44;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.42;0.426;0.44;0.446;1"/></circle>
+<circle r="6" fill="#1677c9" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M236,284 L236,322" keyPoints="0;0;1;1" keyTimes="0;0.47;0.51;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.47;0.476;0.51;0.516;1"/></circle>
+<circle r="5" fill="#17945b" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M236,322 L236,284" keyPoints="0;0;1;1" keyTimes="0;0.55;0.58;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.55;0.556;0.58;0.586;1"/></circle>
+<circle r="6" fill="#1677c9" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M180.574,252 L147.665,271" keyPoints="0;0;1;1" keyTimes="0;0.62;0.65;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.62;0.626;0.65;0.656;1"/></circle>
+<circle r="5" fill="#17945b" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M147.665,271 L180.574,252" keyPoints="0;0;1;1" keyTimes="0;0.66;0.69;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.66;0.666;0.69;0.696;1"/></circle>
+<circle r="6" fill="#1677c9" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M180.574,188 L147.665,169" keyPoints="0;0;1;1" keyTimes="0;0.73;0.76;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.73;0.736;0.76;0.766;1"/></circle>
+<circle r="5" fill="#17945b" opacity="0"><animateMotion dur="12s" repeatCount="indefinite" path="M147.665,169 L180.574,188" keyPoints="0;0;1;1" keyTimes="0;0.79;0.82;1" calcMode="linear"/><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.79;0.796;0.82;0.826;1"/></circle>
+<rect x="470" y="34" width="456" height="372" rx="14" fill="#ffffff" stroke="#d6dfec"/>
+<text x="492" y="68" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="650" fill="#14233d">Job log</text>
+<text x="904" y="68" text-anchor="end" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#5d7190">6 accounts, 5 tasks</text>
+<line x1="492" y1="84" x2="904" y2="84" stroke="#d6dfec"/>
+<g opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.1;0.115;0.965;0.98;1"/>
+<text x="492" y="114" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">code</text>
+<text x="598" y="114" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#14233d">codex</text>
+<text x="692" y="114" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">started</text>
+</g>
+<g opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.21;0.225;0.965;0.98;1"/>
+<text x="492" y="143" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">code</text>
+<text x="598" y="143" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#14233d">codex</text>
+<text x="692" y="143" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#17945b">done, branch ready</text>
+</g>
+<g opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.25;0.265;0.965;0.98;1"/>
+<text x="492" y="172" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">review</text>
+<text x="598" y="172" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#14233d">deepseek</text>
+<text x="692" y="172" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">started</text>
+</g>
+<g opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.34;0.355;0.965;0.98;1"/>
+<text x="492" y="201" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">review</text>
+<text x="598" y="201" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#14233d">deepseek</text>
+<text x="692" y="201" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#17945b">done</text>
+</g>
+<g opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.42;0.435;0.965;0.98;1"/>
+<text x="492" y="230" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">reasoning</text>
+<text x="598" y="230" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#14233d">kimi</text>
+<text x="692" y="230" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#c98a06">rate limited</text>
+</g>
+<g opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.47;0.485;0.965;0.98;1"/>
+<text x="492" y="259" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">reasoning</text>
+<text x="598" y="259" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#14233d">glm</text>
+<text x="692" y="259" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">moved here, started</text>
+</g>
+<g opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.58;0.595;0.965;0.98;1"/>
+<text x="492" y="288" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">reasoning</text>
+<text x="598" y="288" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#14233d">glm</text>
+<text x="692" y="288" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#17945b">done</text>
+</g>
+<g opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.69;0.705;0.965;0.98;1"/>
+<text x="492" y="317" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">bulk</text>
+<text x="598" y="317" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#14233d">groq</text>
+<text x="692" y="317" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#17945b">done</text>
+</g>
+<g opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.82;0.835;0.965;0.98;1"/>
+<text x="492" y="346" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">secret</text>
+<text x="598" y="346" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#14233d">ollama</text>
+<text x="692" y="346" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#17945b">done, stayed on this PC</text>
+</g>
+<g opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.91;0.925;0.965;0.98;1"/>
+<text x="492" y="375" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#5d7190">claude</text>
+<text x="598" y="375" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#17945b">reviewed 5 results, 5 accepted</text>
+</g>
+</svg>

@@ -1,7 +1,7 @@
 {
   "name": "omnitrix",
   "version": "0.1.0",
-  "description": "Let Claude Code plan the work and hand it out to every AI account you have: ChatGPT, Claude, DeepSeek, Kimi, GLM, Qwen, OpenRouter, Groq, Ollama and more.",
+  "description": "Claude plans the work, your other AI accounts do it. Routes Claude Code tasks to Codex, DeepSeek, Kimi, GLM, Groq, Ollama or any OpenAI or Anthropic compatible API, with live quota for every account.",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",

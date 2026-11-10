@@ -2,15 +2,19 @@
 
 ## Reporting a problem
 
-Please do not open a public issue for security problems. Use GitHub's private vulnerability reporting on this repository (Security tab, "Report a vulnerability"). I will reply within 7 days.
+Please don't open a public issue for a security problem. Use GitHub's private vulnerability reporting instead (Security tab, then "Report a vulnerability"). I'll reply within 7 days.
 
-## What omnitrix protects
+## What omnitrix does to keep you safe
 
-- **API keys** are stored in `~/.omnitrix/secrets.json` (owner-only permissions on macOS and Linux) or read from environment variables with `--key-env`. They are redacted from every error message, log and job record.
-- **CLI logins** stay inside each account's own profile folder. omnitrix never reads, copies or uploads those files.
-- **Code tasks** run in a separate git worktree. Repo-provided agent settings (`.claude`, `.mcp.json`, `.codex`, `.gemini`, `.qwen`) are removed from the worker's copy so a task cannot run hooks shipped inside a repository.
-- **Prompts** are passed to CLIs on standard input, never on the command line, and model names are checked against a strict pattern before use.
-- **The dashboard** listens on 127.0.0.1 only and refuses requests for any other host name.
+API keys live in `~/.omnitrix/secrets.json`, which is readable only by you on macOS and Linux. If you'd rather not store a key at all, add the account with `--key-env` and omnitrix reads it from the environment each time. Keys are stripped from every error message, log line and job record.
+
+CLI logins stay inside each account's own profile folder. omnitrix starts the official tool with that folder and never reads, copies or uploads the files in it.
+
+Code tasks run in a separate git worktree. Before a worker starts, omnitrix deletes agent settings that came with the repository (`.claude`, `.mcp.json`, `.codex`, `.gemini`, `.qwen`), so a repo can't sneak hooks or MCP servers into a worker run.
+
+Prompts reach agent CLIs on standard input, never on the command line, and model names have to match a strict pattern before they're passed on.
+
+The dashboard listens on 127.0.0.1 only and answers nothing addressed to another host name.
 
 ## Supported versions
 
