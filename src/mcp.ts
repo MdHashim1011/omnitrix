@@ -43,7 +43,8 @@ export function describeAccount(a: PoolAccountView): string {
   const u = a.usage;
   const bits = [`${a.id} [${a.state}]`, `${a.provider}`, `owner ${a.owner}`];
   if (u.windows.length) {
-    bits.push(u.windows.map((w) => `${w.name}: ${w.remaining}/${w.limit} ${w.unit} left`).join(', ') + (u.source === 'measured' ? ' (measured)' : ' (estimated)'));
+    const n = (v: number, unit: string) => (unit === 'tokens' ? formatTokens(v) : String(v));
+    bits.push(u.windows.map((w) => `${w.name}: ${n(w.remaining, w.unit)}/${n(w.limit, w.unit)} ${w.unit} left`).join(', ') + (u.source === 'measured' ? ' (measured)' : ' (estimated)'));
   } else {
     bits.push('no limits set');
   }
