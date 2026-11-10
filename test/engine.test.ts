@@ -195,8 +195,8 @@ const args=process.argv.slice(2);let stdin='';
 process.stdin.on('data',d=>stdin+=d);process.stdin.on('end',()=>{
   const cwd=args[args.indexOf('-C')+1];const out=args[args.indexOf('-o')+1];
   if(!process.env.CODEX_HOME){console.error('no CODEX_HOME');process.exit(2)}
-  if(args.includes('workspace-write')) fs.writeFileSync(path.join(cwd,'hello.txt'),'written by worker\\n');
-  fs.writeFileSync(out,'did it. home='+path.basename(process.env.CODEX_HOME)+' prompt_has_task='+stdin.includes('# Task:'));
+  if(args.includes('--approve-for-me')) fs.writeFileSync(path.join(cwd,'hello.txt'),'written by worker\\n');
+  fs.writeFileSync(out, stdin.includes('QUIET') ? '' : 'did it. home='+path.basename(process.env.CODEX_HOME)+' prompt_has_task='+stdin.includes('# Task:'));
   console.log(JSON.stringify({type:'thread.started'}));
   console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:100,output_tokens:20}}));
 });`,
@@ -251,6 +251,12 @@ describe('agent CLI accounts and code tasks', () => {
       expect(fs.existsSync(done!.worktree!.path)).toBe(false);
       expect(git('branch', '--list', `omnitrix/${job!.id}`).stdout).toMatch(job!.id);
       expect(git('worktree', 'list').stdout).not.toMatch(job!.id);
+
+      // real Codex sometimes edits files and ends without a closing message; that still counts as done
+      const [quiet] = engine.dispatch([{ title: 'Quiet edit', type: 'code', prompt: 'QUIET create hello.txt', repo }]);
+      const [quietDone] = await engine.wait([quiet!.id], 30);
+      expect(quietDone!.status).toBe('done');
+      expect(quietDone!.worktree!.diffStat).toMatch(/hello\.txt/);
     } finally {
       process.env.PATH = oldPath;
     }

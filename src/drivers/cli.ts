@@ -63,7 +63,9 @@ export const CLI_TOOLS: Record<string, CliTool> = {
     profileEnv: 'CODEX_HOME',
     args: ({ model, edit, cwd, outFile }) => [
       'exec', '--json', '--skip-git-repo-check', '--ephemeral',
-      '--sandbox', edit ? 'workspace-write' : 'read-only',
+      // plain workspace-write still refuses file writes on Windows; --approve-for-me keeps that
+      // sandbox but lets Codex's own reviewer approve the edits instead of a human
+      ...(edit ? ['--approve-for-me'] : ['--sandbox', 'read-only']),
       '-C', cwd, '-o', outFile,
       ...(model && model !== 'default' ? ['-m', model] : []),
       '-',
@@ -329,8 +331,10 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
         parsed = { text: '', inputTokens: 0, outputTokens: 0, error: String(err) };
       }
       finish(() => {
-        if (parsed.text && !parsed.error) {
-          resolve({ text: parsed.text, inputTokens: parsed.inputTokens, outputTokens: parsed.outputTokens, costUsd: parsed.costUsd });
+        // an agent that edited files may finish without a closing message; the diff is the result then
+        const editedQuietly = edit && code === 0 && !parsed.error;
+        if ((parsed.text && !parsed.error) || editedQuietly) {
+          resolve({ text: parsed.text || '(no summary from the agent; see the diff)', inputTokens: parsed.inputTokens, outputTokens: parsed.outputTokens, costUsd: parsed.costUsd });
           return;
         }
         const detail = redact((parsed.error ?? '') + '\n' + stderr.slice(-1500) + (parsed.text ? '' : '\n' + stdout.slice(-500))).trim();
