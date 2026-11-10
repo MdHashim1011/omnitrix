@@ -1,7 +1,7 @@
 {
   "name": "omnitrix",
-  "version": "0.1.0",
-  "description": "Use the frontier AI accounts you already pay for from inside Claude Code. Claude plans, then hands each task to Codex, Gemini, DeepSeek, Kimi, GLM, a local model or any OpenAI or Anthropic compatible API, with every account's usage in view.",
+  "version": "0.1.1",
+  "description": "Delegate tasks from Claude Code to the AI accounts you already pay for. Claude plans the work, and omnitrix routes each task to Codex, Gemini, DeepSeek, Kimi, GLM, a local model or any OpenAI- or Anthropic-compatible API while tracking each account's usage.",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
