@@ -69,8 +69,8 @@ const PAGE = /* html */ `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>omnitrix</title>
 <style>
-:root{--bg:#f7f7f5;--card:#fff;--ink:#1d1d1b;--mute:#6b6b66;--line:#e4e3de;--ok:#1f8a4c;--warn:#b7791f;--bad:#c0392b;--bar:#2f6fde;--barbg:#e9eef9}
-@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1e1e1c;--ink:#ececea;--mute:#9a9a94;--line:#2e2e2b;--ok:#3fbf73;--warn:#e0a83a;--bad:#e5604f;--bar:#6b9bff;--barbg:#26304a}}
+:root{--bg:#f5f8fc;--card:#fff;--ink:#14233d;--mute:#5d7190;--line:#d6dfec;--ok:#17945b;--warn:#c98a06;--bad:#c2413a;--bar:#1677c9;--barbg:#e6eef8}
+@media (prefers-color-scheme:dark){:root{--bg:#101a2e;--card:#16233d;--ink:#e7eef8;--mute:#8ea3c2;--line:#2b3c5e;--ok:#5ad19a;--warn:#f4b740;--bad:#f2665a;--bar:#4cc9f0;--barbg:#22345a}}
 *{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
 header{display:flex;align-items:baseline;gap:12px;padding:20px 24px 8px}h1{font-size:20px;margin:0}header small{color:var(--mute)}
 main{padding:8px 24px 32px;max-width:1200px}
@@ -115,9 +115,9 @@ async function load(){
     const wins=u.windows.map(w=>{const p=Math.min(100,Math.round(w.used/w.limit*100));return '<div class="win"><div class="lbl"><span>'+esc(w.name)+' ('+esc(w.unit)+')</span><span>'+fmt(w.remaining)+' of '+fmt(w.limit)+' left</span></div><div class="bar"><i class="'+(p>=100?'full':p>=80?'hi':'')+'" style="width:'+p+'%"></i></div></div>'}).join('');
     const meas=u.measured&&u.measured.remainingRequests!==undefined?'<div class="kv">provider says '+u.measured.remainingRequests+' requests left</div>':'';
     return '<div class="acc"><h3><span>'+esc(a.label)+'</span><span class="pill '+esc(a.state)+'">'+esc(a.state.replace('_',' '))+'</span></h3>'
-      +'<div class="meta">'+esc(a.id)+' · '+esc(a.provider)+' · owner '+esc(a.owner)+(a.local?' · local':'')+'</div>'
-      +(wins||'<div class="kv">no limits set · numbers are counted by omnitrix</div>')+meas
-      +'<div class="kv">today: '+u.requestsToday+' requests · '+fmt(u.tokensToday)+' tokens'+(u.costToday?' · $'+u.costToday.toFixed(3):'')+' · data: '+esc(u.source)+'</div>'
+      +'<div class="meta">'+esc(a.id)+(a.id!==a.provider?' ('+esc(a.provider)+')':'')+', owned by '+esc(a.owner)+(a.local?', runs on this PC':'')+'</div>'
+      +(wins||'<div class="kv">No limits set for this account.</div>')+meas
+      +'<div class="kv">Today '+u.requestsToday+' requests and '+fmt(u.tokensToday)+' tokens'+(u.costToday?', $'+u.costToday.toFixed(3):'')+'. Numbers are '+esc(u.source==='measured'?'from the provider':u.source==='estimated'?'counted by omnitrix':'not tracked')+'.</div>'
       +(a.reason?'<div class="err">'+esc(a.reason)+'</div>':'')
       +'<div class="kv">'+esc(a.models.slice(0,5).join(', '))+(a.models.length>5?' +'+(a.models.length-5):'')+'</div></div>'}).join(''):'<p>No accounts yet. Run <code>omnitrix add</code>.</p>';
   document.getElementById('jobs').innerHTML=d.jobs.length?d.jobs.map(j=>'<tr><td>'+esc(j.task.title)+'<div class="kv">'+esc(j.task.type)+'</div>'+(j.error&&j.status!=='done'?'<div class="err">'+esc(j.error)+'</div>':'')+'</td><td><span class="pill '+(j.status==='done'?'ready':j.status==='failed'?'auth_error':'busy')+'">'+esc(j.status)+'</span>'+(j.verdict?'<div class="kv">'+esc(j.verdict)+'</div>':'')+'</td><td>'+esc((j.accountId||'-')+' / '+(j.model||'-'))+'</td><td>'+(j.usage?fmt(j.usage.inputTokens+j.usage.outputTokens):'')+'</td><td>'+ago(j.createdAt)+'</td></tr>').join(''):'<tr><td colspan="5" class="kv">No jobs yet.</td></tr>';
