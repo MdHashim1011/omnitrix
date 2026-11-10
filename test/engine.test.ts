@@ -244,6 +244,13 @@ describe('agent CLI accounts and code tasks', () => {
       expect(fs.existsSync(path.join(repo, 'hello.txt'))).toBe(false);
       expect(git('show', `omnitrix/${job!.id}:hello.txt`).stdout).toBe('written by worker\n');
       expect(git('log', '-1', '--format=%an', `omnitrix/${job!.id}`).stdout.trim()).toBe('Test');
+
+      // cleaning up removes the checkout but keeps the branch, so the work can still be merged
+      const { pruneWorktree } = await import('../src/worktree.js');
+      expect(pruneWorktree(done!.worktree!.path)).toBe(true);
+      expect(fs.existsSync(done!.worktree!.path)).toBe(false);
+      expect(git('branch', '--list', `omnitrix/${job!.id}`).stdout).toMatch(job!.id);
+      expect(git('worktree', 'list').stdout).not.toMatch(job!.id);
     } finally {
       process.env.PATH = oldPath;
     }
