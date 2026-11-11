@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runDriver } from './drivers/index.js';
+import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
 import { loadQuotas, refreshQuotas } from './quota.js';
 import { route, effectivePrivacy, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
@@ -62,6 +63,8 @@ export class Engine {
     ensureHome();
     compactLedger();
     this.health = loadHealth();
+    beat();
+    sweepOwners();
     this.recoverJobs();
     setInterval(() => this.tick(), 1000).unref();
   }
@@ -84,7 +87,7 @@ export class Engine {
       if (!job) continue;
       // However old, a job whose owner is gone must end, or `omnitrix clean` never removes it or its worktree.
       // updatedAt is left alone so an old crashed job still counts as old for `clean`.
-      if ((job.status === 'queued' || job.status === 'running') && !processAlive(job.pid)) {
+      if ((job.status === 'queued' || job.status === 'running') && !ownerAlive(job.owner, job.pid)) {
         job.status = 'failed';
         job.error = 'interrupted: the omnitrix server stopped before this job finished';
         this.saveJob(job);
@@ -162,7 +165,7 @@ export class Engine {
     }
     const now = Date.now();
     const created = tasks.map((task) => {
-      const job: Job = { id: newId('j'), task, status: 'queued', createdAt: now, updatedAt: now, attempts: [], pid: process.pid };
+      const job: Job = { id: newId('j'), task, status: 'queued', createdAt: now, updatedAt: now, attempts: [], pid: process.pid, owner: OWNER };
       this.jobs.set(job.id, job);
       this.saveJob(job);
       return job;
@@ -174,7 +177,7 @@ export class Engine {
 
   getJob(id: string): Job | undefined {
     const mine = this.jobs.get(id);
-    if (mine?.pid === process.pid) return mine;
+    if (mine && isMine(mine)) return mine;
     // Our copy of another process's job is a snapshot from startup; its file has the current state.
     return readJson<Job | null>(path.join(files.jobs(), `${id}.json`), null) ?? mine;
   }
@@ -182,7 +185,7 @@ export class Engine {
   /** Newest first. Other processes' jobs come from disk, since our copies are startup snapshots and miss new ones. */
   listJobs(limit = 50): Job[] {
     const all = new Map<string, Job>();
-    for (const j of this.jobs.values()) if (j.pid === process.pid) all.set(j.id, j);
+    for (const j of this.jobs.values()) if (isMine(j)) all.set(j.id, j);
     let names: { id: string; at: number }[] = [];
     try {
       names = fs.readdirSync(files.jobs()).filter((n) => n.endsWith('.json')).map((n) => {
@@ -230,8 +233,8 @@ export class Engine {
   cancel(id: string): boolean {
     const job = this.getJob(id);
     if (!job || job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') return false;
-    if (job.pid !== process.pid) {
-      if (processAlive(job.pid)) {
+    if (!isMine(job)) {
+      if (ownerAlive(job.owner, job.pid)) {
         // The owner cannot be reached directly, so leave a note it looks for every second.
         try {
           fs.writeFileSync(this.cancelNote(id), '');
@@ -290,13 +293,14 @@ export class Engine {
 
   /** Every second: retry saves that failed, and act on cancel notes left by other processes. */
   private tick(): void {
+    beat();
     for (const id of [...this.unsaved]) {
       const job = this.jobs.get(id);
       if (job) this.saveJob(job);
       else this.unsaved.delete(id);
     }
     for (const job of this.jobs.values()) {
-      if (job.pid !== process.pid) continue;
+      if (!isMine(job)) continue;
       const note = this.cancelNote(job.id);
       if (!fs.existsSync(note)) continue;
       // A note can arrive just as the job finishes; then there is nothing left to cancel.
@@ -304,7 +308,7 @@ export class Engine {
       if (job.status === 'queued' || job.status === 'running') this.cancel(job.id);
     }
     // A seat freed by another process sends us no signal, so queued jobs look again.
-    if ([...this.jobs.values()].some((j) => j.status === 'queued' && j.pid === process.pid)) this.pump();
+    if ([...this.jobs.values()].some((j) => j.status === 'queued' && isMine(j))) this.pump();
   }
 
   private notify(): void {
@@ -337,13 +341,15 @@ export class Engine {
   private pump(): void {
     const cfg = this.config();
     // only start our own jobs; another live process is responsible for its queue
-    const queued = [...this.jobs.values()].filter((j) => j.status === 'queued' && j.pid === process.pid).sort((a, b) => a.createdAt - b.createdAt);
+    const queued = [...this.jobs.values()].filter((j) => j.status === 'queued' && isMine(j)).sort((a, b) => a.createdAt - b.createdAt);
     // an account found full once in this pass stays full for the rest of it; no need to ask again per job
     const full = new Set<string>();
+    // Built once per pass: the usage picture is the same for every queued job, and `running` and
+    // `health` inside it are live references, so jobs started earlier in this pass are still seen.
+    const ctx = queued.length ? this.routeContext(cfg) : undefined;
     for (const job of queued) {
-      const ctx = this.routeContext(cfg);
       const tried = new Set(job.attempts.map((a) => a.accountId));
-      const { candidates, rejected } = route(job.task, ctx);
+      const { candidates, rejected } = route(job.task, ctx!);
       const fresh = candidates.filter((c) => !tried.has(c.accountId));
       // The account's limit counts jobs from every omnitrix process, so a seat is needed as well as local room.
       let seat: string | undefined;

@@ -2,6 +2,7 @@
 // Each running job holds an empty file named `<pid>-<job id>` in the account's folder.
 import fs from 'node:fs';
 import path from 'node:path';
+import { ownerAlive } from './owner.js';
 import { files, processAlive, readJson, slug } from './store.js';
 import type { Job } from './types.js';
 
@@ -74,7 +75,7 @@ function seatHeld(name: string): boolean {
   if (!processAlive(pid)) return false;
   const job = readJson<Job | null>(path.join(files.jobs(), `${name.slice(dash + 1)}.json`), null);
   if (!job) return true;
-  return job.pid === pid && (job.status === 'queued' || job.status === 'running');
+  return job.pid === pid && ownerAlive(job.owner, job.pid) && (job.status === 'queued' || job.status === 'running');
 }
 
 /** Returns the seat to pass to freeSeat, or undefined when the account is full (or the lock is busy). */

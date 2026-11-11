@@ -20,6 +20,7 @@ export const files = {
   profiles: () => path.join(homeDir(), 'profiles'),
   worktrees: () => path.join(homeDir(), 'worktrees'),
   seats: () => path.join(homeDir(), 'seats'),
+  owners: () => path.join(homeDir(), 'owners'),
 };
 
 export function processAlive(pid: number | undefined): boolean {

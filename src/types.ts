@@ -159,6 +159,8 @@ export interface Job {
   attempts: Attempt[];
   /** process that runs this job */
   pid?: number;
+  /** owner token of the process that runs the job (see owner.ts) */
+  owner?: string;
   accountId?: string;
   model?: string;
   outputFile?: string;

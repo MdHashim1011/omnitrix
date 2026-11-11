@@ -148,7 +148,7 @@ describe('engine', () => {
     const [job] = first.dispatch([{ title: 't', type: 'writing', prompt: 'q' }]);
     // simulate a crash: write the job as running and start a new process
     const { files, writeJson } = await import('../src/store.js');
-    writeJson(path.join(files.jobs(), `${job!.id}.json`), { ...first.getJob(job!.id), status: 'running', updatedAt: Date.now(), pid: 2_000_000_000 });
+    writeJson(path.join(files.jobs(), `${job!.id}.json`), { ...first.getJob(job!.id), status: 'running', updatedAt: Date.now(), pid: 2_000_000_000, owner: '2000000000.crashed' });
     const second = new Engine();
     expect(second.getJob(job!.id)!.status).toBe('failed');
     expect(second.getJob(job!.id)!.error).toMatch(/interrupted/);
