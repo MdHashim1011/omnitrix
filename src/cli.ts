@@ -533,6 +533,11 @@ program
     let trees = 0;
     for (const name of fs.existsSync(files.jobs()) ? fs.readdirSync(files.jobs()) : []) {
       const file = path.join(files.jobs(), name);
+      // cancel notes are empty files; one left from a cancel that raced a finishing job is just litter
+      if (name.endsWith('.cancel')) {
+        if (fs.statSync(file).mtimeMs < cutoff) fs.rmSync(file, { force: true });
+        continue;
+      }
       const job = readJson<Job | null>(file, null);
       if (!job || job.updatedAt > cutoff || job.status === 'queued' || job.status === 'running') continue;
       if (job.worktree && pruneWorktree(job.worktree.path)) trees++;

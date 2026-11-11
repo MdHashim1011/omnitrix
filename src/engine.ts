@@ -65,12 +65,14 @@ export class Engine {
   private health: Record<string, AccountHealth>;
   private usageCache?: { at: number; records: ReturnType<typeof readLedger> };
   private listeners = new Set<() => void>();
+  private unsaved = new Set<string>();
 
   constructor() {
     ensureHome();
     compactLedger();
     this.health = loadHealth();
     this.recoverJobs();
+    setInterval(() => this.tick(), 1000).unref();
   }
 
   /**
@@ -89,13 +91,14 @@ export class Engine {
       if (!name.endsWith('.json')) continue;
       const job = readJson<Job | null>(path.join(files.jobs(), name), null);
       if (!job) continue;
-      if (job.updatedAt < cutoff) continue;
+      // However old, a job whose owner is gone must end, or `omnitrix clean` never removes it or its worktree.
+      // updatedAt is left alone so an old crashed job still counts as old for `clean`.
       if ((job.status === 'queued' || job.status === 'running') && !processAlive(job.pid)) {
         job.status = 'failed';
         job.error = 'interrupted: the omnitrix server stopped before this job finished';
-        job.updatedAt = Date.now();
         this.saveJob(job);
       }
+      if (job.updatedAt < cutoff) continue;
       this.jobs.set(job.id, job);
     }
   }
@@ -179,7 +182,10 @@ export class Engine {
   }
 
   getJob(id: string): Job | undefined {
-    return this.jobs.get(id) ?? readJson<Job | null>(path.join(files.jobs(), `${id}.json`), null) ?? undefined;
+    const mine = this.jobs.get(id);
+    if (mine?.pid === process.pid) return mine;
+    // Our copy of another process's job is a snapshot from startup; its file has the current state.
+    return readJson<Job | null>(path.join(files.jobs(), `${id}.json`), null) ?? mine;
   }
 
   listJobs(limit = 50): Job[] {
@@ -208,8 +214,25 @@ export class Engine {
   }
 
   cancel(id: string): boolean {
-    const job = this.jobs.get(id);
+    const job = this.getJob(id);
     if (!job || job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') return false;
+    if (job.pid !== process.pid) {
+      if (processAlive(job.pid)) {
+        // The owner cannot be reached directly, so leave a note it looks for every second.
+        try {
+          fs.writeFileSync(this.cancelNote(id), '');
+        } catch {
+          return false;
+        }
+      } else {
+        job.status = 'cancelled';
+        job.error = 'cancelled';
+        job.updatedAt = Date.now();
+        this.saveJob(job);
+        this.notify();
+      }
+      return true;
+    }
     this.controllers.get(id)?.abort();
     if (job.status === 'queued') {
       job.status = 'cancelled';
@@ -241,18 +264,51 @@ export class Engine {
     }
   }
 
+  private cancelNote(id: string): string {
+    return path.join(files.jobs(), `${id}.cancel`);
+  }
+
+  /** Every second: retry saves that failed, and act on cancel notes left by other processes. */
+  private tick(): void {
+    for (const id of [...this.unsaved]) {
+      const job = this.jobs.get(id);
+      if (job) this.saveJob(job);
+      else this.unsaved.delete(id);
+    }
+    for (const job of this.jobs.values()) {
+      if (job.pid !== process.pid) continue;
+      const note = this.cancelNote(job.id);
+      if (!fs.existsSync(note)) continue;
+      // A note can arrive just as the job finishes; then there is nothing left to cancel.
+      fs.rmSync(note, { force: true });
+      if (job.status === 'queued' || job.status === 'running') this.cancel(job.id);
+    }
+  }
+
   private notify(): void {
     for (const fn of [...this.listeners]) fn();
   }
 
+  // A save that still fails after writeJson's retries must not crash the server or turn a finished job into
+  // a failed one. The in-memory state stays correct, and tick() saves it again until it sticks.
   private saveJob(job: Job): void {
-    writeJson(path.join(files.jobs(), `${job.id}.json`), job);
+    try {
+      writeJson(path.join(files.jobs(), `${job.id}.json`), job);
+      this.unsaved.delete(job.id);
+    } catch (err) {
+      if (!this.unsaved.has(job.id)) process.stderr.write(`omnitrix: could not save job ${job.id}, will retry: ${err instanceof Error ? err.message : err}\n`);
+      this.unsaved.add(job.id);
+    }
   }
 
   private setHealth(accountId: string, h: AccountHealth): void {
     const stamped = { ...h, at: Date.now() };
     this.health[accountId] = stamped;
-    saveHealth({ [accountId]: stamped });
+    try {
+      saveHealth({ [accountId]: stamped });
+    } catch (err) {
+      process.stderr.write(`omnitrix: could not save account health: ${err instanceof Error ? err.message : err}\n`);
+    }
   }
 
   /** Start every queued job that has a free account. */

@@ -36,18 +36,27 @@ export function ensureHome(): void {
   }
 }
 
-/** Write to a temp file then rename, so a crash never leaves half a file. */
+const pause = new Int32Array(new SharedArrayBuffer(4));
+
+/** Write to a temp file then rename, so no reader ever sees half a file. */
 export function writeJson(file: string, data: unknown, mode?: number): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { mode });
-  try {
-    fs.renameSync(tmp, file);
-  } catch (err) {
-    // Windows can refuse a rename over a file another process has open; fall back to a direct write.
-    fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n', { mode });
-    fs.rmSync(tmp, { force: true });
-    if (!fs.existsSync(file)) throw err;
+  // Windows refuses the rename while a virus scanner or indexer has the target open. That clears within
+  // moments, so wait and retry. Writing the target in place instead would let other processes read it empty.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (attempt >= 20 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) {
+        fs.rmSync(tmp, { force: true });
+        throw err;
+      }
+      Atomics.wait(pause, 0, 0, 25);
+    }
   }
 }
 
