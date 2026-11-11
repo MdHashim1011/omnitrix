@@ -6,7 +6,7 @@ Please do not open a public issue for a security vulnerability. Instead, use Git
 
 ## Security measures
 
-API keys are stored in `~/.omnitrix/secrets.json`, which on macOS and Linux is readable only by your user account. To avoid storing a key at all, add the account with `--key-env`, and omnitrix will read the key from the environment each time. Keys are removed from every error message, log line and job record.
+API keys are stored in `~/.omnitrix/secrets.json`, which on macOS and Linux is readable only by your user account. To avoid storing a key at all, add the account with `--key-env`, and omnitrix will read the key from the environment each time. Error messages and job records are masked for values that match common key formats, such as `sk-` and `gsk-` keys and Bearer tokens. Keys in other formats might not be masked.
 
 CLI logins remain inside each account's own profile folder. omnitrix starts the official tool with that folder and never reads, copies or uploads its contents.
 

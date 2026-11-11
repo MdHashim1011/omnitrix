@@ -31,7 +31,7 @@
 <text x="288" y="150" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#8ea3c2" text-decoration="line-through">kimi</text>
 <text x="456" y="150" text-anchor="end" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#f4b740">cooling down</text>
 <circle cx="275" cy="172" r="4.5" fill="none" stroke="#f4b740" stroke-width="1.5"/>
-<text x="288" y="176" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#8ea3c2" text-decoration="line-through">groq-free</text>
+<text x="288" y="176" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#8ea3c2" text-decoration="line-through">mistral</text>
 <text x="456" y="176" text-anchor="end" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#f4b740">trains on prompts</text>
 <circle cx="275" cy="198" r="4.5" fill="#5ad19a" stroke="#5ad19a" stroke-width="1.5"/>
 <text x="288" y="202" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#e7eef8">glm-plan</text>

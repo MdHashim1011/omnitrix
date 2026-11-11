@@ -9,9 +9,9 @@ Claude plans the work, and your other AI accounts carry it out.
 
 I built omnitrix because I repeatedly ran out of Claude credits while the ChatGPT Plus and Gemini subscriptions that my friends and I pay for remained largely unused.
 
-Many routers are designed to stretch free, low-tier models. omnitrix is designed for the frontier models you already pay for, and it runs inside your existing Claude Code session. Claude remains in charge: it divides the job into tasks and reviews the results. omnitrix sends each task to an account that suits the work and still has quota available. For example, it can use Codex on your ChatGPT plan for code edits, Gemini for reading very large logs, DeepSeek or Kimi for reasoning and review, or a local model for private work. It also supports any service that implements the OpenAI or Anthropic API.
+omnitrix is built for the frontier-model subscriptions and API keys you already pay for, and it runs inside your existing Claude Code session. Claude remains in charge: it divides the job into tasks and reviews the results. omnitrix sends each task to an account that suits the work and still has quota available. For example, it can use Codex on your ChatGPT plan for code edits, Gemini for reading very large logs, DeepSeek or Kimi for reasoning and review, or a local model for private work. It also supports any service that implements the OpenAI or Anthropic API.
 
-You can monitor the pool without leaving Claude Code. The status line shows the remaining quota for each account, and Claude checks the same data before it assigns work. Because Claude reads short results instead of performing every step itself, your Claude usage limit lasts longer.
+You can monitor the pool without leaving Claude Code. The status line shows up to four accounts with their remaining quota or status, and omnitrix instructs Claude to check the same data before it assigns work. Claude reads short results instead of performing every step itself, which uses less of your Claude usage limit.
 
 ## Installation
 
@@ -39,8 +39,8 @@ Restart Claude Code and give it a substantial task, such as "add tests for the b
 ## How tasks are routed
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/routing-dark.svg">
-  <img alt="A review task marked private. Kimi is skipped because it is cooling down, Groq because its free tier may train on prompts. DeepSeek scores highest and gets the task, with GLM and Codex as fallbacks." src="assets/routing-light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/routing-v2-dark.svg">
+  <img alt="A review task marked private. Kimi is skipped because it is cooling down, and Mistral because it is flagged as possibly training on prompts. DeepSeek scores highest and gets the task, with GLM and Codex as fallbacks." src="assets/routing-v2-light.svg" width="100%">
 </picture>
 
 Every task that Claude sends has a type, such as code, review or bulk work, and a privacy level. omnitrix first excludes any account that cannot accept the task at that moment because it is:
@@ -68,7 +68,7 @@ omnitrix route --type review "check this diff for auth bugs"
 
 <sub>The dashboard, shown with example data. Run `omnitrix dashboard` to open your own.</sub>
 
-The dashboard shows each account's name, owner, usage today and the quota remaining in each tracked window. In Claude Code, the status line gives a compact summary:
+The dashboard shows each account's name, owner, usage today and the quota remaining in each tracked window. In Claude Code, the status line gives a compact summary of up to four accounts. The Claude figures at the end appear when Claude Code provides them, which it does on Pro and Max plans:
 
 ```
 omnitrix 5/6 ready · codex-main 38% · deepseek 788 left · kimi wait · groq-free 36% │ Claude 5h 34% 7d 12%
@@ -78,7 +78,7 @@ Most subscriptions neither publish exact limits nor provide a way to query the r
 
 ## Privacy
 
-Tasks are `private` by default, which keeps them away from providers that may train on prompts, as several free tiers do. A task marked `secret` runs only on models on your own machine. omnitrix sends data only to the providers you connect, and it collects no telemetry.
+Tasks are `private` by default, which keeps them away from accounts flagged as possibly training on prompts. omnitrix flags Mistral and the Gemini API by default, and you can flag any other account with `omnitrix set <id> --trains-on-data`. A task marked `secret` runs only on local providers such as Ollama. omnitrix sends data only to the providers you connect, and it collects no telemetry.
 
 ## Connecting accounts
 
@@ -102,7 +102,7 @@ omnitrix set groq-free --rpm 30 --rpd 1000
 omnitrix set deepseek --tpd 4000000      # tokens per day
 ```
 
-The available options are `--rpm`, `--r5h`, `--rpd`, `--rpw`, `--tpd` and `--tpm`.
+The available options are `--rpm` (requests per minute), `--r5h` (requests per 5 hours), `--rpd` (requests per day), `--rpw` (requests per week), `--tpd` (tokens per day) and `--tpm` (tokens per month).
 
 ## MCP tools
 
@@ -118,7 +118,7 @@ omnitrix runs as an MCP server and gives Claude the following tools:
 | `rate_result` | Accepts or rejects a result so that the router can learn from it |
 | `cancel_job`, `list_jobs` | Cancels a job or lists recent jobs |
 
-Previews are limited to 1,500 characters to keep Claude's token usage low. Full outputs remain on disk.
+By default, previews are limited to 1,500 characters to keep Claude's token usage low; `omnitrix settings --preview-chars` changes the limit. Full outputs remain on disk.
 
 ## Commands
 
@@ -138,15 +138,15 @@ omnitrix run <prompt>           run one task and print the answer
 omnitrix settings               set the mode, privacy, and pinned or banned providers
 omnitrix dashboard              open a live web dashboard on 127.0.0.1
 omnitrix setup-claude           register with Claude Code
-omnitrix clean                  delete old jobs and worktrees (branches are kept)
+omnitrix clean                  delete finished jobs and worktrees older than 14 days (branches are kept)
 omnitrix doctor                 check the setup
 ```
 
-`omnitrix settings --mode saver` prefers free and low-cost models, `--mode quality` prefers the strongest models, and `--pin code=codex-main` always tries that account first for code tasks.
+`omnitrix settings --mode saver` prefers free and low-cost models, `--mode quality` prefers the strongest models, and `--pin code=codex-main` tries that account first for code tasks whenever it is eligible.
 
 ## Provider terms
 
-omnitrix uses only official CLIs and APIs with credentials that you enter yourself. It provides no means of importing another person's login, and that will not change.
+omnitrix uses only official CLIs and APIs with credentials that you enter yourself. It provides no means of importing another person's login.
 
 OpenAI, Google and Anthropic all prohibit sharing a consumer account, so connect only accounts that you own. A friend who wishes to contribute should use an API key billed to them. Anthropic permits Claude subscriptions for ordinary individual use only. Google has suspended accounts that used Antigravity sign-in through third-party tools, so omnitrix marks Antigravity as experimental and recommends Gemini API keys instead. Free tiers are often limited per organization, so additional keys from the same organization provide no extra quota.
 
