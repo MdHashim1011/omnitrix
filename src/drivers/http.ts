@@ -8,6 +8,9 @@ export function classifyStatus(status: number, body: string): ErrorKind {
   if (status === 401 || status === 403) return 'auth';
   if (status === 402) return 'quota';
   if (status === 429) {
+    // "limit: 0" means the plan includes no allowance for this model at all (Gemini's free tier and Pro
+    // models, for example). That is the model's problem, not a sign that the whole account is used up.
+    if (/limit: 0\b/.test(text)) return 'model_gone';
     // some providers use 429 for "you are out of credits" as well as "slow down"
     return /(quota|insufficient|exceeded your current|billing|credit|balance)/.test(text) ? 'quota' : 'rate_limit';
   }

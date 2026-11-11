@@ -61,6 +61,9 @@ describe('http helpers', () => {
     expect(classifyStatus(404, '{"error":{"message":"This model models/gemini-2.5-flash is no longer available to new users."}}')).toBe('model_gone');
     expect(classifyStatus(404, '{"error":{"message":"The model `gpt-x` does not exist"}}')).toBe('model_gone');
     expect(classifyStatus(404, 'page not found')).toBe('bad_request');
+    // a plan with no allowance for one model must not mark the whole account as out of quota
+    expect(classifyStatus(429, 'Quota exceeded for metric: free_tier_input_token_count, limit: 0, model: gemini-3.1-pro')).toBe('model_gone');
+    expect(classifyStatus(429, 'Quota exceeded for metric: free_tier_requests, limit: 250, model: gemini-flash')).toBe('quota');
   });
 
   it('parses durations and retry headers', () => {
