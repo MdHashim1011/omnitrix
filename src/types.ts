@@ -119,7 +119,7 @@ export interface UsageRecord {
   costUsd?: number;
 }
 
-export type ErrorKind = 'rate_limit' | 'quota' | 'auth' | 'bad_request' | 'server' | 'network' | 'timeout' | 'cancelled' | 'unknown';
+export type ErrorKind = 'rate_limit' | 'quota' | 'auth' | 'bad_request' | 'server' | 'network' | 'timeout' | 'cancelled' | 'model_gone' | 'unknown';
 
 export interface TaskSpec {
   title: string;

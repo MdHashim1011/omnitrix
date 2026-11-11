@@ -13,6 +13,8 @@ export function classifyStatus(status: number, body: string): ErrorKind {
   }
   if (status === 408) return 'timeout';
   if (status >= 500) return 'server';
+  // Providers retire models but keep listing them; this is the model's fault, not the task's.
+  if ((status === 404 || status === 400) && /model/.test(text) && /(no longer available|not found|does not exist|is not supported|deprecated|retired)/.test(text)) return 'model_gone';
   if (status >= 400) return 'bad_request';
   return 'unknown';
 }

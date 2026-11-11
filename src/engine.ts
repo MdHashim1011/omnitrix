@@ -8,7 +8,7 @@ import { loadQuotas, refreshQuotas } from './quota.js';
 import { route, effectivePrivacy, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
-import { ensureHome, files, findAccount, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
+import { dropModel, ensureHome, files, findAccount, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
 import { DriverError, type Account, type AccountHealth, type Config, type Job, type TaskSpec, type UsageRecord } from './types.js';
 import { compactLedger, LedgerTail, recordUsage, summarize, type UsageSummary } from './usage.js';
 import { createWorktree, discardWorktree, finishWorktree, isGitRepo } from './worktree.js';
@@ -355,7 +355,8 @@ export class Engine {
     // `health` inside it are live references, so jobs started earlier in this pass are still seen.
     const ctx = queued.length ? this.routeContext(cfg) : undefined;
     for (const job of queued) {
-      const tried = new Set(job.attempts.map((a) => a.accountId));
+      // a retired model is not the account's fault, so that account may still be tried with another model
+      const tried = new Set(job.attempts.filter((a) => a.errorKind !== 'model_gone').map((a) => a.accountId));
       const { candidates, rejected } = route(job.task, ctx!);
       const fresh = candidates.filter((c) => !tried.has(c.accountId));
       // The account's limit counts jobs from every omnitrix process, so a seat is needed as well as local room.
@@ -459,6 +460,13 @@ export class Engine {
         this.usageCache = undefined;
       }
       this.applyFailure(account, e);
+      if (e.kind === 'model_gone') {
+        try {
+          dropModel(account.id, cand.model);
+        } catch {
+          // the attempt is still retried; the model is dropped next time
+        }
+      }
 
       if (ctrl.signal.aborted || e.kind === 'cancelled') {
         job.status = 'cancelled';

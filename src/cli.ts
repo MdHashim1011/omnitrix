@@ -15,7 +15,7 @@ import { describeAccount } from './mcp.js';
 import { isChatModel, makeModel } from './models.js';
 import { PROVIDERS, getProvider } from './providers.js';
 import { renderStatusLine } from './statusline.js';
-import { deleteSecret, ensureHome, files, findAccount, homeDir, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
+import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
 import { pruneWorktree } from './worktree.js';
 import { DriverError, TASK_TYPES, type Account, type Job, type Limits, type TaskType } from './types.js';
 import { refreshQuotas } from './quota.js';
@@ -24,6 +24,14 @@ import { VERSION } from './version.js';
 
 const program = new Command();
 program.name('omnitrix').description('One Claude brain, every AI account you have.').version(VERSION);
+
+/** Report a failure after network work without calling process.exit: exiting while a connection is still
+ *  closing trips a libuv assertion on Windows (UV_HANDLE_CLOSING). Node exits once its handles are done. */
+function fail(msg: string): void {
+  process.stderr.write(`error: ${msg}
+`);
+  process.exitCode = 1;
+}
 
 function die(msg: string): never {
   process.stderr.write(`error: ${msg}\n`);
@@ -162,7 +170,8 @@ limitOptions(
     if (!account.models.length && spec.models?.length) account.models = spec.models.map((m) => makeModel(m));
     if (!account.models.length) {
       if (o.key) deleteSecret(id);
-      die('no models found; pass them with --model id1,id2');
+      fail('no models found; pass them with --model id1,id2');
+      return;
     }
   }
 
@@ -346,22 +355,33 @@ program
   .option('--model <id>')
   .action(async (id: string, o) => {
     const acc = findAccount(loadConfig(), id) ?? die(`no account "${id}"`);
-    const model = o.model ?? acc.models[0]?.id ?? 'default';
-    const t0 = Date.now();
-    process.stdout.write(`testing ${id}/${model} ... `);
-    try {
-      const r = await runDriver({ account: acc, model, prompt: 'Reply with the single word OK.', timeoutMs: 180_000, maxOutputTokens: 64 });
-      const ms = Date.now() - t0;
-      recordUsage({ ts: Date.now(), accountId: id, model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ok: true, latencyMs: ms, costUsd: r.costUsd });
-      saveHealth({ [id]: { state: 'ready', measured: r.rate ? { ...r.rate, at: Date.now(), source: 'response headers' } : undefined } });
-      console.log(`ok in ${(ms / 1000).toFixed(1)}s: "${r.text.trim().slice(0, 60)}"`);
-      if (r.rate?.remainingRequests !== undefined) console.log(`provider says ${r.rate.remainingRequests} requests left in this window`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.log('failed');
-      if (err instanceof DriverError && err.kind === 'auth') saveHealth({ [id]: { state: 'auth_error', reason: msg.slice(0, 160) } });
-      die(redact(msg));
+    // try the listed models in order until one answers; a provider may still list models it has retired
+    const queue = o.model ? [o.model] : acc.models.length ? acc.models.map((m) => m.id) : ['default'];
+    for (const model of queue) {
+      const t0 = Date.now();
+      process.stdout.write(`testing ${id}/${model} ... `);
+      try {
+        const r = await runDriver({ account: acc, model, prompt: 'Reply with the single word OK.', timeoutMs: 180_000, maxOutputTokens: 64 });
+        const ms = Date.now() - t0;
+        recordUsage({ ts: Date.now(), accountId: id, model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ok: true, latencyMs: ms, costUsd: r.costUsd });
+        saveHealth({ [id]: { state: 'ready', measured: r.rate ? { ...r.rate, at: Date.now(), source: 'response headers' } : undefined } });
+        console.log(`ok in ${(ms / 1000).toFixed(1)}s: "${r.text.trim().slice(0, 60)}"`);
+        if (r.rate?.remainingRequests !== undefined) console.log(`provider says ${r.rate.remainingRequests} requests left in this window`);
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.log('failed');
+        if (err instanceof DriverError && err.kind === 'model_gone' && !o.model) {
+          dropModel(id, model);
+          console.log(`  ${model} is no longer available, so it was removed from ${id}; trying the next model`);
+          continue;
+        }
+        if (err instanceof DriverError && err.kind === 'auth') saveHealth({ [id]: { state: 'auth_error', reason: msg.slice(0, 160) } });
+        fail(redact(msg));
+        return;
+      }
     }
+    fail(`no model on ${id} answered`);
   });
 
 program
@@ -571,4 +591,4 @@ program
     }
   });
 
-program.parseAsync().catch((err) => die(err instanceof Error ? err.message : String(err)));
+program.parseAsync().catch((err) => fail(err instanceof Error ? err.message : String(err)));

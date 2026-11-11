@@ -57,6 +57,10 @@ describe('http helpers', () => {
     expect(classifyStatus(429, 'You exceeded your current quota')).toBe('quota');
     expect(classifyStatus(503, '')).toBe('server');
     expect(classifyStatus(400, '')).toBe('bad_request');
+    // a retired or unknown model: the job should move on to another model, not fail
+    expect(classifyStatus(404, '{"error":{"message":"This model models/gemini-2.5-flash is no longer available to new users."}}')).toBe('model_gone');
+    expect(classifyStatus(404, '{"error":{"message":"The model `gpt-x` does not exist"}}')).toBe('model_gone');
+    expect(classifyStatus(404, 'page not found')).toBe('bad_request');
   });
 
   it('parses durations and retry headers', () => {

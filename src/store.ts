@@ -95,6 +95,15 @@ export function saveConfig(cfg: Config): void {
   writeJson(files.config(), cfg);
 }
 
+/** Remove a model the provider no longer serves, so the router stops choosing it. */
+export function dropModel(accountId: string, modelId: string): void {
+  const cfg = loadConfig();
+  const acc = findAccount(cfg, accountId);
+  if (!acc || !acc.models.some((m) => m.id === modelId)) return;
+  acc.models = acc.models.filter((m) => m.id !== modelId);
+  saveConfig(cfg);
+}
+
 export function findAccount(cfg: Config, id: string): Account | undefined {
   return cfg.accounts.find((a) => a.id === id);
 }
