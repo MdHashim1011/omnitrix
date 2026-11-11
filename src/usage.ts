@@ -1,5 +1,6 @@
 // Works out what each account has used per time window, from an append-only log of every request.
 import fs from 'node:fs';
+import path from 'node:path';
 import type { AccountQuota } from './quota.js';
 import { ensureHome, files } from './store.js';
 import type { Account, AccountHealth, UsageRecord } from './types.js';
@@ -14,9 +15,21 @@ export function recordUsage(rec: UsageRecord): void {
 }
 
 export function readLedger(sinceMs = 0): UsageRecord[] {
-  let raw: string;
+  // While another process compacts, its old lines sit in a .compacting file. Counting them too means a
+  // reader never sees usage drop to zero; the overlap just before that file is deleted counts twice,
+  // which only errs towards caution.
+  let raw = '';
+  const live = files.ledger();
   try {
-    raw = fs.readFileSync(files.ledger(), 'utf8');
+    const base = path.basename(live);
+    const parts = fs.readdirSync(path.dirname(live)).filter((n) => n === base || n.startsWith(`${base}.compacting.`));
+    for (const n of parts) {
+      try {
+        raw += fs.readFileSync(path.join(path.dirname(live), n), 'utf8') + '\n';
+      } catch {
+        // renamed or deleted between the listing and the read
+      }
+    }
   } catch {
     return [];
   }
@@ -33,15 +46,52 @@ export function readLedger(sinceMs = 0): UsageRecord[] {
   return out;
 }
 
-/** Drop records older than 35 days once the file gets big. */
-export function compactLedger(maxBytes = 5_000_000): void {
+function pidAlive(pid: number): boolean {
   try {
-    if (fs.statSync(files.ledger()).size < maxBytes) return;
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Drop records older than 35 days once the file gets big.
+ * Other processes keep appending while this runs. So the ledger is first renamed to a file only this
+ * process owns: their new lines start a fresh ledger, and the kept lines are appended to it rather than
+ * written over it. Line order changes, which nothing depends on.
+ */
+export function compactLedger(maxBytes = 5_000_000): void {
+  const live = files.ledger();
+  const mine = `${live}.compacting.${process.pid}`;
+  try {
+    const dir = path.dirname(live);
+    const base = path.basename(live);
+    // A process that crashed mid-compaction left its file behind; take it over by renaming it. A file
+    // already named for our own pid can only come from an earlier process that had the same pid.
+    const stranded = fs.readdirSync(dir).find((n) => {
+      const m = n.startsWith(`${base}.compacting.`) && /\.(\d+)$/.exec(n);
+      return m && (Number(m[1]) === process.pid || !pidAlive(Number(m[1])));
+    });
+    if (stranded && path.join(dir, stranded) !== mine) fs.renameSync(path.join(dir, stranded), mine);
+    else if (stranded) {
+      // already ours to finish
+    } else if (fs.statSync(live).size >= maxBytes) fs.renameSync(live, mine);
+    else return;
   } catch {
     return;
   }
-  const keep = readLedger(Date.now() - 35 * DAY);
-  fs.writeFileSync(files.ledger(), keep.map((r) => JSON.stringify(r)).join('\n') + (keep.length ? '\n' : ''));
+  const cutoff = Date.now() - 35 * DAY;
+  const keep = fs.readFileSync(mine, 'utf8').split('\n').filter((line) => {
+    try {
+      return line && (JSON.parse(line) as UsageRecord).ts >= cutoff;
+    } catch {
+      return false;
+    }
+  });
+  // The leading newline ends any half-written line a crashed writer left, so it cannot swallow ours.
+  if (keep.length) fs.appendFileSync(live, '\n' + keep.join('\n') + '\n');
+  fs.rmSync(mine, { force: true });
 }
 
 export interface WindowUse {
