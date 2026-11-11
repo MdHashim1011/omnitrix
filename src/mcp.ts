@@ -34,6 +34,46 @@ const taskSchema = z.object({
   size: z.enum(['small', 'medium', 'large']).optional(),
 });
 
+// Declared output shapes. Some clients show only structuredContent, so it carries everything the text does.
+const accountOut = z.object({
+  id: z.string(),
+  label: z.string(),
+  state: z.string(),
+  provider: z.string(),
+  owner: z.string(),
+  plan: z.string().nullable(),
+  percentUsed: z.number().nullable(),
+  source: z.enum(['measured', 'estimated', 'untracked']),
+  quota: z.array(z.string()).describe('each tracked window, for example "5 hours: 94% left (resets Wed, 5:02 am)"'),
+  requestsToday: z.number(),
+  tokensToday: z.number(),
+  costToday: z.number(),
+  remainingRequests: z.number().nullable().describe('what the provider itself last said is left'),
+  until: z.number().nullable().describe('epoch ms when a cooling or exhausted account is back'),
+  reason: z.string().nullable(),
+  models: z.array(z.string()).describe('first six models'),
+  modelCount: z.number(),
+});
+const poolOut = z.object({ ready: z.number(), total: z.number(), accounts: z.array(accountOut) });
+const dispatchOut = z.object({
+  job_ids: z.array(z.string()),
+  jobs: z.array(z.object({ job_id: z.string(), title: z.string(), status: z.string(), account: z.string().optional(), model: z.string().optional(), error: z.string().optional() })),
+});
+const jobOut = z.object({
+  job_id: z.string(),
+  title: z.string(),
+  status: z.string(),
+  account: z.string().optional(),
+  model: z.string().optional(),
+  result: z.string().optional(),
+  truncated: z.string().optional(),
+  branch: z.string().optional(),
+  tokens: z.number().optional(),
+  error: z.string().optional(),
+  attempts: z.array(z.string()).optional(),
+});
+const resultsOut = z.object({ jobs: z.array(jobOut), pending: z.number().describe('jobs still queued or running'), unknown: z.array(z.string()).describe('ids that match no job') });
+
 function text(t: string, structured?: Record<string, unknown>) {
   return { content: [{ type: 'text' as const, text: t }], ...(structured ? { structuredContent: structured } : {}) };
 }
@@ -96,16 +136,37 @@ export function buildServer(engine: Engine): McpServer {
       title: 'Pool status',
       description: 'List every connected AI account with its state, owner, models and how much quota is used and left.',
       inputSchema: z.object({}),
+      outputSchema: poolOut,
       annotations: { readOnlyHint: true },
     },
     async () => {
       // Wait briefly for fresh quota; a slow Codex keeps reading in the background and the saved numbers are used meanwhile.
       await refreshQuotas(engine.config().accounts, 60_000, 5_000);
       const pool = engine.pool();
-      if (!pool.length) return text('No accounts yet. The user can add some with: omnitrix add <provider> (run "omnitrix providers" for the list).', { accounts: [] });
+      if (!pool.length) return text('No accounts yet. The user can add some with: omnitrix add <provider> (run "omnitrix providers" for the list).', { ready: 0, total: 0, accounts: [] });
       const ready = pool.filter((a) => a.state === 'ready' || a.state === 'busy').length;
       const lines = [`${ready}/${pool.length} accounts available`, ...pool.map(describeAccount)];
-      return text(lines.join('\n'), { accounts: pool.map((a) => ({ id: a.id, state: a.state, provider: a.provider, owner: a.owner, percentUsed: a.usage.percentUsed ?? null, source: a.usage.source, plan: a.usage.plan ?? null, quota: a.usage.windows.map(describeWindow) })) });
+      const accounts = pool.map((a) => ({
+        id: a.id,
+        label: a.label,
+        state: a.state,
+        provider: a.provider,
+        owner: a.owner,
+        // quota.json can be edited by hand; a bad value here must not fail the whole reply
+        plan: typeof a.usage.plan === 'string' ? a.usage.plan : null,
+        percentUsed: Number.isFinite(a.usage.percentUsed) ? a.usage.percentUsed! : null,
+        source: a.usage.source,
+        quota: a.usage.windows.map(describeWindow),
+        requestsToday: a.usage.requestsToday,
+        tokensToday: a.usage.tokensToday,
+        costToday: a.usage.costToday,
+        remainingRequests: a.usage.measured?.remainingRequests ?? null,
+        until: a.until ?? null,
+        reason: a.reason ?? null,
+        models: a.models.slice(0, 6),
+        modelCount: a.models.length,
+      }));
+      return text(lines.join('\n'), { ready, total: pool.length, accounts });
     },
   );
 
@@ -135,6 +196,7 @@ export function buildServer(engine: Engine): McpServer {
       title: 'Dispatch tasks',
       description: 'Send tasks to the worker pool. Independent tasks run in parallel on different accounts. Returns job ids right away; collect results with get_results.',
       inputSchema: z.object({ tasks: z.array(taskSchema).min(1).max(30) }),
+      outputSchema: dispatchOut,
     },
     async ({ tasks }) => {
       let jobs: Job[];
@@ -144,7 +206,8 @@ export function buildServer(engine: Engine): McpServer {
         return fail(err instanceof Error ? err.message : String(err));
       }
       const lines = jobs.map((j) => `${j.id}  ${j.task.title}  -> ${j.status === 'failed' ? `FAILED: ${j.error}` : j.accountId ? `${j.accountId}/${j.model}` : 'queued'}`);
-      return text(lines.join('\n') + '\n\nCall get_results with these job ids.', { job_ids: jobs.map((j) => j.id) });
+      const brief = jobs.map((j) => ({ job_id: j.id, title: j.task.title, status: j.status, account: j.accountId, model: j.model, error: j.status === 'failed' ? j.error : undefined }));
+      return text(lines.join('\n') + '\n\nCall get_results with these job ids.', { job_ids: jobs.map((j) => j.id), jobs: brief });
     },
   );
 
@@ -159,6 +222,7 @@ export function buildServer(engine: Engine): McpServer {
         wait_seconds: z.number().int().min(0).max(110).optional(),
         full: z.boolean().optional().describe('return complete outputs instead of previews (uses more context)'),
       }),
+      outputSchema: resultsOut,
       annotations: { readOnlyHint: true },
     },
     async ({ job_ids, wait_seconds, full }) => {
@@ -168,7 +232,7 @@ export function buildServer(engine: Engine): McpServer {
       const pending = jobs.filter((j) => j.status === 'queued' || j.status === 'running').length;
       const head = pending ? `${pending} still working; call get_results again for them.\n\n` : '';
       const miss = missing.length ? `\nunknown job ids: ${missing.join(', ')}` : '';
-      return text(head + JSON.stringify(views, null, 2) + miss, { jobs: views });
+      return text(head + JSON.stringify(views, null, 2) + miss, { jobs: views, pending, unknown: missing });
     },
   );
 
@@ -198,8 +262,8 @@ export function buildServer(engine: Engine): McpServer {
       description: 'Tell omnitrix whether a finished job was good enough. The router uses this to choose better models next time.',
       inputSchema: z.object({ job_id: z.string(), accepted: z.boolean(), note: z.string().max(500).optional() }),
     },
-    async ({ job_id, accepted }) => {
-      const job = engine.verdict(job_id, accepted);
+    async ({ job_id, accepted, note }) => {
+      const job = engine.verdict(job_id, accepted, note);
       if (!job) return fail(`job ${job_id} is not a finished job`);
       return text(`recorded: ${job.model} ${accepted ? 'accepted' : 'rejected'} for ${job.task.type}`);
     },

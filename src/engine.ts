@@ -243,10 +243,11 @@ export class Engine {
     return true;
   }
 
-  verdict(id: string, accepted: boolean): Job | undefined {
+  verdict(id: string, accepted: boolean, note?: string): Job | undefined {
     const job = this.getJob(id);
     if (!job || !job.model || job.status !== 'done') return undefined;
     job.verdict = accepted ? 'accepted' : 'rejected';
+    job.verdictNote = note;
     recordVerdict(job.model, job.task.type, accepted);
     job.updatedAt = Date.now();
     this.jobs.set(job.id, job);

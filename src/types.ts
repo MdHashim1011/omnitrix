@@ -168,6 +168,8 @@ export interface Job {
   worktree?: { path: string; branch: string; diffStat?: string };
   usage?: { inputTokens: number; outputTokens: number; costUsd?: number };
   verdict?: 'accepted' | 'rejected';
+  /** why Claude accepted or rejected the result, as it said in rate_result */
+  verdictNote?: string;
 }
 
 export interface DriverRequest {

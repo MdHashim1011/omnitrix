@@ -59,4 +59,48 @@ describe('MCP server (real stdio process)', () => {
     const r: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 'x', type: 'code', prompt: 'p' }] } });
     expect(r.isError).toBe(true);
   });
+
+  // Some clients show only structuredContent, so it must carry everything the text does.
+  it('declares output schemas and puts the full pool in structured data', async () => {
+    const { tools } = await client.listTools();
+    for (const name of ['pool_status', 'dispatch', 'get_results']) expect(tools.find((t) => t.name === name)!.outputSchema, name).toBeDefined();
+    const status: any = await client.callTool({ name: 'pool_status', arguments: {} });
+    expect(status.structuredContent).toMatchObject({ ready: 1, total: 1 });
+    expect(status.structuredContent.accounts[0]).toMatchObject({ id: 'worker', label: 'Test worker', models: ['test-model'], quota: [expect.stringMatching(/requests left/)] });
+    expect(status.structuredContent.accounts[0]).toMatchObject({ requestsToday: expect.any(Number), costToday: expect.any(Number), remainingRequests: null });
+  });
+
+  it('tells a job that failed at dispatch from a queued one in structured data', async () => {
+    const sent: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 'secret', type: 'writing', prompt: 'p', privacy: 'secret', use: 'nobody' }] } });
+    expect(sent.structuredContent.jobs[0]).toMatchObject({ title: 'secret', status: 'failed', error: expect.stringMatching(/no account/) });
+  });
+
+  it('reports unknown and pending job ids as data', async () => {
+    const res: any = await client.callTool({ name: 'get_results', arguments: { job_ids: ['nope'], wait_seconds: 0 } });
+    expect(res.structuredContent).toEqual({ jobs: [], pending: 0, unknown: ['nope'] });
+  });
+
+  it('keeps the note given with a verdict', async () => {
+    const sent: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 'n', type: 'writing', prompt: 'p' }] } });
+    const id = sent.structuredContent.job_ids[0];
+    await client.callTool({ name: 'get_results', arguments: { job_ids: [id], wait_seconds: 10 } });
+    await client.callTool({ name: 'rate_result', arguments: { job_id: id, accepted: false, note: 'missed the second step' } });
+    const saved = JSON.parse(fs.readFileSync(path.join(process.env.OMNITRIX_HOME!, 'jobs', `${id}.json`), 'utf8'));
+    expect(saved).toMatchObject({ verdict: 'rejected', verdictNote: 'missed the second step' });
+  });
+});
+
+describe('MCP server with no accounts', () => {
+  it('still returns structured data that matches its schema', async () => {
+    const home = tempHome();
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [cli, 'mcp'], env: { ...(process.env as Record<string, string>), OMNITRIX_HOME: home }, stderr: 'pipe' }));
+    try {
+      const status: any = await client.callTool({ name: 'pool_status', arguments: {} });
+      expect(status.isError).toBeFalsy();
+      expect(status.structuredContent).toEqual({ ready: 0, total: 0, accounts: [] });
+    } finally {
+      await client.close();
+    }
+  }, 30_000);
 });
