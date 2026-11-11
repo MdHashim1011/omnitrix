@@ -96,6 +96,11 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
     const busy = (ctx.running[account.id] ?? 0) >= account.concurrency;
 
     for (const model of models) {
+      const paused = ctx.health[modelHealthKey(account.id, model.id)];
+      if (paused && paused.state === 'cooling' && (paused.until ?? 0) > now) {
+        reject(`paused until ${new Date(paused.until!).toLocaleTimeString()} (${paused.reason ?? 'not answering'})`, model.id);
+        continue;
+      }
       if (task.type === 'vision' && model.skills.vision < 5) { reject('model cannot read images', model.id); continue; }
       const why: string[] = [];
       const f = fit(model.skills, task.type);
@@ -128,6 +133,11 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
 
   candidates.sort((a, b) => b.score - a.score);
   return { candidates, rejected };
+}
+
+/** Health entries for one model sit next to the account entries, keyed "account/model". */
+export function modelHealthKey(accountId: string, modelId: string): string {
+  return `${accountId}/${modelId}`;
 }
 
 export function splitUse(use: string): [string, string | undefined] {

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { runDriver } from './drivers/index.js';
 import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
 import { loadQuotas, refreshQuotas } from './quota.js';
-import { route, effectivePrivacy, type Candidate, type Rejected, type RouteContext } from './router.js';
+import { route, effectivePrivacy, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
@@ -14,6 +14,8 @@ import { compactLedger, LedgerTail, recordUsage, summarize, type UsageSummary } 
 import { createWorktree, discardWorktree, finishWorktree, isGitRepo } from './worktree.js';
 
 const MAX_ATTEMPTS = 3;
+const MODEL_PAUSE_MS = 5 * 60_000;
+const MODEL_FAULTS = new Set(['model_gone', 'server', 'timeout']);
 const MAX_FILE_BYTES = 400_000;
 
 const WORKER_SYSTEM = [
@@ -142,6 +144,15 @@ export class Engine {
       }
       if (state === 'ready' && (this.running[a.id] ?? 0) > 0) state = 'busy';
       if (state === 'ready' && ctx.usage[a.id]!.percentUsed === 100) state = 'exhausted';
+      // every model paused means the account cannot take work either, so say so until the first one is back
+      let pausedUntil: number | undefined;
+      if (state === 'ready' && a.models.length) {
+        const ends = a.models.map((m) => this.health[modelHealthKey(a.id, m.id)]).map((mh) => (mh?.state === 'cooling' && (mh.until ?? 0) > now ? mh.until! : 0));
+        if (ends.every((t) => t > 0)) {
+          state = 'cooling';
+          pausedUntil = Math.min(...ends);
+        }
+      }
       return {
         id: a.id,
         label: a.label,
@@ -150,8 +161,8 @@ export class Engine {
         driver: a.driver,
         enabled: a.enabled,
         state,
-        until: h?.until && h.until > now ? h.until : undefined,
-        reason: state === 'ready' || state === 'busy' ? undefined : h?.reason,
+        until: pausedUntil ?? (h?.until && h.until > now ? h.until : undefined),
+        reason: pausedUntil ? 'every model is paused after errors' : state === 'ready' || state === 'busy' ? undefined : h?.reason,
         running: this.running[a.id] ?? 0,
         models: a.models.map((m) => m.id),
         usage: ctx.usage[a.id]!,
@@ -356,9 +367,14 @@ export class Engine {
     const ctx = queued.length ? this.routeContext(cfg) : undefined;
     for (const job of queued) {
       // a retired model is not the account's fault, so that account may still be tried with another model
-      const tried = new Set(job.attempts.filter((a) => a.errorKind !== 'model_gone').map((a) => a.accountId));
+      // A retired, overloaded or silent model is that model's problem, not the account's: the account may be
+      // tried again with another model, and the failing model is paused so it is not picked twice.
+      const tried = new Set(job.attempts.filter((a) => !MODEL_FAULTS.has(a.errorKind ?? 'unknown')).map((a) => a.accountId));
       const { candidates, rejected } = route(job.task, ctx!);
-      const fresh = candidates.filter((c) => !tried.has(c.accountId));
+      // After a server error or a timeout, other accounts go first: when a whole provider is down, the
+      // remaining attempts should not all be spent on that provider's other models.
+      const faulted = new Set(job.attempts.filter((a) => a.errorKind === 'server' || a.errorKind === 'timeout').map((a) => a.accountId));
+      const fresh = candidates.filter((c) => !tried.has(c.accountId)).sort((x, y) => Number(faulted.has(x.accountId)) - Number(faulted.has(y.accountId)));
       // The account's limit counts jobs from every omnitrix process, so a seat is needed as well as local room.
       let seat: string | undefined;
       const free = fresh.find((c) => {
@@ -459,7 +475,7 @@ export class Engine {
         recordUsage({ ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: 0, outputTokens: 0, ok: false, status: e.status, errorKind: e.kind, latencyMs: Date.now() - t0 });
         this.usageCache = undefined;
       }
-      this.applyFailure(account, e);
+      this.applyFailure(account, e, cand.model);
       if (e.kind === 'model_gone') {
         try {
           dropModel(account.id, cand.model);
@@ -498,9 +514,14 @@ export class Engine {
     }
   }
 
-  private applyFailure(account: Account, e: DriverError): void {
+  private applyFailure(account: Account, e: DriverError, model: string): void {
     const now = Date.now();
     const prev = this.health[account.id];
+    if (e.kind === 'server' || e.kind === 'timeout') {
+      // pause just this model; the router skips it and the job moves on to the account's other models
+      this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + MODEL_PAUSE_MS, reason: e.kind === 'timeout' ? 'no answer' : 'provider error' });
+      if (account.models.length > 1) return;
+    }
     switch (e.kind) {
       case 'rate_limit':
         this.setHealth(account.id, { state: 'cooling', until: now + (e.retryAfterMs ?? 60_000), reason: 'rate limited', measured: prev?.measured });

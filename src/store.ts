@@ -143,6 +143,8 @@ export function saveHealth(update: Record<string, AccountHealth>): void {
   const now = Date.now();
   const merged = loadHealth();
   for (const [id, h] of Object.entries(update)) merged[id] = { ...h, at: h.at ?? now };
+  // model pauses (keys "account/model") that have run out carry no information, so they are dropped
+  for (const [id, h] of Object.entries(merged)) if (id.includes('/') && h.state === 'cooling' && (h.until ?? 0) <= now) delete merged[id];
   writeJson(files.health(), merged);
 }
 
