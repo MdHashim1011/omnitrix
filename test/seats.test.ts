@@ -44,9 +44,17 @@ describe('account seats', () => {
     const dir = path.join(files.seats(), 'acc');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, '.lock'), String(process.pid));
-    const started = Date.now();
+    // count lock attempts rather than time them; slow CI machines broke a time limit here
+    const real = fs.writeFileSync;
+    let attempts = 0;
+    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation(((file: fs.PathOrFileDescriptor, data: unknown, opts?: unknown) => {
+      if (String(file).endsWith('.lock')) attempts++;
+      return real(file, data as string, opts as never);
+    }) as typeof fs.writeFileSync);
     expect(takeSeat('acc', 1, 'j1')).toBeUndefined();
-    expect(Date.now() - started).toBeLessThan(400);
+    spy.mockRestore();
+    expect(attempts).toBeGreaterThan(1);
+    expect(attempts).toBeLessThanOrEqual(10);
   });
 
   it('does not remove a lock it no longer owns', () => {
