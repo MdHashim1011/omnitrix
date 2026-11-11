@@ -17,7 +17,7 @@ import { PROVIDERS, getProvider } from './providers.js';
 import { renderStatusLine } from './statusline.js';
 import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
 import { pruneWorktree } from './worktree.js';
-import { DriverError, TASK_TYPES, type Account, type Job, type Limits, type TaskType } from './types.js';
+import { EFFORTS, DriverError, TASK_TYPES, type Account, type Job, type Limits, type TaskType } from './types.js';
 import { refreshQuotas } from './quota.js';
 import { recordUsage } from './usage.js';
 import { VERSION } from './version.js';
@@ -390,20 +390,24 @@ program
   .addOption(new Option('--type <type>', 'task type').choices([...TASK_TYPES]).default('writing'))
   .addOption(new Option('--privacy <level>').choices(['public', 'private', 'secret']))
   .option('--use <account[/model]>', 'force an account or model')
+  .addOption(new Option('--effort <level>', 'how hard a reasoning model should think').choices([...EFFORTS]))
   .option('--repo <path>', 'git repo for code tasks')
   .action(async (words: string[], o) => {
     const engine = new Engine();
     const prompt = words.join(' ');
-    const [job] = engine.dispatch([{ title: prompt.slice(0, 60), type: o.type as TaskType, prompt, privacy: o.privacy, use: o.use, repo: o.repo ? path.resolve(o.repo) : undefined }]);
+    const [job] = engine.dispatch([{ title: prompt.slice(0, 60), type: o.type as TaskType, prompt, privacy: o.privacy, use: o.use, effort: o.effort, repo: o.repo ? path.resolve(o.repo) : undefined }]);
     // wait a moment first so the chosen account is printed before the answer arrives
     let done = await engine.wait([job!.id], 1);
     if (done[0]?.accountId) process.stderr.write(`-> ${done[0].accountId}/${done[0].model}\n`);
     while (done[0] && (done[0].status === 'queued' || done[0].status === 'running')) done = await engine.wait([job!.id], 30);
     const j = done[0]!;
-    if (j.status !== 'done') die(j.error ?? j.status);
+    if (j.status !== 'done') {
+      fail(j.error ?? j.status);
+      return;
+    }
     process.stderr.write(`(${j.accountId}/${j.model}, ${(j.usage?.inputTokens ?? 0) + (j.usage?.outputTokens ?? 0)} tokens)\n`);
     console.log(engine.readOutput(j.id) ?? j.preview);
-    process.exit(0);
+    // no process.exit here: exiting while a connection is still closing crashes Node on Windows
   });
 
 program

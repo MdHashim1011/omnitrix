@@ -122,6 +122,8 @@ omnitrix runs as an MCP server and gives Claude the following tools:
 
 The `pool_status`, `dispatch` and `get_results` tools declare output schemas, and their structured data contains everything their text shows. `list_jobs` also lists jobs that other omnitrix processes started, and `cancel_job` can cancel them.
 
+A task can set `effort` to `low`, `medium` or `high` to ask a reasoning model to think less or more. omnitrix passes it to Codex and to OpenAI-compatible APIs such as Gemini; without it, each provider uses its own default. From the command line, use `omnitrix run --effort high`.
+
 By default, previews are limited to 1,500 characters to keep Claude's token usage low; `omnitrix settings --preview-chars` changes the limit. Full outputs remain on disk.
 
 ## Commands
