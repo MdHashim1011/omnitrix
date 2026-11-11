@@ -179,8 +179,31 @@ export class Engine {
     return readJson<Job | null>(path.join(files.jobs(), `${id}.json`), null) ?? mine;
   }
 
+  /** Newest first. Other processes' jobs come from disk, since our copies are startup snapshots and miss new ones. */
   listJobs(limit = 50): Job[] {
-    return [...this.jobs.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+    const all = new Map<string, Job>();
+    for (const j of this.jobs.values()) if (j.pid === process.pid) all.set(j.id, j);
+    let names: { id: string; at: number }[] = [];
+    try {
+      names = fs.readdirSync(files.jobs()).filter((n) => n.endsWith('.json')).map((n) => {
+        let at = 0;
+        try {
+          at = fs.statSync(path.join(files.jobs(), n)).mtimeMs;
+        } catch {
+          // removed meanwhile
+        }
+        return { id: n.slice(0, -5), at };
+      });
+    } catch {
+      // no jobs folder yet
+    }
+    names.sort((a, b) => b.at - a.at);
+    for (const { id } of names.slice(0, limit)) {
+      if (all.has(id)) continue;
+      const job = readJson<Job | null>(path.join(files.jobs(), `${id}.json`), null);
+      if (job) all.set(id, job);
+    }
+    return [...all.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
   }
 
   /** Wait until all given jobs are finished or the time is up. */
@@ -239,7 +262,12 @@ export class Engine {
     if (!job || !job.model || job.status !== 'done') return undefined;
     job.verdict = accepted ? 'accepted' : 'rejected';
     job.verdictNote = note;
-    recordVerdict(job.model, job.task.type, accepted);
+    try {
+      recordVerdict(job.model, job.task.type, accepted);
+    } catch (err) {
+      // the verdict is still saved on the job; only the router's tally misses this one
+      process.stderr.write(`omnitrix: could not save routing stats: ${err instanceof Error ? err.message : err}\n`);
+    }
     job.updatedAt = Date.now();
     this.jobs.set(job.id, job);
     this.saveJob(job);

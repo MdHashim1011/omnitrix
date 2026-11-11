@@ -85,6 +85,40 @@ describe('jobs owned by another process', () => {
     expect(readJson<Job | null>(path.join(files.jobs(), `${job.id}.json`), null)!.status).toBe('cancelled');
   });
 
+  it('lists jobs other processes created after this one started, in their current state', () => {
+    writeConfig([account({ id: 'a' })]);
+    const engine = new Engine();
+    const job = writeJob({ pid: liveForeignPid(), status: 'done' });
+    const listed = engine.listJobs(10).find((j) => j.id === job.id);
+    expect(listed?.status).toBe('done');
+  });
+
+  it('masks keys in the reason an account is shown as failing', async () => {
+    const p = await mockProvider(() => ({ status: 401, json: { error: { message: 'Incorrect API key provided: sk-abcdefghijklmnop1234' } } }));
+    closers.push(p.close);
+    writeConfig([account({ id: 'a', baseUrl: p.url, local: true })]);
+    const engine = new Engine();
+    const [job] = engine.dispatch([{ title: 'k', type: 'bulk', prompt: 'x' }]);
+    await engine.wait([job!.id], 5);
+    const reason = engine.pool()[0]!.reason ?? '';
+    expect(reason).toMatch(/API key/);
+    expect(reason).not.toContain('abcdefghijklmnop1234');
+  });
+
+  it('keeps a verdict when the stats file cannot be saved', async () => {
+    const p = await mockProvider(() => ({ json: chatReply('ok') }));
+    closers.push(p.close);
+    writeConfig([account({ id: 'a', baseUrl: p.url, local: true })]);
+    const engine = new Engine();
+    const [job] = engine.dispatch([{ title: 'v', type: 'bulk', prompt: 'x' }]);
+    await engine.wait([job!.id], 5);
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      throw busy('EBUSY');
+    });
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    expect(engine.verdict(job!.id, true)?.verdict).toBe('accepted');
+  });
+
   it('reads the latest state of a job another process owns', () => {
     writeConfig([account({ id: 'a' })]);
     const job = writeJob({ pid: liveForeignPid() });
