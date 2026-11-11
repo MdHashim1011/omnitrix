@@ -55,15 +55,23 @@ describe('drivers', () => {
 
 describe('engine', () => {
   it('runs tasks in parallel and records usage', async () => {
-    const p = await mockProvider((call) => ({ json: chatReply(`answer to ${call.body.messages.at(-1).content.split('\n')[2]}`), delayMs: 300 }));
+    // Count overlapping requests at the provider. A wall-clock limit failed on slow CI machines
+    // even though the jobs did run in parallel.
+    let inFlight = 0;
+    let peak = 0;
+    const p = await mockProvider((call) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      setTimeout(() => inFlight--, 300);
+      return { json: chatReply(`answer to ${call.body.messages.at(-1).content.split('\n')[2]}`), delayMs: 300 };
+    });
     closers.push(p.close);
     writeConfig([account({ id: 'a', baseUrl: p.url, local: true, concurrency: 3 })]);
     const engine = new Engine();
-    const t0 = Date.now();
     const jobs = engine.dispatch([1, 2, 3].map((n) => ({ title: `t${n}`, type: 'writing' as const, prompt: `q${n}` })));
     const done = await engine.wait(jobs.map((j) => j.id), 10);
     expect(done.map((j) => j.status)).toEqual(['done', 'done', 'done']);
-    expect(Date.now() - t0).toBeLessThan(850); // parallel, not 3 x 300ms one after another
+    expect(peak).toBe(3); // all three at once, not one after another
     expect(engine.readOutput(done[1]!.id)).toBe('answer to q2');
     expect(readLedger().filter((r) => r.ok)).toHaveLength(3);
   });
