@@ -109,16 +109,19 @@ describe('refreshQuotas', () => {
     else process.env.PATH = oldPath;
   });
 
-  function installFakeCodex(exitWithoutAnswer = false) {
+  function installFakeCodex(mode: 'answer' | 'exit' | 'slow' = 'answer') {
     const bin = path.join(process.env.OMNITRIX_HOME!, 'bin');
     fs.mkdirSync(bin);
     const counter = path.join(bin, 'starts');
+    const seen = path.join(bin, 'seen.json');
     fs.writeFileSync(counter, '');
     const resetsAt = Math.floor(Date.now() / 1000) + 3600;
     const script = path.join(bin, 'fake-codex.js');
     fs.writeFileSync(script, `const fs = require('fs');
 fs.appendFileSync(${JSON.stringify(counter)}, 'start\\n');
-if (${exitWithoutAnswer}) process.exit(0);
+fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ key: process.env.OPENAI_API_KEY ?? null, home: process.env.CODEX_HOME, cwd: process.cwd() }));
+if (${JSON.stringify(mode)} === 'exit') process.exit(0);
+if (${JSON.stringify(mode)} === 'slow') { setTimeout(() => process.exit(0), 1500); process.stdin.resume(); return; }
 const lines = require('readline').createInterface({ input: process.stdin });
 lines.on('line', line => {
   const message = JSON.parse(line);
@@ -136,8 +139,33 @@ lines.on('line', line => {
       fs.writeFileSync(path.join(bin, 'codex'), `#!/usr/bin/env node\nrequire(${JSON.stringify(script)})\n`, { mode: 0o755 });
     }
     process.env.PATH = bin + path.delimiter + (oldPath ?? '');
-    return { counter, resetsAt: resetsAt * 1000 };
+    return { counter, seen, resetsAt: resetsAt * 1000 };
   }
+
+  it('hides exported API keys from Codex and runs it outside the project folder', async () => {
+    const fake = installFakeCodex();
+    const oldKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'sk-test-not-real';
+    try {
+      const acc = account({ id: 'refresh-env', provider: 'codex', profileDir: process.env.OMNITRIX_HOME });
+      await refreshQuotas([acc], 60_000);
+    } finally {
+      if (oldKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = oldKey;
+    }
+    const seen = JSON.parse(fs.readFileSync(fake.seen, 'utf8'));
+    expect(seen.key).toBeNull();
+    expect(seen.home).toBe(process.env.OMNITRIX_HOME);
+    expect(path.resolve(seen.cwd)).not.toBe(path.resolve(process.cwd()));
+  });
+
+  it('returns after waitMs while a slow read carries on', async () => {
+    installFakeCodex('slow');
+    const acc = account({ id: 'refresh-slow', provider: 'codex', profileDir: process.env.OMNITRIX_HOME });
+    const started = Date.now();
+    await refreshQuotas([acc], 60_000, 200);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 
   it('persists a reading while preserving other accounts', async () => {
     const fake = installFakeCodex();
@@ -181,13 +209,13 @@ lines.on('line', line => {
     expect(fs.readFileSync(fake.counter, 'utf8')).toBe('start\n');
   });
 
-  it('tolerates an unanswered exit and throttles the next attempt', async () => {
-    const fake = installFakeCodex(true);
+  it('replaces old numbers with an empty reading when a read fails, and throttles the next attempt', async () => {
+    const fake = installFakeCodex('exit');
     const acc = account({ id: 'refresh-failed', provider: 'codex', profileDir: process.env.OMNITRIX_HOME });
+    writeJson(files.quota(), { [acc.id]: { at: 0, windows: [{ name: '5 hours', usedPercent: 100, resetsAt: Date.now() + 3600_000 }] } });
     await expect(refreshQuotas([acc], 60_000)).resolves.toBeUndefined();
-    expect(loadQuotas()[acc.id]).toBeUndefined();
+    expect(loadQuotas()[acc.id]?.windows).toEqual([]);
     await expect(refreshQuotas([acc], 60_000)).resolves.toBeUndefined();
-    expect(loadQuotas()[acc.id]).toBeUndefined();
     expect(fs.readFileSync(fake.counter, 'utf8')).toBe('start\n');
   });
 });

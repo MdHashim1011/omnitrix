@@ -217,7 +217,10 @@ export function resolveCommand(command: string): Resolved | undefined {
     return found ? { file: found, prefix: [], shell: false } : undefined;
   }
   const r = spawnSync('where', [command], { encoding: 'utf8' });
-  const hits = (r.stdout ?? '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  // `where` looks in the current folder before PATH, so a cloned repo could plant its own codex.cmd.
+  const cwd = path.resolve(process.cwd()).toLowerCase();
+  const hits = (r.stdout ?? '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+    .filter((h) => path.dirname(path.resolve(h)).toLowerCase() !== cwd);
   const exe = hits.find((h) => /\.exe$/i.test(h));
   if (exe) return { file: exe, prefix: [], shell: false };
   const cmd = hits.find((h) => /\.cmd$/i.test(h));
@@ -240,7 +243,10 @@ export function profileEnv(tool: CliTool, dir: string): Record<string, string> {
   return { [tool.profileEnv]: dir };
 }
 
-function killTree(pid: number | undefined): void {
+/** Keys that would make an agent CLI use the parent's credentials instead of the account's own login. */
+export const PARENT_CREDENTIALS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY', 'GEMINI_API_KEY', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'];
+
+export function killTree(pid: number | undefined): void {
   if (!pid) return;
   try {
     if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
@@ -278,7 +284,7 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
 
   const env: Record<string, string | undefined> = { ...process.env };
   // never let the parent's keys leak into an account that should use its own login
-  for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY', 'GEMINI_API_KEY', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT']) delete env[k];
+  for (const k of PARENT_CREDENTIALS) delete env[k];
   if (account.profileDir) Object.assign(env, profileEnv(tool, account.profileDir));
   for (const [k, v] of Object.entries(tool.env?.(account) ?? {})) if (v !== undefined) env[k] = v;
 

@@ -203,7 +203,7 @@ program
   .description('show all accounts with usage and what is left')
   .option('--json', 'print JSON')
   .action(async (o) => {
-    await refreshQuotas(loadConfig().accounts);
+    await refreshQuotas(loadConfig().accounts, 60_000, 5_000);
     const pool = new Engine().pool();
     if (o.json) return console.log(JSON.stringify(pool, null, 2));
     if (!pool.length) return console.log('no accounts yet. Start with: omnitrix providers');

@@ -1,7 +1,8 @@
 // Read live account quota from the Codex app server.
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 import { createInterface } from 'node:readline';
-import { resolveCommand } from './drivers/cli.js';
+import { killTree, PARENT_CREDENTIALS, resolveCommand } from './drivers/cli.js';
 import { files, readJson, writeJson } from './store.js';
 import type { Account } from './types.js';
 import { VERSION } from './version.js';
@@ -36,14 +37,17 @@ export function parseCodexRateLimits(result: unknown, now = Date.now()): Account
         name: mins === 300 ? '5 hours' : mins === 10080 ? '7 days' : `${mins} minutes`,
         usedPercent: Math.max(0, Math.min(100, usedPercent)),
       };
-      if (typeof resetsAt === 'number' && Number.isFinite(resetsAt * 1000)) {
+      // A window cannot reset later than its own length from now. A later time (or one in milliseconds)
+      // would keep a stale reading in use for years, so drop it and let the reading age out instead.
+      if (typeof resetsAt === 'number' && Number.isFinite(resetsAt) && resetsAt * 1000 <= now + (mins + 60) * 60_000) {
         window.resetsAt = resetsAt * 1000;
       }
       windows.push(window);
     }
     if (!windows.length) return undefined;
     const quota: AccountQuota = { at: now, windows };
-    if (typeof limits.planType === 'string') quota.plan = limits.planType;
+    // The plan name reaches Claude in pool_status, so only a short plain word is allowed through.
+    if (typeof limits.planType === 'string' && /^[a-z0-9_-]{1,24}$/i.test(limits.planType)) quota.plan = limits.planType;
     return quota;
   } catch {
     return undefined;
@@ -60,8 +64,10 @@ const lastTried = new Map<string, number>();
 
 async function refreshOne(account: Account, profileDir: string): Promise<void> {
   try {
-    const quota = await readCodexQuota(profileDir);
-    if (quota) writeJson(files.quota(), { ...loadQuotas(), [account.id]: quota });
+    // A failed read is saved as an empty reading. That replaces numbers we can no longer vouch for,
+    // and its timestamp throttles the other omnitrix processes too.
+    const quota = (await readCodexQuota(profileDir)) ?? { at: Date.now(), windows: [] };
+    writeJson(files.quota(), { ...loadQuotas(), [account.id]: quota });
   } catch {
     // Quota is a nice-to-have; a failed read must never fail the caller.
   } finally {
@@ -69,8 +75,11 @@ async function refreshOne(account: Account, profileDir: string): Promise<void> {
   }
 }
 
-/** Never rejects, so callers can start it without waiting. */
-export async function refreshQuotas(accounts: Account[], maxAgeMs = 60_000): Promise<void> {
+/**
+ * Never rejects, so callers can start it without waiting. After `waitMs` it returns even if a read
+ * is still running; that read finishes in the background and saves its result for the next caller.
+ */
+export async function refreshQuotas(accounts: Account[], maxAgeMs = 60_000, waitMs = Infinity): Promise<void> {
   const now = Date.now();
   const saved = loadQuotas();
   const pending: Promise<void>[] = [];
@@ -85,7 +94,11 @@ export async function refreshQuotas(accounts: Account[], maxAgeMs = 60_000): Pro
     }
     pending.push(read);
   }
-  await Promise.all(pending);
+  if (!pending.length) return;
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = Number.isFinite(waitMs) ? new Promise<void>((resolve) => { timer = setTimeout(resolve, waitMs); }) : undefined;
+  await Promise.race(deadline ? [Promise.all(pending), deadline] : [Promise.all(pending)]);
+  clearTimeout(timer);
 }
 
 export async function readCodexQuota(profileDir: string, timeoutMs = 20000): Promise<AccountQuota | undefined> {
@@ -93,10 +106,16 @@ export async function readCodexQuota(profileDir: string, timeoutMs = 20000): Pro
     const resolved = resolveCommand('codex');
     if (!resolved) return undefined;
     return await new Promise<AccountQuota | undefined>((resolve) => {
+      const env: Record<string, string | undefined> = { ...process.env, CODEX_HOME: profileDir };
+      // An exported API key would make Codex report that key's limits instead of this account's plan.
+      for (const k of PARENT_CREDENTIALS) delete env[k];
       const child = spawn(resolved.file, [...resolved.prefix, 'app-server'], {
-        env: { ...process.env, CODEX_HOME: profileDir },
+        env: env as NodeJS.ProcessEnv,
+        // A neutral folder, so a project's own Codex settings can't change what the app server does.
+        cwd: os.tmpdir(),
         windowsHide: true,
         shell: resolved.shell,
+        detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let finished = false;
@@ -116,7 +135,11 @@ export async function readCodexQuota(profileDir: string, timeoutMs = 20000): Pro
         }
         resolve(quota);
       };
-      const timer = setTimeout(() => finish(), timeoutMs);
+      // A Codex that never answers may also ignore stdin closing, so take down its whole process tree.
+      const timer = setTimeout(() => {
+        killTree(child.pid);
+        finish();
+      }, timeoutMs);
       const send = (message: object) => {
         try {
           child.stdin.write(`${JSON.stringify(message)}\n`);

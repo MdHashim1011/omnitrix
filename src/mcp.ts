@@ -99,9 +99,10 @@ export function buildServer(engine: Engine): McpServer {
       annotations: { readOnlyHint: true },
     },
     async () => {
-      await refreshQuotas(engine.config().accounts);
+      // Wait briefly for fresh quota; a slow Codex keeps reading in the background and the saved numbers are used meanwhile.
+      await refreshQuotas(engine.config().accounts, 60_000, 5_000);
       const pool = engine.pool();
-      if (!pool.length) return text('No accounts yet. The user can add some with: omnitrix add <provider> (run "omnitrix providers" for the list).');
+      if (!pool.length) return text('No accounts yet. The user can add some with: omnitrix add <provider> (run "omnitrix providers" for the list).', { accounts: [] });
       const ready = pool.filter((a) => a.state === 'ready' || a.state === 'busy').length;
       const lines = [`${ready}/${pool.length} accounts available`, ...pool.map(describeAccount)];
       return text(lines.join('\n'), { accounts: pool.map((a) => ({ id: a.id, state: a.state, provider: a.provider, owner: a.owner, percentUsed: a.usage.percentUsed ?? null, source: a.usage.source, plan: a.usage.plan ?? null, quota: a.usage.windows.map(describeWindow) })) });
