@@ -54,6 +54,8 @@ Each remaining account receives a score based on four factors: how well the mode
 
 Code tasks go only to agent CLIs that can edit files. Each task runs on a new branch in its own git worktree, so two workers never share a checkout.
 
+An account's concurrency limit applies to all omnitrix processes on the same computer, such as the MCP server, the dashboard and the command line. A job waits in the queue until the account has a free slot. The limit does not apply across different computers.
+
 Skill scores begin as an estimate based on the model's name. You can set them yourself, and omnitrix also adjusts its ranking over time: when Claude accepts or rejects a result, the model's record for that type of task is updated.
 
 ```bash
@@ -74,7 +76,7 @@ The dashboard shows each account's name, owner, usage today and the quota remain
 omnitrix 5/6 ready · codex-main 38% · deepseek 788 left · kimi wait · groq-free 36% │ Claude 5h 34% 7d 12%
 ```
 
-Most subscriptions neither publish exact limits nor provide a way to query the remaining allowance, so omnitrix states the source of each figure. For a ChatGPT plan, it queries Codex directly and shows the percentage remaining in the 5-hour and 7-day windows, along with the time each window resets. When a provider sends rate-limit headers, omnitrix displays those values. In all other cases, it counts the requests and tokens it has sent against the limits you configured. A `429` or `402` response from the provider always overrides the count.
+Most subscriptions neither publish exact limits nor provide a way to query the remaining allowance, so omnitrix states the source of each figure. For a ChatGPT plan, it queries Codex directly and shows the percentage remaining in the 5-hour and 7-day windows, along with the time each window resets. This query ignores any API key exported in your environment, so the figures always belong to the account's own plan. When a provider sends rate-limit headers, omnitrix displays those values. In all other cases, it counts the requests and tokens it has sent against the limits you configured. A `429` or `402` response from the provider always overrides the count.
 
 ## Privacy
 
@@ -117,6 +119,8 @@ omnitrix runs as an MCP server and gives Claude the following tools:
 | `read_output` | Reads a full result in pages when the preview is not sufficient |
 | `rate_result` | Accepts or rejects a result so that the router can learn from it |
 | `cancel_job`, `list_jobs` | Cancels a job or lists recent jobs |
+
+The `pool_status`, `dispatch` and `get_results` tools declare output schemas, and their structured data contains everything their text shows. `list_jobs` also lists jobs that other omnitrix processes started, and `cancel_job` can cancel them.
 
 By default, previews are limited to 1,500 characters to keep Claude's token usage low; `omnitrix settings --preview-chars` changes the limit. Full outputs remain on disk.
 

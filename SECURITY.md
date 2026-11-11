@@ -14,7 +14,9 @@ Code tasks run in a separate git worktree. Before a worker starts, omnitrix dele
 
 Prompts reach agent CLIs through standard input and never appear on the command line. Model names must match a strict pattern before they are passed on.
 
-The dashboard listens only on 127.0.0.1 and rejects requests addressed to any other host name.
+The dashboard listens only on 127.0.0.1 and rejects requests addressed to any other host name. It also rejects requests that a browser marks as coming from another website.
+
+On Windows, omnitrix does not run an agent program, such as `codex`, that is located in the current folder, so a cloned repository cannot substitute its own program.
 
 ## Supported versions
 
