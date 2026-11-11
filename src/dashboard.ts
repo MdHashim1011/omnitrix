@@ -49,6 +49,13 @@ export function startDashboard(port: number): string {
       res.writeHead(403).end('forbidden');
       return;
     }
+    // Any website can make the browser call this server, and each status call starts a quota read.
+    // Browsers label such calls; only our own page, a typed address or a tool that sends no label gets in.
+    const site = req.headers['sec-fetch-site'];
+    if (site !== undefined && site !== 'same-origin' && site !== 'none') {
+      res.writeHead(403).end('forbidden');
+      return;
+    }
     if (req.url === '/api/status') {
       void refreshQuotas(engine.config().accounts);
       const body = JSON.stringify({ version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs() });

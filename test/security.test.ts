@@ -98,9 +98,9 @@ describe('dashboard', () => {
     return port;
   }
 
-  function get(port: number, host: string, urlPath: string): Promise<{ status: number; body: string }> {
+  function get(port: number, host: string, urlPath: string, extra: Record<string, string> = {}): Promise<{ status: number; body: string }> {
     return new Promise((resolve, reject) => {
-      const req = http.request({ host: '127.0.0.1', port, path: urlPath, method: 'GET', headers: { Host: host } }, (res) => {
+      const req = http.request({ host: '127.0.0.1', port, path: urlPath, method: 'GET', headers: { Host: host, ...extra } }, (res) => {
         let body = '';
         res.on('data', (d) => (body += d));
         res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
@@ -140,6 +140,13 @@ describe('dashboard', () => {
       expect(r.body).not.toContain('accounts');
     }
     expect((await get(port, 'evil.example.com', '/')).status).toBe(403);
+
+    // a page on another site can make the browser call the dashboard; browsers label such calls
+    const cross = await get(port, '127.0.0.1', '/api/status', { 'Sec-Fetch-Site': 'cross-site' });
+    expect(cross.status).toBe(403);
+    expect((await get(port, '127.0.0.1', '/api/status', { 'Sec-Fetch-Site': 'same-site' })).status).toBe(403);
+    expect((await get(port, '127.0.0.1', '/api/status', { 'Sec-Fetch-Site': 'same-origin' })).status).toBe(200);
+    expect((await get(port, '127.0.0.1', '/', { 'Sec-Fetch-Site': 'none' })).status).toBe(200);
   });
 });
 
