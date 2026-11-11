@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { getProvider } from '../providers.js';
 import { redact, resolveKey } from '../store.js';
-import { DriverError, type Account, type DriverRequest, type DriverResult, type ErrorKind } from '../types.js';
+import { DriverError, type Account, type DriverRequest, type DriverResult, type Effort, type ErrorKind } from '../types.js';
 
 /**
  * Agent CLIs (Codex, Claude Code, Gemini, Qwen, Antigravity, OpenCode).
@@ -17,7 +17,7 @@ export interface CliTool {
   /** env var that points the tool at a config folder; "HOME" means override the home folder */
   profileEnv: string;
   /** args for a run; edit=true when the task may change files */
-  args(opts: { model?: string; edit: boolean; cwd: string; outFile: string }): string[];
+  args(opts: { model?: string; edit: boolean; cwd: string; outFile: string; effort?: Effort }): string[];
   parse(stdout: string, outFile: string): { text: string; inputTokens: number; outputTokens: number; costUsd?: number; error?: string };
   loginArgs: string[];
   /** extra env for a run */
@@ -61,8 +61,9 @@ export const CLI_TOOLS: Record<string, CliTool> = {
     id: 'codex',
     command: 'codex',
     profileEnv: 'CODEX_HOME',
-    args: ({ model, edit, cwd, outFile }) => [
+    args: ({ model, edit, cwd, outFile, effort }) => [
       'exec', '--json', '--skip-git-repo-check', '--ephemeral',
+      ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []),
       // plain workspace-write still refuses file writes on Windows; --approve-for-me keeps that
       // sandbox but lets Codex's own reviewer approve the edits instead of a human
       ...(edit ? ['--approve-for-me'] : ['--sandbox', 'read-only']),
@@ -278,7 +279,7 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
   const tempCwd = req.cwd ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-'));
   const cwd = req.cwd ?? tempCwd!;
   const outFile = path.join(os.tmpdir(), `omnitrix-out-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
-  const rawArgs = [...resolved.prefix, ...tool.args({ model: req.model, edit, cwd, outFile })];
+  const rawArgs = [...resolved.prefix, ...tool.args({ model: req.model, edit, cwd, outFile, effort: req.effort })];
   // only used when we had to fall back to cmd.exe; quote anything with spaces
   const args = resolved.shell ? rawArgs.map((a) => (/\s/.test(a) ? `"${a.replace(/"/g, '')}"` : a)) : rawArgs;
 

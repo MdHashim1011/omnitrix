@@ -441,6 +441,7 @@ export class Engine {
           cwd,
           timeoutMs: cfg.settings.jobTimeoutSec * 1000,
           signal: ctrl.signal,
+          effort: job.task.effort,
           maxOutputTokens: account.driver === 'cli' ? undefined : job.task.size === 'small' ? 4000 : job.task.size === 'large' ? 32000 : 16000,
         },
         edit,

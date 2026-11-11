@@ -22,6 +22,8 @@ export async function runOpenAI(req: DriverRequest): Promise<DriverResult> {
 
   const body: Record<string, unknown> = { model: req.model, messages, stream: false };
   if (req.maxOutputTokens) body.max_tokens = req.maxOutputTokens;
+  // OpenAI, Gemini and other compatible APIs read this; it is sent only when a task asks for it
+  if (req.effort) body.reasoning_effort = req.effort;
 
   const { json, headers } = await postJson(joinUrl(account.baseUrl, 'chat/completions'), authHeaders(account), body, req.timeoutMs, req.signal);
   const choice = json?.choices?.[0];

@@ -119,6 +119,9 @@ export interface UsageRecord {
   costUsd?: number;
 }
 
+export const EFFORTS = ['low', 'medium', 'high'] as const;
+export type Effort = (typeof EFFORTS)[number];
+
 export type ErrorKind = 'rate_limit' | 'quota' | 'auth' | 'bad_request' | 'server' | 'network' | 'timeout' | 'cancelled' | 'model_gone' | 'unknown';
 
 export interface TaskSpec {
@@ -136,6 +139,7 @@ export interface TaskSpec {
   use?: string;
   /** small, medium or large; used to estimate tokens */
   size?: 'small' | 'medium' | 'large';
+  effort?: Effort;
 }
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -183,6 +187,8 @@ export interface DriverRequest {
   timeoutMs: number;
   signal?: AbortSignal;
   maxOutputTokens?: number;
+  /** how hard a reasoning model should think; unset leaves the provider's default */
+  effort?: Effort;
 }
 
 export interface DriverResult {

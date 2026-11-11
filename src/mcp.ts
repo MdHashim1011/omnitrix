@@ -5,7 +5,7 @@ import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
 import { Engine, type PoolAccountView } from './engine.js';
 import { refreshQuotas } from './quota.js';
-import { TASK_TYPES, type Job, type TaskSpec } from './types.js';
+import { EFFORTS, TASK_TYPES, type Job, type TaskSpec } from './types.js';
 import { formatTokens, type WindowUse } from './usage.js';
 import { VERSION } from './version.js';
 
@@ -32,6 +32,7 @@ const taskSchema = z.object({
   repo: z.string().optional().describe('absolute path of a git repo; required for type "code"'),
   use: z.string().optional().describe('force an account ("accountId") or model ("accountId/modelId")'),
   size: z.enum(['small', 'medium', 'large']).optional(),
+  effort: z.enum(EFFORTS).optional().describe('how hard a reasoning model should think: low, medium or high; leave unset for the default. Higher is slower and uses more quota'),
 });
 
 // Declared output shapes. Some clients show only structuredContent, so it carries everything the text does.
