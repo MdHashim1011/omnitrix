@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AccountQuota } from './quota.js';
-import { ensureHome, files } from './store.js';
+import { ensureHome, files, processAlive } from './store.js';
 import type { Account, AccountHealth, UsageRecord } from './types.js';
 
 const MIN = 60_000;
@@ -46,15 +46,6 @@ export function readLedger(sinceMs = 0): UsageRecord[] {
   return out;
 }
 
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
 /**
  * Drop records older than 35 days once the file gets big.
  * Other processes keep appending while this runs. So the ledger is first renamed to a file only this
@@ -71,7 +62,7 @@ export function compactLedger(maxBytes = 5_000_000): void {
     // already named for our own pid can only come from an earlier process that had the same pid.
     const stranded = fs.readdirSync(dir).find((n) => {
       const m = n.startsWith(`${base}.compacting.`) && /\.(\d+)$/.exec(n);
-      return m && (Number(m[1]) === process.pid || !pidAlive(Number(m[1])));
+      return m && (Number(m[1]) === process.pid || !processAlive(Number(m[1])));
     });
     if (stranded && path.join(dir, stranded) !== mine) fs.renameSync(path.join(dir, stranded), mine);
     else if (stranded) {

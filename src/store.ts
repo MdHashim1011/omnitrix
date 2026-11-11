@@ -19,7 +19,20 @@ export const files = {
   outputs: () => path.join(homeDir(), 'outputs'),
   profiles: () => path.join(homeDir(), 'profiles'),
   worktrees: () => path.join(homeDir(), 'worktrees'),
+  seats: () => path.join(homeDir(), 'seats'),
 };
+
+export function processAlive(pid: number | undefined): boolean {
+  if (!pid || !Number.isFinite(pid)) return false;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0); // signal 0 only checks that the process exists
+    return true;
+  } catch (err) {
+    // EPERM means it exists but belongs to someone else
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 export const defaultSettings: Settings = {
   protectPrivate: true,

@@ -5,8 +5,9 @@ import path from 'node:path';
 import { runDriver } from './drivers/index.js';
 import { loadQuotas, refreshQuotas } from './quota.js';
 import { route, effectivePrivacy, type Candidate, type Rejected, type RouteContext } from './router.js';
+import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
-import { ensureHome, files, findAccount, loadConfig, loadHealth, readJson, redact, saveHealth, writeJson } from './store.js';
+import { ensureHome, files, findAccount, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
 import { DriverError, type Account, type AccountHealth, type Config, type Job, type TaskSpec } from './types.js';
 import { compactLedger, readLedger, recordUsage, summarize, type UsageSummary } from './usage.js';
 import { createWorktree, discardWorktree, finishWorktree, isGitRepo } from './worktree.js';
@@ -26,17 +27,7 @@ const EDIT_RULES = [
   'If something blocks you, say exactly what is missing instead of guessing.',
 ].join('\n');
 
-export function processAlive(pid: number | undefined): boolean {
-  if (!pid) return false;
-  if (pid === process.pid) return true;
-  try {
-    process.kill(pid, 0); // signal 0 only checks that the process exists
-    return true;
-  } catch (err) {
-    // EPERM means it exists but belongs to someone else
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
+export { processAlive };
 
 function newId(prefix: string): string {
   return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -284,6 +275,8 @@ export class Engine {
       fs.rmSync(note, { force: true });
       if (job.status === 'queued' || job.status === 'running') this.cancel(job.id);
     }
+    // A seat freed by another process sends us no signal, so queued jobs look again.
+    if ([...this.jobs.values()].some((j) => j.status === 'queued' && j.pid === process.pid)) this.pump();
   }
 
   private notify(): void {
@@ -317,17 +310,24 @@ export class Engine {
     const cfg = this.config();
     // only start our own jobs; another live process is responsible for its queue
     const queued = [...this.jobs.values()].filter((j) => j.status === 'queued' && j.pid === process.pid).sort((a, b) => a.createdAt - b.createdAt);
+    // an account found full once in this pass stays full for the rest of it; no need to ask again per job
+    const full = new Set<string>();
     for (const job of queued) {
       const ctx = this.routeContext(cfg);
       const tried = new Set(job.attempts.map((a) => a.accountId));
       const { candidates, rejected } = route(job.task, ctx);
       const fresh = candidates.filter((c) => !tried.has(c.accountId));
+      // The account's limit counts jobs from every omnitrix process, so a seat is needed as well as local room.
+      let seat: string | undefined;
       const free = fresh.find((c) => {
         const acc = findAccount(cfg, c.accountId)!;
-        return (this.running[c.accountId] ?? 0) < acc.concurrency;
+        if (full.has(acc.id) || (this.running[c.accountId] ?? 0) >= acc.concurrency) return false;
+        seat = takeSeat(acc.id, acc.concurrency, job.id);
+        if (seat === undefined) full.add(acc.id);
+        return seat !== undefined;
       });
       if (free) {
-        void this.start(job, free, cfg);
+        void this.start(job, free, cfg, seat);
         continue;
       }
       if (fresh.length === 0) {
@@ -341,11 +341,11 @@ export class Engine {
         this.saveJob(job);
         this.notify();
       }
-      // otherwise every suitable account is busy: stay queued, a finishing job calls pump() again
+      // otherwise every suitable account is busy: stay queued; tick() tries again every second
     }
   }
 
-  private async start(job: Job, cand: Candidate, cfg: Config): Promise<void> {
+  private async start(job: Job, cand: Candidate, cfg: Config, seat?: string): Promise<void> {
     const account = findAccount(cfg, cand.accountId)!;
     this.running[account.id] = (this.running[account.id] ?? 0) + 1;
     const ctrl = new AbortController();
@@ -440,6 +440,7 @@ export class Engine {
     } finally {
       attempt.endedAt = Date.now();
       this.running[account.id] = Math.max(0, (this.running[account.id] ?? 1) - 1);
+      freeSeat(seat);
       this.controllers.delete(job.id);
       job.updatedAt = Date.now();
       this.saveJob(job);
