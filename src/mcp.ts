@@ -13,7 +13,7 @@ import { VERSION } from './version.js';
 export const INSTRUCTIONS = `omnitrix gives you a team of other AI models (ChatGPT/Codex, DeepSeek, Kimi, GLM, Qwen, Groq, OpenRouter, local Ollama models and more) that run on the user's own accounts. You are the lead: you plan, they do the heavy work, you check it.
 
 How to work:
-1. Call pool_status to see which accounts are ready and how much quota is left.
+1. Call pool_status to see which accounts are ready and how much quota is left. When the user asks to see the pool and your client can draw visual widgets, show its structured data as a panel: one card per account with a meter for each window, its reset time and any paused models.
 2. Split the job into small, independent tasks. Give each one a clear title, a type (code, code_snippet, review, reasoning, long_context, bulk, writing, vision), a precise prompt and an "acceptance" line that says what done means. Tasks that edit files need type "code" and the repo path; each runs in its own git worktree and branch, so give parallel tasks separate files.
 3. Call dispatch with all independent tasks at once. Use route_preview first if you want to see who would get them.
 4. Call get_results to collect them. Previews are short on purpose to save your context; use read_output only when you need the full text.
@@ -54,6 +54,8 @@ const accountOut = z.object({
   reason: z.string().nullable(),
   models: z.array(z.string()).describe('first six models'),
   modelCount: z.number(),
+  windows: z.array(z.object({ name: z.string(), unit: z.enum(['requests', 'tokens', 'percent']), used: z.number(), limit: z.number(), remaining: z.number(), resetsAt: z.number().nullable() })).describe('the same windows as quota, as numbers; resetsAt is epoch ms'),
+  pausedModels: z.array(z.string()).describe('models resting after errors; the router skips them until their break ends'),
 });
 const poolOut = z.object({ ready: z.number(), total: z.number(), accounts: z.array(accountOut) });
 const dispatchOut = z.object({
@@ -166,6 +168,8 @@ export function buildServer(engine: Engine): McpServer {
         reason: a.reason ?? null,
         models: a.models.slice(0, 6),
         modelCount: a.models.length,
+        windows: a.usage.windows.map((w) => ({ name: w.name, unit: w.unit, used: w.used, limit: w.limit, remaining: w.remaining, resetsAt: w.resetsAt ?? null })),
+        pausedModels: a.pausedModels,
       }));
       return text(lines.join('\n'), { ready, total: pool.length, accounts });
     },

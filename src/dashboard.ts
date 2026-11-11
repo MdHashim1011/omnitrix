@@ -94,6 +94,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const fmt=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n);
 const ago=t=>{const s=Math.round((Date.now()-t)/1000);return s<60?s+'s ago':s<3600?Math.round(s/60)+'m ago':Math.round(s/3600)+'h ago'};
 const at=t=>new Date(t).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'});
+const left=t=>{const m=Math.max(0,Math.round((t-Date.now())/60000));return m<60?m+' min':m<1440?Math.floor(m/60)+' h '+(m%60)+' min':Math.floor(m/1440)+' d '+Math.floor(m%1440/60)+' h'};
 async function load(){
   let d;try{d=await (await fetch('/api/status',{cache:'no-store'})).json()}catch(e){document.getElementById('when').textContent='offline';return}
   document.getElementById('ver').textContent='v'+d.version;
@@ -103,13 +104,14 @@ async function load(){
   document.getElementById('sum').innerHTML=[[ready+'/'+acc.length,'accounts ready'],[req,'requests today'],[fmt(tok),'tokens today'],['$'+cost.toFixed(2),'known cost today']].map(([b,s])=>'<div><b>'+esc(b)+'</b><span>'+esc(s)+'</span></div>').join('');
   document.getElementById('accounts').innerHTML=acc.length?acc.map(a=>{
     const u=a.usage;
-    const wins=u.windows.map(w=>{const p=Math.min(100,Math.round(w.used/w.limit*100));const pct=w.unit==='percent';return '<div class="win"><div class="lbl"><span>'+esc(w.name)+(pct?'':' ('+esc(w.unit)+')')+'</span><span>'+(pct?Math.round(w.remaining)+'% left'+(w.resetsAt?', resets '+esc(at(w.resetsAt)):''):fmt(w.remaining)+' of '+fmt(w.limit)+' left')+'</span></div><div class="bar"><i class="'+(p>=100?'full':p>=80?'hi':'')+'" style="width:'+p+'%"></i></div></div>'}).join('');
+    const wins=u.windows.map(w=>{const p=Math.min(100,Math.round(w.used/w.limit*100));const pct=w.unit==='percent';return '<div class="win"><div class="lbl"><span>'+esc(w.name)+(pct?'':' ('+esc(w.unit)+')')+'</span><span>'+(pct?Math.round(w.remaining)+'% left':fmt(w.remaining)+' of '+fmt(w.limit)+' left')+'</span></div><div class="bar"><i class="'+(p>=100?'full':p>=80?'hi':'')+'" style="width:'+p+'%"></i></div>'+(w.resetsAt?'<div class="kv">resets in '+esc(left(w.resetsAt))+', at '+esc(at(w.resetsAt))+'</div>':'')+'</div>'}).join('');
     const meas=u.measured&&u.measured.remainingRequests!==undefined?'<div class="kv">provider says '+u.measured.remainingRequests+' requests left</div>':'';
     return '<div class="acc"><h3><span>'+esc(a.label)+'</span><span class="pill '+esc(a.state)+'">'+esc(a.state.replace('_',' '))+'</span></h3>'
       +'<div class="meta">'+esc(a.id)+(a.id!==a.provider?' ('+esc(a.provider)+')':'')+', owned by '+esc(a.owner)+(u.plan?', '+esc(u.plan)+' plan':'')+(a.local?', runs on this PC':'')+'</div>'
       +(wins||'<div class="kv">No limits set for this account.</div>')+meas
       +'<div class="kv">Today '+u.requestsToday+' requests and '+fmt(u.tokensToday)+' tokens'+(u.costToday?', $'+u.costToday.toFixed(3):'')+'. Numbers are '+esc(u.source==='measured'?'from the provider':u.source==='estimated'?'counted by omnitrix':'not tracked')+'.</div>'
       +(a.reason?'<div class="err">'+esc(a.reason)+'</div>':'')
+      +(a.pausedModels&&a.pausedModels.length?'<div class="kv">Resting after errors: '+esc(a.pausedModels.join(', '))+'</div>':'')
       +'<div class="kv">'+esc(a.models.slice(0,5).join(', '))+(a.models.length>5?' +'+(a.models.length-5):'')+'</div></div>'}).join(''):'<p>No accounts yet. Run <code>omnitrix add</code>.</p>';
   document.getElementById('jobs').innerHTML=d.jobs.length?d.jobs.map(j=>'<tr><td>'+esc(j.task.title)+'<div class="kv">'+esc(j.task.type)+'</div>'+(j.error&&j.status!=='done'?'<div class="err">'+esc(j.error)+'</div>':'')+'</td><td><span class="pill '+(j.status==='done'?'ready':j.status==='failed'?'auth_error':'busy')+'">'+esc(j.status)+'</span>'+(j.verdict?'<div class="kv">'+esc(j.verdict)+'</div>':'')+'</td><td>'+esc((j.accountId||'-')+' / '+(j.model||'-'))+'</td><td>'+(j.usage?fmt(j.usage.inputTokens+j.usage.outputTokens):'')+'</td><td>'+ago(j.createdAt)+'</td></tr>').join(''):'<tr><td colspan="5" class="kv">No jobs yet.</td></tr>';
 }

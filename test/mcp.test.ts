@@ -68,6 +68,9 @@ describe('MCP server (real stdio process)', () => {
     expect(status.structuredContent).toMatchObject({ ready: 1, total: 1 });
     expect(status.structuredContent.accounts[0]).toMatchObject({ id: 'worker', label: 'Test worker', models: ['test-model'], quota: [expect.stringMatching(/requests left/)] });
     expect(status.structuredContent.accounts[0]).toMatchObject({ requestsToday: expect.any(Number), costToday: expect.any(Number), remainingRequests: null });
+    // numbers a widget can draw from, not just the text line
+    expect(status.structuredContent.accounts[0].windows).toContainEqual({ name: '24 hours', unit: 'requests', used: expect.any(Number), limit: 100, remaining: expect.any(Number), resetsAt: null });
+    expect(status.structuredContent.accounts[0].pausedModels).toEqual([]);
   });
 
   it('tells a job that failed at dispatch from a queued one in structured data', async () => {

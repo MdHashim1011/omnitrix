@@ -62,6 +62,8 @@ export interface PoolAccountView {
   models: string[];
   usage: UsageSummary;
   local: boolean;
+  /** models paused after a timeout or server error, until their break ends */
+  pausedModels: string[];
 }
 
 export class Engine {
@@ -158,8 +160,9 @@ export class Engine {
       if (state === 'ready' && ctx.usage[a.id]!.percentUsed === 100) state = 'exhausted';
       // every model paused means the account cannot take work either, so say so until the first one is back
       let pausedUntil: number | undefined;
+      const ends = a.models.map((m) => this.health[modelHealthKey(a.id, m.id)]).map((mh) => (mh?.state === 'cooling' && (mh.until ?? 0) > now ? mh.until! : 0));
+      const pausedModels = a.models.filter((_, i) => ends[i]! > 0).map((m) => m.id);
       if (state === 'ready' && a.models.length) {
-        const ends = a.models.map((m) => this.health[modelHealthKey(a.id, m.id)]).map((mh) => (mh?.state === 'cooling' && (mh.until ?? 0) > now ? mh.until! : 0));
         if (ends.every((t) => t > 0)) {
           state = 'cooling';
           pausedUntil = Math.min(...ends);
@@ -179,6 +182,7 @@ export class Engine {
         models: a.models.map((m) => m.id),
         usage: ctx.usage[a.id]!,
         local: a.local,
+        pausedModels,
       };
     });
   }

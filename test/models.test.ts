@@ -73,6 +73,7 @@ describe('models that stop answering', () => {
     const soon = Date.now() + 120_000;
     saveHealth({ 'g/a': { state: 'cooling', until: soon, reason: 'x' }, 'g/b': { state: 'cooling', until: soon + 60_000, reason: 'x' } });
     const view = new Engine().pool()[0]!;
+    expect(view.pausedModels).toEqual(['a', 'b']);
     expect(view.state).toBe('cooling');
     expect(view.until).toBe(soon);
     saveHealth({ 'g/b': { state: 'cooling', until: Date.now() - 1, reason: 'x' } });
