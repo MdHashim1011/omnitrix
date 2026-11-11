@@ -9,8 +9,8 @@ import { route, effectivePrivacy, type Candidate, type Rejected, type RouteConte
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { ensureHome, files, findAccount, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
-import { DriverError, type Account, type AccountHealth, type Config, type Job, type TaskSpec } from './types.js';
-import { compactLedger, readLedger, recordUsage, summarize, type UsageSummary } from './usage.js';
+import { DriverError, type Account, type AccountHealth, type Config, type Job, type TaskSpec, type UsageRecord } from './types.js';
+import { compactLedger, LedgerTail, recordUsage, summarize, type UsageSummary } from './usage.js';
 import { createWorktree, discardWorktree, finishWorktree, isGitRepo } from './worktree.js';
 
 const MAX_ATTEMPTS = 3;
@@ -55,7 +55,8 @@ export class Engine {
   private controllers = new Map<string, AbortController>();
   private running: Record<string, number> = {};
   private health: Record<string, AccountHealth>;
-  private usageCache?: { at: number; records: ReturnType<typeof readLedger> };
+  private usageCache?: { at: number; byAccount: Map<string, UsageRecord[]> };
+  private ledger = new LedgerTail();
   private listeners = new Set<() => void>();
   private unsaved = new Set<string>();
 
@@ -101,12 +102,19 @@ export class Engine {
     return loadConfig();
   }
 
-  private records() {
+  /** Usage records of the last 32 days, grouped by account once so each summary only scans its own. */
+  private records(): Map<string, UsageRecord[]> {
     const now = Date.now();
     if (!this.usageCache || now - this.usageCache.at > 2000) {
-      this.usageCache = { at: now, records: readLedger(now - 32 * 24 * 3600_000) };
+      const byAccount = new Map<string, UsageRecord[]>();
+      for (const r of this.ledger.read(now - 32 * 24 * 3600_000)) {
+        const list = byAccount.get(r.accountId);
+        if (list) list.push(r);
+        else byAccount.set(r.accountId, [r]);
+      }
+      this.usageCache = { at: now, byAccount };
     }
-    return this.usageCache.records;
+    return this.usageCache.byAccount;
   }
 
   private routeContext(cfg: Config): RouteContext {
@@ -117,7 +125,7 @@ export class Engine {
     }
     const quotas = loadQuotas();
     const usage: Record<string, UsageSummary> = {};
-    for (const a of cfg.accounts) usage[a.id] = summarize(a, records, this.health[a.id], Date.now(), quotas[a.id]);
+    for (const a of cfg.accounts) usage[a.id] = summarize(a, records.get(a.id) ?? [], this.health[a.id], Date.now(), quotas[a.id]);
     return { config: cfg, health: this.health, usage, running: this.running, stats: loadStats() };
   }
 
@@ -186,22 +194,16 @@ export class Engine {
   listJobs(limit = 50): Job[] {
     const all = new Map<string, Job>();
     for (const j of this.jobs.values()) if (isMine(j)) all.set(j.id, j);
-    let names: { id: string; at: number }[] = [];
+    let ids: string[] = [];
     try {
-      names = fs.readdirSync(files.jobs()).filter((n) => n.endsWith('.json')).map((n) => {
-        let at = 0;
-        try {
-          at = fs.statSync(path.join(files.jobs(), n)).mtimeMs;
-        } catch {
-          // removed meanwhile
-        }
-        return { id: n.slice(0, -5), at };
-      });
+      ids = fs.readdirSync(files.jobs()).filter((n) => n.endsWith('.json')).map((n) => n.slice(0, -5));
     } catch {
       // no jobs folder yet
     }
-    names.sort((a, b) => b.at - a.at);
-    for (const { id } of names.slice(0, limit)) {
+    // Job ids begin with their creation time in base 36, so sorting the names finds the newest jobs
+    // without opening or stat-ing every file.
+    ids.sort().reverse();
+    for (const id of ids.slice(0, limit)) {
       if (all.has(id)) continue;
       const job = readJson<Job | null>(path.join(files.jobs(), `${id}.json`), null);
       if (job) all.set(id, job);

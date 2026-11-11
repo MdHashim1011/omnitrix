@@ -105,6 +105,16 @@ describe('jobs owned by another process', () => {
     expect(reason).not.toContain('abcdefghijklmnop1234');
   });
 
+  it('lists the newest jobs first when there are more than the limit', () => {
+    writeConfig([account({ id: 'a' })]);
+    const engine = new Engine();
+    // job ids start with the creation time in base 36, like the engine's own ids
+    const at = (ms: number) => `j${ms.toString(36)}abcd`;
+    const now = Date.now();
+    for (const ms of [now - 3000, now - 2000, now - 1000]) writeJob({ id: at(ms), createdAt: ms, status: 'done', pid: 2_000_000_000 });
+    expect(engine.listJobs(2).map((j) => j.id)).toEqual([at(now - 1000), at(now - 2000)]);
+  });
+
   it('keeps a verdict when the stats file cannot be saved', async () => {
     const p = await mockProvider(() => ({ json: chatReply('ok') }));
     closers.push(p.close);

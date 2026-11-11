@@ -47,6 +47,69 @@ export function readLedger(sinceMs = 0): UsageRecord[] {
 }
 
 /**
+ * Keeps the ledger in memory and reads only the lines appended since the last call. The ledger only
+ * grows, except while it is compacted (it is renamed aside and rebuilt), so a shorter file or a
+ * .compacting file means everything is read again.
+ */
+export class LedgerTail {
+  private offset = 0;
+  private records: UsageRecord[] = [];
+  private prunedAt = 0;
+
+  read(sinceMs: number): UsageRecord[] {
+    const live = files.ledger();
+    try {
+      const base = path.basename(live);
+      if (fs.readdirSync(path.dirname(live)).some((n) => n.startsWith(`${base}.compacting.`))) {
+        this.offset = 0;
+        this.records = [];
+        return readLedger(sinceMs);
+      }
+    } catch {
+      return [];
+    }
+    let size = 0;
+    try {
+      size = fs.statSync(live).size;
+    } catch {
+      // no ledger yet
+    }
+    if (size < this.offset) {
+      this.offset = 0;
+      this.records = [];
+    }
+    if (size > this.offset) {
+      const buf = Buffer.alloc(size - this.offset);
+      const fd = fs.openSync(live, 'r');
+      try {
+        fs.readSync(fd, buf, 0, buf.length, this.offset);
+      } finally {
+        fs.closeSync(fd);
+      }
+      // stop at the last complete line; a line still being written is picked up next time
+      const end = buf.lastIndexOf(10);
+      if (end >= 0) {
+        for (const line of buf.subarray(0, end).toString('utf8').split('\n')) {
+          if (!line) continue;
+          try {
+            this.records.push(JSON.parse(line) as UsageRecord);
+          } catch {
+            // a line left half-written by a crash
+          }
+        }
+        this.offset += end + 1;
+      }
+    }
+    // records only age out of the window, so trimming once a minute keeps memory bounded
+    if (Date.now() - this.prunedAt > 60_000) {
+      this.records = this.records.filter((r) => r.ts >= sinceMs);
+      this.prunedAt = Date.now();
+    }
+    return this.records.filter((r) => r.ts >= sinceMs);
+  }
+}
+
+/**
  * Drop records older than 35 days once the file gets big.
  * Other processes keep appending while this runs. So the ledger is first renamed to a file only this
  * process owns: their new lines start a fresh ledger, and the kept lines are appended to it rather than
@@ -117,25 +180,41 @@ function monthStart(now: number): number {
 }
 
 export function summarize(account: Account, records: UsageRecord[], health: AccountHealth | undefined, now = Date.now(), quota?: AccountQuota): UsageSummary {
-  const mine = records.filter((r) => r.accountId === account.id);
-  // failed calls that never reached the model do not count against a quota
-  const counted = mine.filter((r) => r.ok || r.errorKind === 'rate_limit' || r.errorKind === 'quota');
-  const since = (ms: number) => counted.filter((r) => r.ts >= now - ms);
-  const tokens = (list: UsageRecord[]) => list.reduce((s, r) => s + r.inputTokens + r.outputTokens, 0);
-
-  const day = since(DAY);
-  const month = counted.filter((r) => r.ts >= monthStart(now));
+  // One pass fills every window; this runs for every account on each routing pass and status call.
+  let minute = 0;
+  let fiveHours = 0;
+  let week = 0;
+  let day = 0;
+  let dayTokens = 0;
+  let dayCost = 0;
+  let monthTokens = 0;
+  const monthFrom = monthStart(now);
+  for (const r of records) {
+    if (r.accountId !== account.id) continue;
+    // failed calls that never reached the model do not count against a quota
+    if (!(r.ok || r.errorKind === 'rate_limit' || r.errorKind === 'quota')) continue;
+    const t = r.inputTokens + r.outputTokens;
+    if (r.ts >= now - MIN) minute++;
+    if (r.ts >= now - 5 * HOUR) fiveHours++;
+    if (r.ts >= now - 7 * DAY) week++;
+    if (r.ts >= now - DAY) {
+      day++;
+      dayTokens += t;
+      dayCost += r.costUsd ?? 0;
+    }
+    if (r.ts >= monthFrom) monthTokens += t;
+  }
   const windows: WindowUse[] = [];
   const add = (name: string, used: number, limit: number | undefined, unit: WindowUse['unit']) => {
     if (limit && limit > 0) windows.push({ name, used, limit, remaining: Math.max(0, limit - used), unit });
   };
   const l = account.limits;
-  add('1 minute', since(MIN).length, l.requestsPerMinute, 'requests');
-  add('5 hours', since(5 * HOUR).length, l.requestsPer5h, 'requests');
-  add('24 hours', day.length, l.requestsPerDay, 'requests');
-  add('7 days', since(7 * DAY).length, l.requestsPerWeek, 'requests');
-  add('24 hours', tokens(day), l.tokensPerDay, 'tokens');
-  add('this month', tokens(month), l.tokensPerMonth, 'tokens');
+  add('1 minute', minute, l.requestsPerMinute, 'requests');
+  add('5 hours', fiveHours, l.requestsPer5h, 'requests');
+  add('24 hours', day, l.requestsPerDay, 'requests');
+  add('7 days', week, l.requestsPerWeek, 'requests');
+  add('24 hours', dayTokens, l.tokensPerDay, 'tokens');
+  add('this month', monthTokens, l.tokensPerMonth, 'tokens');
 
   // Use only climbs inside a window, so an old reading stays a safe lower bound until the window resets.
   // Without a reset time there is no telling when it stopped being true.
@@ -158,10 +237,10 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
 
   return {
     accountId: account.id,
-    requestsToday: day.length,
-    tokensToday: tokens(day),
-    tokensMonth: tokens(month),
-    costToday: day.reduce((s, r) => s + (r.costUsd ?? 0), 0),
+    requestsToday: day,
+    tokensToday: dayTokens,
+    tokensMonth: monthTokens,
+    costToday: dayCost,
     windows,
     percentUsed,
     source,

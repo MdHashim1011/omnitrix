@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { files } from '../src/store.js';
-import { compactLedger, readLedger, recordUsage } from '../src/usage.js';
+import { compactLedger, LedgerTail, readLedger, recordUsage } from '../src/usage.js';
 import type { UsageRecord } from '../src/types.js';
 import { tempHome } from './helpers.js';
 
@@ -10,6 +10,56 @@ const rec = (ts: number, accountId = 'a'): UsageRecord => ({ ts, accountId, mode
 
 beforeEach(() => tempHome());
 afterEach(() => vi.restoreAllMocks());
+
+describe('LedgerTail', () => {
+  it('reads only what was appended and matches a full read', () => {
+    const now = Date.now();
+    const tail = new LedgerTail();
+    recordUsage(rec(now - 1000, 'a'));
+    expect(tail.read(0).map((r) => r.accountId)).toEqual(['a']);
+    recordUsage(rec(now, 'b'));
+    expect(tail.read(0).map((r) => r.accountId)).toEqual(['a', 'b']);
+    expect(tail.read(0)).toEqual(readLedger(0));
+  });
+
+  it('waits for a half-written line to be finished', () => {
+    const tail = new LedgerTail();
+    const line = JSON.stringify(rec(Date.now(), 'late'));
+    fs.appendFileSync(files.ledger(), line.slice(0, 20));
+    expect(tail.read(0)).toEqual([]);
+    fs.appendFileSync(files.ledger(), line.slice(20) + '\n');
+    expect(tail.read(0).map((r) => r.accountId)).toEqual(['late']);
+  });
+
+  it('reads everything again after the ledger was compacted', () => {
+    const now = Date.now();
+    const tail = new LedgerTail();
+    recordUsage(rec(now - 40 * DAY, 'old'));
+    recordUsage(rec(now - DAY, 'recent'));
+    expect(tail.read(0)).toHaveLength(2);
+    compactLedger(1);
+    expect(tail.read(0).map((r) => r.accountId)).toEqual(['recent']);
+  });
+
+  it('counts the lines of a compaction in progress', () => {
+    const now = Date.now();
+    const tail = new LedgerTail();
+    recordUsage(rec(now, 'new'));
+    tail.read(0);
+    fs.writeFileSync(`${files.ledger()}.compacting.${process.pid + 1}`, JSON.stringify(rec(now - DAY, 'moving')) + '\n');
+    expect(tail.read(0).map((r) => r.accountId).sort()).toEqual(['moving', 'new']);
+  });
+
+  it('leaves out records older than the window', () => {
+    const now = Date.now();
+    const tail = new LedgerTail();
+    recordUsage(rec(now - 40 * DAY, 'old'));
+    recordUsage(rec(now, 'new'));
+    // the first read keeps everything; the second must still leave the old one out
+    expect(tail.read(0)).toHaveLength(2);
+    expect(tail.read(now - 32 * DAY).map((r) => r.accountId)).toEqual(['new']);
+  });
+});
 
 describe('compactLedger', () => {
   it('drops records older than 35 days and keeps the rest', () => {

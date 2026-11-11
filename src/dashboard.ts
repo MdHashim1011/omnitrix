@@ -1,32 +1,12 @@
 // A small local web page with the same numbers as `omnitrix list`, refreshed every few seconds.
-import fs from 'node:fs';
 import http from 'node:http';
-import path from 'node:path';
 import { Engine } from './engine.js';
 import { refreshQuotas } from './quota.js';
-import { files, readJson } from './store.js';
 import type { Job } from './types.js';
 import { VERSION } from './version.js';
 
-function recentJobs(limit = 30): Partial<Job>[] {
-  let names: string[] = [];
-  try {
-    names = fs.readdirSync(files.jobs()).filter((n) => n.endsWith('.json'));
-  } catch {
-    return [];
-  }
-  const withTime = names.map((n) => {
-    const p = path.join(files.jobs(), n);
-    let t = 0;
-    try {
-      t = fs.statSync(p).mtimeMs;
-    } catch {
-      /* removed meanwhile */
-    }
-    return { p, t };
-  });
-  withTime.sort((a, b) => b.t - a.t);
-  return withTime.slice(0, limit).map(({ p }) => readJson<Job | null>(p, null)).filter((j): j is Job => !!j).map((j) => ({
+function recentJobs(engine: Engine, limit = 30): Partial<Job>[] {
+  return engine.listJobs(limit).map((j) => ({
     id: j.id,
     status: j.status,
     accountId: j.accountId,
@@ -58,7 +38,7 @@ export function startDashboard(port: number): string {
     }
     if (req.url === '/api/status') {
       void refreshQuotas(engine.config().accounts);
-      const body = JSON.stringify({ version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs() });
+      const body = JSON.stringify({ version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine) });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body);
       return;
     }
