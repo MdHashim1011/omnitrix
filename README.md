@@ -56,6 +56,8 @@ Code tasks go only to agent CLIs that can edit files. Each task runs on a new br
 
 An account's concurrency limit applies to all omnitrix processes on the same computer, such as the MCP server, the dashboard and the command line. A job waits in the queue until the account has a free slot. The limit does not apply across different computers.
 
+A request to an API model may take up to 2 minutes for a small task, 5 minutes for a medium one and 10 minutes for a large one, and never longer than the job limit set with `omnitrix settings --timeout`. Agent CLIs such as Codex may use the whole job limit, because they work in many steps. When a model times out or returns a server error, only that model is paused for 5 minutes, and the job continues on other accounts or models.
+
 Skill scores begin as an estimate based on the model's name. You can set them yourself, and omnitrix also adjusts its ranking over time: when Claude accepts or rejects a result, the model's record for that type of task is updated.
 
 ```bash

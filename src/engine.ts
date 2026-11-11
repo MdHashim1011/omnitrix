@@ -32,6 +32,18 @@ const EDIT_RULES = [
 
 export { processAlive };
 
+/**
+ * How long one request may take. An agent CLI works in many steps, so it gets the whole job limit. An API
+ * call sends nothing until its answer is complete, so a model that has gone silent would otherwise hold
+ * the job for the full limit; the cap grows with the answer size the task asks for.
+ */
+export function requestTimeoutMs(driver: string, size: TaskSpec['size'], jobTimeoutSec: number): number {
+  const job = jobTimeoutSec * 1000;
+  if (driver === 'cli') return job;
+  const cap = size === 'small' ? 120_000 : size === 'large' ? 600_000 : 300_000;
+  return Math.min(job, cap);
+}
+
 function newId(prefix: string): string {
   return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -439,7 +451,7 @@ export class Engine {
           system: edit ? `${WORKER_SYSTEM}\n${EDIT_RULES}` : WORKER_SYSTEM,
           prompt,
           cwd,
-          timeoutMs: cfg.settings.jobTimeoutSec * 1000,
+          timeoutMs: requestTimeoutMs(account.driver, job.task.size, cfg.settings.jobTimeoutSec),
           signal: ctrl.signal,
           effort: job.task.effort,
           maxOutputTokens: account.driver === 'cli' ? undefined : job.task.size === 'small' ? 4000 : job.task.size === 'large' ? 32000 : 16000,
