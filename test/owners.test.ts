@@ -72,6 +72,17 @@ describe('job owners', () => {
     expect(takeSeat('acc', 1, 'j1')).toBeTruthy();
   });
 
+  it('drops finished jobs older than a day from memory but can still read them', async () => {
+    writeConfig([account({ id: 'a' })]);
+    const old = writeJob({ status: 'done', pid: process.pid, owner: OWNER, updatedAt: Date.now() - 2 * 24 * 3600_000 });
+    const engine = new Engine();
+    const memory = (engine as unknown as { jobs: Map<string, Job> }).jobs;
+    expect(memory.has(old.id)).toBe(true);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(memory.has(old.id)).toBe(false);
+    expect(engine.getJob(old.id)?.status).toBe('done');
+  });
+
   it('stamps new jobs with this process and keeps its heartbeat fresh', async () => {
     writeConfig([account({ id: 'a' })]);
     const engine = new Engine();

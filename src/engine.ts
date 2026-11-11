@@ -294,6 +294,11 @@ export class Engine {
   /** Every second: retry saves that failed, and act on cancel notes left by other processes. */
   private tick(): void {
     beat();
+    // A server can run for weeks; finished jobs older than a day leave memory and are read from disk when needed.
+    const dayAgo = Date.now() - 24 * 3600_000;
+    for (const [id, job] of this.jobs) {
+      if (job.updatedAt < dayAgo && job.status !== 'queued' && job.status !== 'running' && !this.unsaved.has(id)) this.jobs.delete(id);
+    }
     for (const id of [...this.unsaved]) {
       const job = this.jobs.get(id);
       if (job) this.saveJob(job);
