@@ -44,5 +44,8 @@ export function makeModel(id: string, extra: Partial<ModelInfo> = {}): ModelInfo
 
 /** Skip models that are clearly not chat models (embeddings, audio, moderation...). */
 export function isChatModel(id: string): boolean {
-  return !/(embed|embedding|whisper|tts|audio|moderation|rerank|dall-e|image-gen|transcribe|guard)/i.test(id);
+  if (/(embed|embedding|whisper|tts|audio|moderation|rerank|dall-e|image-gen|transcribe|guard)/i.test(id)) return false;
+  // Gemini lists music (lyria), image output (-image, nano-banana), voice sessions (-live, realtime), research
+  // and computer-use agents and attributed QA beside its chat models; none of them answer a chat request
+  return !/(lyria|nano-banana|-image(-preview)?$|-live\b|realtime|deep-research|computer-use|\baqa$)/i.test(id);
 }

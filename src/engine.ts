@@ -14,6 +14,13 @@ import { compactLedger, LedgerTail, recordUsage, summarize, type UsageSummary } 
 import { createWorktree, discardWorktree, finishWorktree, isGitRepo } from './worktree.js';
 
 const MAX_ATTEMPTS = 3;
+// A model the provider no longer serves (or gives this plan no allowance for) is dropped from the account,
+// and rests (GONE_PAUSE_MS), so trying it did no work and is not repeated: it does not use up one of the
+// MAX_ATTEMPTS. The cap bounds a job that meets many such models in a row.
+const MAX_TRIES = 12;
+// A model with no allowance stays unusable, but the config drop that removes it can be lost (no lock on
+// config.json), so it also rests this long in health.json, which every process reads.
+const GONE_PAUSE_MS = 24 * 60 * 60_000;
 const MODEL_PAUSE_MS = 5 * 60_000;
 const MODEL_FAULTS = new Set(['model_gone', 'server', 'timeout']);
 const MAX_FILE_BYTES = 400_000;
@@ -385,7 +392,6 @@ export class Engine {
     // `health` inside it are live references, so jobs started earlier in this pass are still seen.
     const ctx = queued.length ? this.routeContext(cfg) : undefined;
     for (const job of queued) {
-      // a retired model is not the account's fault, so that account may still be tried with another model
       // A retired, overloaded or silent model is that model's problem, not the account's: the account may be
       // tried again with another model, and the failing model is paused so it is not picked twice.
       const tried = new Set(job.attempts.filter((a) => !MODEL_FAULTS.has(a.errorKind ?? 'unknown')).map((a) => a.accountId));
@@ -507,7 +513,7 @@ export class Engine {
       if (ctrl.signal.aborted || e.kind === 'cancelled') {
         job.status = 'cancelled';
         job.error = 'cancelled';
-      } else if (job.attempts.length < MAX_ATTEMPTS && e.kind !== 'bad_request') {
+      } else if (job.attempts.filter((a) => a.errorKind !== 'model_gone').length < MAX_ATTEMPTS && job.attempts.length < MAX_TRIES && e.kind !== 'bad_request') {
         job.status = 'queued'; // pump() will try the next best account
         job.error = attempt.error;
       } else {
@@ -537,6 +543,10 @@ export class Engine {
   private applyFailure(account: Account, e: DriverError, model: string): void {
     const now = Date.now();
     const prev = this.health[account.id];
+    if (e.kind === 'model_gone') {
+      this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + GONE_PAUSE_MS, reason: 'not available on this account' });
+      return;
+    }
     if (e.kind === 'server' || e.kind === 'timeout') {
       // pause just this model; the router skips it and the job moves on to the account's other models
       this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + MODEL_PAUSE_MS, reason: e.kind === 'timeout' ? 'no answer' : 'provider error' });

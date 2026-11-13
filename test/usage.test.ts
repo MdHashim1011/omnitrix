@@ -98,4 +98,13 @@ describe('model guesses', () => {
     expect(isChatModel('whisper-large-v3')).toBe(false);
     expect(isChatModel('deepseek-v4-pro')).toBe(true);
   });
+
+  it('filters out Gemini music, image, live and agent models', () => {
+    for (const id of ['models/lyria-3.5', 'models/lyria-realtime-exp', 'models/gemini-3.1-flash-image', 'models/gemini-2.5-flash-image', 'models/gemini-nano-banana-2.1',
+      'models/gemini-3.8-live', 'models/gemini-3.8-live-extended-thinking', 'models/gemini-3.5-live-translate-preview', 'models/deep-research-pro-preview-12-2025',
+      'models/gemini-2.5-computer-use-preview-10-2025', 'models/aqa']) expect(isChatModel(id), id).toBe(false);
+    // chat models with similar names stay, including ones that read images
+    for (const id of ['models/gemini-3-flash-preview', 'models/gemini-3.1-flash-lite', 'models/gemini-omni-1.2-flash', 'models/gemma-4-31b-it', 'qwen2.5vl:3b', 'gpt-5.2-image-reader'])
+      expect(isChatModel(id), id).toBe(true);
+  });
 });

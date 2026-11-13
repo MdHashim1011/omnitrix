@@ -7,7 +7,7 @@ import { runAnthropic } from '../src/drivers/anthropic.js';
 import { runOpenAI } from '../src/drivers/openai.js';
 import { Engine } from '../src/engine.js';
 import { makeModel } from '../src/models.js';
-import { loadHealth, setSecret } from '../src/store.js';
+import { loadConfig, loadHealth, setSecret } from '../src/store.js';
 import { readLedger } from '../src/usage.js';
 import { account, chatReply, mockProvider, tempHome, writeConfig } from './helpers.js';
 
@@ -93,6 +93,27 @@ describe('engine', () => {
     const h = loadHealth().main!;
     expect(h.state).toBe('cooling');
     expect(h.until! - Date.now()).toBeGreaterThan(25_000);
+  });
+
+  it('does not spend attempts on models the plan has no allowance for', async () => {
+    // Gemini's free tier: the Flash model has a server error and both Pro models answer "limit: 0"
+    const gem = await mockProvider((call) => (/pro/.test(call.body.model)
+      ? { status: 429, json: { error: { message: 'Quota exceeded for metric generate_content_free_tier_requests, limit: 0, model: ' + call.body.model } } }
+      : { status: 500, json: { error: { message: 'internal error' } } }));
+    const healthy = await mockProvider(() => ({ json: chatReply('from backup') }));
+    closers.push(gem.close, healthy.close);
+    writeConfig([
+      account({ id: 'gem', baseUrl: gem.url, local: true, models: [makeModel('gemini-3-flash'), makeModel('gemini-pro-latest'), makeModel('gemini-3.1-pro-preview')] }),
+      account({ id: 'backup', baseUrl: healthy.url, local: true, models: [makeModel('llama3.2:3b')] }),
+    ]);
+    const engine = new Engine();
+    const [job] = engine.dispatch([{ title: 't', type: 'writing', prompt: 'q' }]);
+    const [done] = await engine.wait([job!.id], 10);
+    expect(done!.status).toBe('done');
+    expect(done!.accountId).toBe('backup');
+    expect(done!.attempts.map((a) => a.errorKind ?? 'ok').sort()).toEqual(['model_gone', 'model_gone', 'ok', 'server']);
+    // the models with no allowance are gone for good
+    expect(loadConfig().accounts.find((a) => a.id === 'gem')!.models.map((m) => m.id)).toEqual(['gemini-3-flash']);
   });
 
   it('marks quota and login problems and fails cleanly when nobody is left', async () => {
