@@ -52,6 +52,9 @@ export function startDashboard(port: number): string {
   return `http://127.0.0.1:${port}`;
 }
 
+// The page is one self-contained file: no fonts, scripts or images from other hosts, so it works offline
+// and sends nothing anywhere. The script below avoids backticks and backslashes because it lives in a
+// template literal.
 const PAGE = /* html */ `<!doctype html>
 <html lang="en">
 <head>
@@ -59,63 +62,205 @@ const PAGE = /* html */ `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>omnitrix</title>
 <style>
-:root{--bg:#f5f8fc;--card:#fff;--ink:#14233d;--mute:#5d7190;--line:#d6dfec;--ok:#17945b;--warn:#c98a06;--bad:#c2413a;--bar:#1677c9;--barbg:#e6eef8}
-@media (prefers-color-scheme:dark){:root{--bg:#101a2e;--card:#16233d;--ink:#e7eef8;--mute:#8ea3c2;--line:#2b3c5e;--ok:#5ad19a;--warn:#f4b740;--bad:#f2665a;--bar:#4cc9f0;--barbg:#22345a}}
-*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
-header{display:flex;align-items:baseline;gap:12px;padding:20px 24px 8px}h1{font-size:20px;margin:0}header small{color:var(--mute)}
-main{padding:8px 24px 32px;max-width:1200px}
-.sum{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 18px}.sum div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:120px}
-.sum b{display:block;font-size:22px}.sum span{color:var(--mute);font-size:12px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
-.acc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
-.acc h3{margin:0 0 2px;font-size:15px;display:flex;justify-content:space-between;gap:8px}.meta{color:var(--mute);font-size:12px;margin-bottom:8px}
-.pill{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid currentColor;white-space:nowrap}
-.ready{color:var(--ok)}.busy{color:var(--bar)}.cooling,.exhausted,.offline{color:var(--warn)}.auth_error,.disabled{color:var(--bad)}
-.win{margin:6px 0}.win .lbl{display:flex;justify-content:space-between;font-size:12px;color:var(--mute)}
-.bar{height:6px;background:var(--barbg);border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--bar)}
-.bar i.hi{background:var(--warn)}.bar i.full{background:var(--bad)}
-.kv{font-size:12px;color:var(--mute)}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:8px}
-th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}th{color:var(--mute);font-weight:500}
-h2{font-size:15px;margin:26px 0 4px}.err{color:var(--bad);font-size:12px}
-@media (max-width:600px){header,main{padding-left:16px;padding-right:16px}td:nth-child(4),th:nth-child(4){display:none}}
+:root{
+  --bg:#f6f6f3;--surface:#ffffff;--tile:#efeee9;--line:rgba(20,20,19,.11);--line-strong:rgba(20,20,19,.2);
+  --ink:#141413;--ink-2:#4d4c48;--ink-3:#66655f;
+  --accent:#2563c9;--accent-bg:#e6eefb;--track:#e7e6e0;
+  --ok:#1b6f35;--ok-bg:#e3f2e7;--warn:#8a5a00;--warn-bg:#fbf0d4;--bad:#b42323;--bad-bg:#fbe7e7;--idle:#55544f;--idle-bg:#ecebe6;
+  --focus:#2563c9;--r:12px;--r-sm:8px;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#181816;--surface:#21211f;--tile:#2a2a27;--line:rgba(255,255,255,.1);--line-strong:rgba(255,255,255,.2);
+  --ink:#f0efea;--ink-2:#c9c8bf;--ink-3:#a3a299;
+  --accent:#6ea3f2;--accent-bg:#1d2d45;--track:#34342f;
+  --ok:#6fcf8b;--ok-bg:#16301f;--warn:#e9bf5c;--warn-bg:#382c0e;--bad:#f28b8b;--bad-bg:#3b1c1c;--idle:#bdbcb3;--idle-bg:#2f2f2b;
+  --focus:#6ea3f2;color-scheme:dark;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--font);-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+.wrap{max-width:1180px;margin:0 auto;padding:24px 24px 48px}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand h1{font-size:20px;font-weight:600;margin:0;letter-spacing:-.01em}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;line-height:1;padding:5px 9px;border-radius:999px;background:var(--tile);color:var(--ink-2);white-space:nowrap}
+.fresh{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+.fresh.stale .dot{background:var(--warn)}.fresh.stale{color:var(--warn)}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:28px}
+.kpi{background:var(--tile);border-radius:var(--r);padding:14px 16px}
+.kpi span{display:block;font-size:13px;color:var(--ink-2)}
+.kpi b{display:block;font-size:26px;font-weight:600;line-height:1.25;margin-top:2px;font-variant-numeric:tabular-nums}
+h2{font-size:15px;font-weight:600;margin:0 0 12px;display:flex;align-items:baseline;gap:8px}
+h2 small{font-size:13px;font-weight:400;color:var(--ink-3)}
+.kpi em{display:block;font-style:normal;font-size:13px;color:var(--warn);margin-top:2px}
+.ver{font-size:13px;color:var(--ink-3)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:14px;margin-bottom:32px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.title{display:flex;align-items:center;gap:10px;min-width:0}
+.title svg{flex:none;color:var(--ink-2)}
+.title h3{font-size:16px;font-weight:600;margin:0;overflow-wrap:break-word}
+.sub{font-size:13px;color:var(--ink-3);margin-top:1px;overflow-wrap:break-word}
+.state{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;padding:4px 10px;border-radius:999px;white-space:nowrap}
+.state i{width:7px;height:7px;border-radius:50%;background:currentColor}
+.s-ok{background:var(--ok-bg);color:var(--ok)}.s-busy{background:var(--accent-bg);color:var(--accent)}
+.s-warn{background:var(--warn-bg);color:var(--warn)}.s-bad{background:var(--bad-bg);color:var(--bad)}.s-idle{background:var(--idle-bg);color:var(--idle)}
+.note{font-size:13.5px;border-radius:var(--r-sm);padding:9px 11px;background:var(--tile);color:var(--ink-2)}
+.note.warn{background:var(--warn-bg);color:var(--warn)}.note.bad{background:var(--bad-bg);color:var(--bad)}
+.note code,.empty code{font:12.5px var(--mono);background:var(--surface);color:var(--ink);padding:1px 6px;border-radius:5px;border:1px solid var(--line)}
+.win+.win{margin-top:10px}
+.row{display:flex;justify-content:space-between;gap:10px;font-size:13.5px}
+.row span:first-child{color:var(--ink-2)}.row b{font-weight:600;font-variant-numeric:tabular-nums}
+.row b.low{color:var(--warn)}.row b.out{color:var(--bad)}
+.bar{height:8px;border-radius:99px;background:var(--track);overflow:hidden;margin:6px 0 4px}
+.bar i{display:block;height:100%;border-radius:99px;background:var(--accent);transition:width .4s ease}
+.bar i.low{background:var(--warn)}.bar i.out{background:var(--bad)}
+.when{font-size:12.5px;color:var(--ink-3)}
+.prov{font-size:12.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px}
+.stats{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--ink-2);border-top:1px solid var(--line);padding-top:10px}
+.stats b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+.stats .prov{margin-left:auto}
+details{font-size:13px;color:var(--ink-2)}
+summary{cursor:pointer;color:var(--ink-2);width:max-content;padding:4px 0;min-height:24px}
+summary:hover{color:var(--ink)}
+.models{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:6px}
+.models li{font:12px var(--mono);background:var(--tile);border-radius:6px;padding:3px 7px;overflow-wrap:anywhere}
+.jobs{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;list-style:none;margin:0;padding:0}
+.job{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 14px;align-items:start;padding:12px 16px;border-top:1px solid var(--line)}
+.job:first-child{border-top:0}
+.job .t{font-weight:500;overflow-wrap:anywhere}
+.job .m{font:12px/1.6 var(--mono);color:var(--ink-3);overflow-wrap:anywhere}
+.job .r{font-size:13px;color:var(--ink-3);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.job details{grid-column:2/4;margin-top:4px}
+.job .err{color:var(--bad);font:12.5px/1.5 var(--mono);margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere}
+.empty{background:var(--surface);border:1px dashed var(--line-strong);border-radius:var(--r);padding:22px;color:var(--ink-2)}
+.empty h3{margin:0 0 6px;font-size:16px;color:var(--ink)}
+.empty ol{margin:10px 0 0;padding-left:20px;line-height:2}
+footer{font-size:12.5px;color:var(--ink-3);margin-top:28px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (max-width:720px){.wrap{padding:16px 16px 40px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi b{font-size:22px}.job{grid-template-columns:auto minmax(0,1fr)}.job .r{grid-column:2;text-align:left}.job details{grid-column:1/3}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
-<header><h1>omnitrix</h1><small id="ver"></small><small id="when"></small></header>
+<div class="wrap">
+<header>
+  <div class="brand"><h1>omnitrix</h1><span class="ver" id="ver"></span></div>
+  <div class="fresh" id="fresh"><span class="dot" aria-hidden="true"></span><span id="fresh-text">Connecting</span></div>
+  <div class="sr" id="announce" role="status"></div>
+</header>
 <main>
-<div class="sum" id="sum"></div>
-<div class="grid" id="accounts"></div>
-<h2>Recent jobs</h2>
-<table><thead><tr><th>Task</th><th>Status</th><th>Account / model</th><th>Tokens</th><th>When</th></tr></thead><tbody id="jobs"></tbody></table>
+  <section class="kpis" id="kpis" aria-label="Summary for the last 24 hours"></section>
+  <section aria-labelledby="acc-h"><h2 id="acc-h">Accounts <small id="acc-sub"></small></h2><div class="grid" id="accounts"></div></section>
+  <section aria-labelledby="job-h"><h2 id="job-h">Recent jobs <small>newest first</small></h2><div id="jobs"></div></section>
 </main>
+<footer>This page only shows status. Change accounts and settings with the omnitrix command.</footer>
+</div>
 <script>
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const fmt=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n);
-const ago=t=>{const s=Math.round((Date.now()-t)/1000);return s<60?s+'s ago':s<3600?Math.round(s/60)+'m ago':Math.round(s/3600)+'h ago'};
-const at=t=>new Date(t).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'});
-const left=t=>{const m=Math.max(0,Math.round((t-Date.now())/60000));return m<60?m+' min':m<1440?Math.floor(m/60)+' h '+(m%60)+' min':Math.floor(m/1440)+' d '+Math.floor(m%1440/60)+' h'};
-async function load(){
-  let d;try{d=await (await fetch('/api/status',{cache:'no-store'})).json()}catch(e){document.getElementById('when').textContent='offline';return}
-  document.getElementById('ver').textContent='v'+d.version;
-  document.getElementById('when').textContent='updated '+new Date(d.now).toLocaleTimeString();
-  const acc=d.accounts, ready=acc.filter(a=>a.state==='ready'||a.state==='busy').length;
-  const req=acc.reduce((s,a)=>s+a.usage.requestsToday,0), tok=acc.reduce((s,a)=>s+a.usage.tokensToday,0), cost=acc.reduce((s,a)=>s+a.usage.costToday,0);
-  document.getElementById('sum').innerHTML=[[ready+'/'+acc.length,'accounts ready'],[req,'requests today'],[fmt(tok),'tokens today'],['$'+cost.toFixed(2),'known cost today']].map(([b,s])=>'<div><b>'+esc(b)+'</b><span>'+esc(s)+'</span></div>').join('');
-  document.getElementById('accounts').innerHTML=acc.length?acc.map(a=>{
-    const u=a.usage;
-    const wins=u.windows.map(w=>{const p=Math.min(100,Math.round(w.used/w.limit*100));const pct=w.unit==='percent';return '<div class="win"><div class="lbl"><span>'+esc(w.name)+(pct?'':' ('+esc(w.unit)+')')+'</span><span>'+(pct?Math.round(w.remaining)+'% left':fmt(w.remaining)+' of '+fmt(w.limit)+' left')+'</span></div><div class="bar"><i class="'+(p>=100?'full':p>=80?'hi':'')+'" style="width:'+p+'%"></i></div>'+(w.resetsAt?'<div class="kv">resets in '+esc(left(w.resetsAt))+', at '+esc(at(w.resetsAt))+'</div>':'')+'</div>'}).join('');
-    const meas=u.measured&&u.measured.remainingRequests!==undefined?'<div class="kv">provider says '+u.measured.remainingRequests+' requests left</div>':'';
-    return '<div class="acc"><h3><span>'+esc(a.label)+'</span><span class="pill '+esc(a.state)+'">'+esc(a.state.replace('_',' '))+'</span></h3>'
-      +'<div class="meta">'+esc(a.id)+(a.id!==a.provider?' ('+esc(a.provider)+')':'')+', owned by '+esc(a.owner)+(u.plan?', '+esc(u.plan)+' plan':'')+(a.local?', runs on this PC':'')+'</div>'
-      +(wins||'<div class="kv">No limits set for this account.</div>')+meas
-      +'<div class="kv">Today '+u.requestsToday+' requests and '+fmt(u.tokensToday)+' tokens'+(u.costToday?', $'+u.costToday.toFixed(3):'')+'. Numbers are '+esc(u.source==='measured'?'from the provider':u.source==='estimated'?'counted by omnitrix':'not tracked')+'.</div>'
-      +(a.reason?'<div class="err">'+esc(a.reason)+'</div>':'')
-      +(a.pausedModels&&a.pausedModels.length?'<div class="kv">Resting after errors: '+esc(a.pausedModels.join(', '))+'</div>':'')
-      +'<div class="kv">'+esc(a.models.slice(0,5).join(', '))+(a.models.length>5?' +'+(a.models.length-5):'')+'</div></div>'}).join(''):'<p>No accounts yet. Run <code>omnitrix add</code>.</p>';
-  document.getElementById('jobs').innerHTML=d.jobs.length?d.jobs.map(j=>'<tr><td>'+esc(j.task.title)+'<div class="kv">'+esc(j.task.type)+'</div>'+(j.error&&j.status!=='done'?'<div class="err">'+esc(j.error)+'</div>':'')+'</td><td><span class="pill '+(j.status==='done'?'ready':j.status==='failed'?'auth_error':'busy')+'">'+esc(j.status)+'</span>'+(j.verdict?'<div class="kv">'+esc(j.verdict)+'</div>':'')+'</td><td>'+esc((j.accountId||'-')+' / '+(j.model||'-'))+'</td><td>'+(j.usage?fmt(j.usage.inputTokens+j.usage.outputTokens):'')+'</td><td>'+ago(j.createdAt)+'</td></tr>').join(''):'<tr><td colspan="5" class="kv">No jobs yet.</td></tr>';
+var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
+var fmt=function(n){n=Number(n)||0;return n>=999500?(n/1e6).toFixed(1)+'M':n>=1e3?(Math.round(n/100)/10)+'k':String(Math.round(n))};
+var money=function(c){c=Number(c)||0;return c>0&&c<0.005?'under $0.01':'$'+c.toFixed(2)};
+var clock=function(t){return new Date(t).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})};
+var span=function(ms){var m=Math.max(0,Math.round(ms/60000));return m<1?'under a minute':m<60?m+' min':m<1440?Math.floor(m/60)+' h '+(m%60)+' min':Math.floor(m/1440)+' d '+Math.floor(m%1440/60)+' h'};
+var ago=function(t){var s=Math.round((Date.now()-t)/1000);return s<60?s+' s ago':s<3600?Math.round(s/60)+' min ago':Math.round(s/3600)+' h ago'};
+function icon(name){
+  var p={terminal:'<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 9l3 3-3 3M12 15h5"/>',
+    cloud:'<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.5 1.5A3.75 3.75 0 0 1 17.5 18z"/>',
+    chip:'<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>'}[name];
+  return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
 }
-load();setInterval(load,4000);
+var STATES={ready:['Ready','s-ok'],busy:['Working','s-busy'],cooling:['Resting','s-warn'],exhausted:['Out of quota','s-bad'],offline:['Offline','s-warn'],auth_error:['Needs sign-in','s-bad'],disabled:['Turned off','s-idle']};
+var SOURCES={measured:'Measured by the provider',estimated:'Counted by omnitrix against your limits',untracked:'Not tracked'};
+function windowHtml(w){
+  var pct=w.unit==='percent', left=pct?Math.max(0,Math.min(100,w.remaining)):(w.limit>0?Math.max(0,Math.min(100,w.remaining/w.limit*100)):0);
+  var cls=left<=0?'out':left<20?'low':'';
+  var amount=pct?Math.round(left)+'% left':fmt(w.remaining)+' of '+fmt(w.limit)+' '+esc(w.unit)+' left';
+  var label=esc(w.name)+(pct?'':' ('+esc(w.unit)+')');
+  var reset=w.resetsAt?'<div class="when">Resets in '+esc(span(w.resetsAt-Date.now()))+', '+esc(clock(w.resetsAt))+'</div>':'';
+  return '<div class="win"><div class="row"><span>'+label+'</span><b class="'+cls+'">'+amount+'</b></div>'
+    +'<div class="bar" role="progressbar" aria-label="'+label+' remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(left)+'" aria-valuetext="'+esc(amount)+'"><i class="'+cls+'" style="width:'+left.toFixed(1)+'%"></i></div>'+reset+'</div>';
+}
+function cardHtml(a,open){
+  var u=a.usage, st=STATES[a.state]||['Unknown','s-idle'];
+  var ico=a.local?'chip':a.driver==='cli'?'terminal':'cloud';
+  var facts=[a.owner?'Owned by '+esc(a.owner):'',esc(a.id),u.plan?esc(u.plan)+' plan':'',a.local?'Runs on this PC':'',a.trainsOnData?'Public tasks only':'',a.running?a.running+' job'+(a.running>1?'s':'')+' running':''];
+  var sub=facts.filter(Boolean).join(' · ');
+  var notes='';
+  if(a.state!=='ready'&&a.state!=='busy'){
+    var DEFAULT={exhausted:'No quota left in the current window',offline:'omnitrix cannot reach this account',cooling:'Taking a short break after errors',auth_error:'Not signed in',disabled:'Turned off in omnitrix'};
+    var why=String(a.reason||DEFAULT[a.state]||'').replace(/[.]+$/,'');
+    var back=a.until?' Back in '+esc(span(a.until-Date.now()))+', '+esc(clock(a.until))+'.':'';
+    var fix=a.state==='auth_error'?' Run <code>omnitrix login '+esc(a.id)+'</code> to sign in again.':a.state==='disabled'?' Run <code>omnitrix enable '+esc(a.id)+'</code> to turn it on.':'';
+    var text=(why?esc(why)+'.':'')+back+fix;
+    if(text)notes+='<div class="note '+(st[1]==='s-bad'?'bad':st[1]==='s-warn'?'warn':'')+'">'+text+'</div>';
+  }
+  var paused=a.pausedModels||[];
+  if(paused.length)notes+='<div class="note warn">Resting after errors: '+esc(paused.join(', '))+'.'+(paused.length<(a.models||[]).length?' omnitrix uses the other models meanwhile.':'')+'</div>';
+  var quota=u.windows.length?u.windows.map(windowHtml).join('')
+    :a.local?'<div class="note">No usage limit. It runs on this PC.</div>'
+    :a.state==='auth_error'||a.state==='disabled'?''
+    :a.driver==='cli'?'<div class="note">This plan does not publish its limits, so omnitrix shows what it has sent below.</div>'
+    :'<div class="note">No limit is known for this account, so omnitrix cannot show what is left. To track one, run <code>omnitrix set '+esc(a.id)+' --rpd 1000</code> with your real daily limit.</div>';
+  var models=a.models||[], shown=models.slice(0,40);
+  var modelHtml=models.length?'<details data-key="m-'+esc(a.id)+'"'+(open['m-'+a.id]?' open':'')+'><summary>'+models.length+' model'+(models.length>1?'s':'')+'</summary><ul class="models">'+shown.map(function(m){return '<li>'+esc(m)+'</li>'}).join('')+(models.length>shown.length?'<li>and '+(models.length-shown.length)+' more</li>':'')+'</ul></details>':'';
+  return '<article class="card" aria-label="'+esc(a.label)+'">'
+    +'<div class="head"><div class="title">'+icon(ico)+'<div><h3>'+esc(a.label)+'</h3><div class="sub">'+sub+'</div></div></div><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span></div>'
+    +(quota?'<div>'+quota+'</div>':'')+notes
+    +'<div class="stats"><span>Last 24 h</span><span><b>'+u.requestsToday+'</b> requests</span><span><b>'+fmt(u.tokensToday)+'</b> tokens</span>'+(u.costToday?'<span><b>'+money(u.costToday)+'</b></span>':'')
+    +(u.windows.length?'<span class="prov">'+esc(SOURCES[u.source]||u.source)+'</span>':'')+'</div>'
+    +modelHtml+'</article>';
+}
+var JOB={done:['Done','s-ok'],running:['Running','s-busy'],queued:['Waiting','s-idle'],failed:['Failed','s-bad'],cancelled:['Cancelled','s-idle']};
+function jobHtml(j,open){
+  var st=JOB[j.status]||[j.status,'s-idle'];
+  var tokens=j.usage?fmt(j.usage.inputTokens+j.usage.outputTokens)+' tokens':'';
+  var verdict=j.verdict?(j.verdict==='accepted'?'Accepted by Claude':'Rejected by Claude'):'';
+  var err=j.error&&j.status!=='done'?'<details data-key="e-'+esc(j.id)+'"'+(open['e-'+j.id]?' open':'')+'><summary>Why it '+(j.status==='failed'?'failed':'stopped')+'</summary><div class="err">'+esc(j.error)+'</div></details>':'';
+  return '<li class="job"><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span>'
+    +'<div><div class="t">'+esc(j.task.title)+'</div><div class="m">'+esc(j.task.type)+(j.accountId?' · '+esc(j.accountId)+(j.model?' / '+esc(j.model):''):'')+'</div></div>'
+    +'<div class="r">'+[tokens,ago(j.createdAt)].filter(Boolean).join(' · ')+(verdict?'<div>'+verdict+'</div>':'')+'</div>'+err+'</li>';
+}
+var last=0, wasStale=null, lastBody='', started=Date.now();
+function tick(){
+  var el=document.getElementById('fresh'), t=document.getElementById('fresh-text');
+  var stale=last?Date.now()-last>15000:Date.now()-started>8000;
+  el.className='fresh'+(stale?' stale':'');
+  t.textContent=!last?(stale?'Cannot reach omnitrix. Is the dashboard command still running?':'Connecting'):stale?'Cannot reach omnitrix. Showing data from '+new Date(last).toLocaleTimeString()+'.':'Live, updated '+ago(last);
+  // screen readers hear only a change between live and unreachable, not every second of the clock
+  if(stale!==wasStale){document.getElementById('announce').textContent=stale?'omnitrix cannot be reached':(last?'omnitrix is live':'');wasStale=stale}
+}
+async function load(){
+  var d, body;
+  try{body=await (await fetch('/api/status',{cache:'no-store'})).text();d=JSON.parse(body)}catch(e){tick();return}
+  last=Date.now();
+  // redraw only when something changed, so focus and the reading position survive the 4-second refresh
+  var key=body.replace(/"now":[0-9]+,/,'')+Math.floor(Date.now()/60000);
+  if(key===lastBody){tick();return}
+  lastBody=key;
+  var focused=document.activeElement&&document.activeElement.closest?document.activeElement.closest('details[data-key]'):null;
+  var focusKey=focused?focused.getAttribute('data-key'):null;
+  var open={};document.querySelectorAll('details[data-key]').forEach(function(x){if(x.open)open[x.getAttribute('data-key')]=true});
+  document.getElementById('ver').textContent='v'+d.version;
+  var acc=d.accounts, ready=acc.filter(function(a){return a.state==='ready'||a.state==='busy'}).length;
+  var sum=function(k){return acc.reduce(function(s,a){return s+(a.usage[k]||0)},0)};
+  var attention=acc.filter(function(a){return a.enabled&&a.state!=='ready'&&a.state!=='busy'}).length;
+  document.getElementById('kpis').innerHTML='<div class="kpi"><span>Accounts ready</span><b>'+ready+' of '+acc.length+'</b>'+(attention?'<em>'+attention+' need'+(attention>1?'':'s')+' attention</em>':'')+'</div>'
+    +[['Requests, last 24 h',String(sum('requestsToday'))],['Tokens, last 24 h',fmt(sum('tokensToday'))],['Known cost, last 24 h',money(sum('costToday'))]]
+    .map(function(k){return '<div class="kpi"><span>'+k[0]+'</span><b>'+esc(k[1])+'</b></div>'}).join('');
+  document.getElementById('acc-sub').textContent=acc.length?acc.length+' connected':'';
+  document.getElementById('accounts').innerHTML=acc.length?acc.map(function(a){return cardHtml(a,open)}).join('')
+    :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>';
+  document.getElementById('jobs').innerHTML=d.jobs.length?'<ul class="jobs">'+d.jobs.map(function(j){return jobHtml(j,open)}).join('')+'</ul>'
+    :'<div class="empty"><h3>No jobs yet</h3>Ask Claude to hand out a task, and it shows up here.</div>';
+  if(focusKey){var again=document.querySelector('details[data-key="'+focusKey+'"] summary');if(again)again.focus()}
+  tick();
+}
+load();setInterval(load,4000);setInterval(tick,1000);
 </script>
 </body>
 </html>`;

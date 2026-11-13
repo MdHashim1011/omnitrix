@@ -68,7 +68,10 @@ omnitrix route --type review "check this diff for auth bugs"
 
 ## Monitoring quota
 
-![The omnitrix dashboard with six accounts, their remaining quota, and the latest jobs](assets/dashboard-example.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-v2-dark.png">
+  <img alt="The omnitrix dashboard with example data: six accounts with quota meters and reset times, one resting after a rate limit and one that needs sign-in, and the latest jobs with their results." src="assets/dashboard-v2-light.png" width="100%">
+</picture>
 
 <sub>The dashboard, shown with example data. Run `omnitrix dashboard` to open your own.</sub>
 

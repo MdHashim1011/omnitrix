@@ -64,6 +64,8 @@ export interface PoolAccountView {
   local: boolean;
   /** models paused after a timeout or server error, until their break ends */
   pausedModels: string[];
+  /** the provider may train on prompts, so only public tasks go here */
+  trainsOnData: boolean;
 }
 
 export class Engine {
@@ -183,6 +185,7 @@ export class Engine {
         usage: ctx.usage[a.id]!,
         local: a.local,
         pausedModels,
+        trainsOnData: a.trainsOnData,
       };
     });
   }
