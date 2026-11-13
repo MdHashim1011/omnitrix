@@ -104,3 +104,78 @@ describe('router', () => {
     }
   });
 });
+
+describe('router quota timing and free tiers', () => {
+  const now = 10_000_000_000;
+  const MIN = 60_000;
+  type W = { remaining: number; resetsAt?: number; runsOutAt?: number };
+  const usage = (id: string, ...ws: W[]) => ({
+    accountId: id, requestsToday: 0, tokensToday: 0, tokensMonth: 0, costToday: 0, source: 'measured' as const,
+    percentUsed: Math.max(...ws.map((w) => 100 - w.remaining)),
+    windows: ws.map((w) => ({ name: '5 hours', unit: 'percent' as const, used: 100 - w.remaining, limit: 100, ...w })),
+  });
+  const pair = () => [account({ id: 'a', priority: 1 }), account({ id: 'b', priority: 0 })];
+
+  it('prefers quota that resets within the hour and would otherwise go unused', () => {
+    const u = { a: usage('a', { remaining: 60, resetsAt: now + 30 * MIN }), b: usage('b', { remaining: 60, resetsAt: now + 4 * 60 * MIN }) };
+    const { candidates } = route(task(), ctx(pair(), { usage: u, now }));
+    expect(candidates[0]!.accountId).toBe('a');
+    expect(candidates[0]!.why.join(' ')).toMatch(/resets in 30 min with 60% left/);
+  });
+
+  it('gives no reset boost when little is left or the reset is far off', () => {
+    const little = { a: usage('a', { remaining: 15, resetsAt: now + 30 * MIN }), b: usage('b', { remaining: 15, resetsAt: now + 4 * 60 * MIN }) };
+    const far = { a: usage('a', { remaining: 60, resetsAt: now + 61 * MIN }), b: usage('b', { remaining: 60, resetsAt: now + 4 * 60 * MIN }) };
+    for (const u of [little, far]) {
+      const { candidates } = route(task(), ctx(pair(), { usage: u, now }));
+      expect(candidates[0]!.accountId).toBe('b');
+      expect(candidates.flatMap((c) => c.why).join(' ')).not.toMatch(/resets in/);
+    }
+  });
+
+  it('spares an account that is forecast to run out before it resets', () => {
+    const u = { a: usage('a', { remaining: 60 }), b: usage('b', { remaining: 60, resetsAt: now + 3 * 60 * MIN, runsOutAt: now + 50 * MIN }) };
+    const [first, second] = route(task(), ctx(pair(), { usage: u, now })).candidates;
+    expect(first!.accountId).toBe('a');
+    expect(second!.why.join(' ')).toMatch(/runs out in about 50 min at this pace/);
+  });
+
+  it('gives public work to free tiers so paid quota lasts longer', () => {
+    const free = account({ id: 'free', trainsOnData: true, priority: 1 });
+    const plan = account({ id: 'plan', priority: 0 });
+    const pub = route(task({ privacy: 'public' }), ctx([free, plan]));
+    expect(pub.candidates[0]!.accountId).toBe('free');
+    expect(pub.candidates[0]!.why.join(' ')).toMatch(/takes public work only/);
+    // quality mode leaves this out and ranks on skill and quota
+    expect(route(task({ privacy: 'public' }), ctx([free, plan], {}, { mode: 'quality' })).candidates[0]!.accountId).toBe('plan');
+    // with the privacy protection off, private work may reach a free tier, but is not steered there
+    const priv = route(task({ privacy: 'private' }), ctx([free, plan], {}, { protectPrivate: false }));
+    expect(priv.candidates[0]!.accountId).toBe('plan');
+    expect(priv.candidates.flatMap((c) => c.why).join(' ')).not.toMatch(/public work only/);
+  });
+
+  it('does not treat a paid model as a free tier', () => {
+    const priced = account({ id: 'priced', trainsOnData: true, priority: 1, models: [makeModel('test-model', { inputPrice: 0.1, outputPrice: 0.1 })] });
+    const plan = account({ id: 'plan', priority: 0 });
+    const { candidates } = route(task({ privacy: 'public' }), ctx([priced, plan]));
+    expect(candidates.flatMap((c) => c.why).join(' ')).not.toMatch(/public work only/);
+  });
+
+  it('beats an account with somewhat more quota left when its own quota is about to reset', () => {
+    const u = { a: usage('a', { remaining: 60, resetsAt: now + 30 * MIN }), b: usage('b', { remaining: 80, resetsAt: now + 4 * 60 * MIN }) };
+    expect(route(task(), ctx(pair(), { usage: u, now })).candidates[0]!.accountId).toBe('a');
+  });
+
+  it('gives no reset bonus when another window on the account is nearly spent', () => {
+    const tight = usage('a', { remaining: 60, resetsAt: now + 30 * MIN }, { remaining: 10, resetsAt: now + 3 * 24 * 60 * MIN });
+    const { candidates } = route(task(), ctx([account({ id: 'a' })], { usage: { a: tight }, now }));
+    expect(candidates[0]!.why.join(' ')).not.toMatch(/resets in/);
+  });
+
+  it('lets a forecast to run dry win over a reset bonus, quoting the earliest run-out', () => {
+    const both = usage('a', { remaining: 60, resetsAt: now + 30 * MIN }, { remaining: 70, resetsAt: now + 5 * 60 * MIN, runsOutAt: now + 3 * 60 * MIN }, { remaining: 80, resetsAt: now + 9 * 60 * MIN, runsOutAt: now + 90 * MIN });
+    const why = route(task(), ctx([account({ id: 'a' })], { usage: { a: both }, now })).candidates[0]!.why.join(' ');
+    expect(why).toMatch(/runs out in about 1 h 30 min/);
+    expect(why).not.toMatch(/resets in/);
+  });
+});

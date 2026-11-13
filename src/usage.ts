@@ -291,6 +291,15 @@ export function headroom(summary: UsageSummary): number {
   return Math.max(0, 1 - summary.percentUsed / 100);
 }
 
+/** "45 min", "1 h 20 min", "2 d 3 h": rounded, because a forecast is never exact. */
+export function roughSpan(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60_000));
+  if (min < 60) return `${min} min`;
+  if (min < 24 * 60) return `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}`;
+  const h = Math.round(min / 60);
+  return `${Math.floor(h / 24)} d${h % 24 ? ` ${h % 24} h` : ''}`;
+}
+
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;

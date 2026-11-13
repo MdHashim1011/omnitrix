@@ -45,12 +45,22 @@ Restart Claude Code and give it a substantial task, such as "add tests for the b
 
 Every task that Claude sends has a type, such as code, review or bulk work, and a privacy level. omnitrix first excludes any account that cannot accept the task at that moment because it is:
 
-- disabled or signed out
-- cooling down after a rate limit
-- out of quota for the current window
-- not permitted to receive private work
+- disabled, signed out or banned in settings
+- cooling down after a rate limit, offline, or out of quota for the current window
+- not permitted to receive the task: private work never goes to an account that may train on prompts while private protection is on, and secret work goes only to local models
+- unable to do the task, such as a model that cannot read images
 
-Each remaining account receives a score based on four factors: how well the model fits the task, how much quota remains, what the model costs, and how often its past work was accepted. The highest-scoring account receives the task. If that call fails, the next account in the ranking takes over without any action from Claude.
+A model that is resting after errors is skipped, while the account's other models remain available.
+
+Each remaining model receives a score based on how well it fits the task, how much quota the account has left, what the model costs, and how often its past work was accepted. An account that is already running as many jobs as its concurrency limit allows has its score halved. The highest-scoring model receives the task. If that call fails, omnitrix ranks the accounts again, skips those it has already tried, and passes the task on without any action from Claude.
+
+Three further adjustments multiply that score. Each adjustment that applies is listed in the reasons shown by `omnitrix route`, which lists the top eight candidates, and by `route_preview`, which lists the top three:
+
+- If a window that the provider reports with a reset time resets within the next hour, and the account still has at least 20% left in its tightest window, the score is multiplied by 1.25 so that the quota is used before it is lost. Windows that omnitrix counts itself have no reset time, so this applies only to providers that report their own windows, such as ChatGPT through Codex.
+- If an account is forecast to run out of a window before it resets, as described under "Monitoring quota", the score is multiplied by 0.75 so that the account keeps some quota in reserve. This takes precedence over the previous adjustment.
+- For a public task, a model with no price set, on an account that may train on prompts, has its score multiplied by 1.15. Such an account can only take public work, so giving it that work first leaves the other accounts' quota for private tasks. This does not apply in quality mode.
+
+Together these adjustments can raise a score by about 44% or lower it by 25%, so they can change the order of models whose fit for the task is similar. A pin adds a large fixed amount, so in practice pinned accounts rank above all others, but the adjustments can change the order among pinned accounts.
 
 Code tasks go only to agent CLIs that can edit files. Each task runs on a new branch in its own git worktree, so two workers never share a checkout.
 

@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { Engine, type PoolAccountView } from './engine.js';
 import { refreshQuotas } from './quota.js';
 import { EFFORTS, TASK_TYPES, type Job, type TaskSpec } from './types.js';
-import { formatTokens, type WindowUse } from './usage.js';
+import { formatTokens, roughSpan, type WindowUse } from './usage.js';
 import { VERSION } from './version.js';
 
 // Sent to Claude when it connects. It is the whole playbook for using the pool well.
@@ -85,17 +85,8 @@ function fail(t: string) {
   return { content: [{ type: 'text' as const, text: t }], isError: true };
 }
 
-/** "45 min", "1 h 20 min", "2 d 3 h": rounded, because a forecast is never exact. */
-export function roughSpan(ms: number): string {
-  const min = Math.max(1, Math.round(ms / 60_000));
-  if (min < 60) return `${min} min`;
-  if (min < 24 * 60) return `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}`;
-  const h = Math.round(min / 60);
-  return `${Math.floor(h / 24)} d${h % 24 ? ` ${h % 24} h` : ''}`;
-}
-
 export function describeWindow(w: WindowUse, now = Date.now()): string {
-  const pace = w.runsOutAt ? `, runs out in about ${roughSpan(w.runsOutAt - now)} at this pace` : '';
+  const pace = w.runsOutAt && w.runsOutAt > now ? `, runs out in about ${roughSpan(w.runsOutAt - now)} at this pace` : '';
   if (w.unit === 'percent') {
     const reset = w.resetsAt ? ` (resets ${new Date(w.resetsAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}${pace})` : '';
     return `${w.name}: ${Math.round(w.remaining)}% left${reset}`;

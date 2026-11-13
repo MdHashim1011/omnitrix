@@ -1,7 +1,7 @@
 // Picks the account and model for a task. Hard rules go first (privacy, health, quota, what the driver
 // can do); whatever is left gets a score, and the highest score gets the task.
 import { acceptanceFactor } from './stats.js';
-import { headroom, type UsageSummary } from './usage.js';
+import { headroom, roughSpan, type UsageSummary } from './usage.js';
 import type { Account, AccountHealth, Config, ModelInfo, Privacy, Skills, TaskSpec, TaskType } from './types.js';
 
 /** How much each skill matters for each kind of task. Each row adds up to 1. */
@@ -52,6 +52,35 @@ function costFactor(model: ModelInfo, account: Account, mode: Config['settings']
   // bulk work is where paying per token adds up, so cost counts for more there
   const strength = mode === 'saver' ? 1 : type === 'bulk' ? 0.6 : 0.25;
   return 1 / (1 + (price / 20) * strength);
+}
+
+// These multiply the score after the quota factor. They can reorder accounts of similar fit, not
+// overturn a large difference in fit, and a pin still outranks them.
+const RESET_SOON_MS = 60 * 60_000;
+const RESET_SOON_MIN_LEFT = 0.2;
+// Big enough to beat an account with somewhat more quota left, since the quota factor otherwise counts
+// soon-to-vanish quota against the account that should spend it.
+const RESET_SOON_BONUS = 1.25;
+const RUNNING_OUT_PENALTY = 0.75;
+const PUBLIC_ONLY_BONUS = 1.15;
+
+/** No price is known. Prices are only set by hand, so this does not prove the model is free. */
+function unpriced(model: ModelInfo): boolean {
+  return !model.inputPrice && !model.outputPrice;
+}
+
+/**
+ * An account forecast to run dry is spared; otherwise quota that resets soon is used before it is lost.
+ * `room` is the account's tightest window, so a nearly spent weekly window blocks the bonus of a
+ * 5-hour window: spending the 5-hour quota would spend the weekly quota too.
+ */
+function timing(usage: UsageSummary | undefined, room: number, now: number): { factor: number; why: string[] } {
+  const windows = usage?.windows ?? [];
+  const dry = windows.filter((w) => w.runsOutAt && w.runsOutAt > now).sort((a, b) => a.runsOutAt! - b.runsOutAt!)[0];
+  if (dry) return { factor: RUNNING_OUT_PENALTY, why: [`${dry.name} runs out in about ${roughSpan(dry.runsOutAt! - now)} at this pace`] };
+  const soon = room >= RESET_SOON_MIN_LEFT && windows.find((w) => w.resetsAt && w.resetsAt > now && w.resetsAt - now <= RESET_SOON_MS);
+  if (soon) return { factor: RESET_SOON_BONUS, why: [`${soon.name} resets in ${roughSpan(soon.resetsAt! - now)} with ${Math.round(room * 100)}% left`] };
+  return { factor: 1, why: [] };
 }
 
 export function effectivePrivacy(task: TaskSpec): Privacy {
@@ -111,6 +140,17 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       const q = 0.4 + 0.6 * room;
       score *= q;
       why.push(`quota ${(room * 100).toFixed(0)}% left${usage?.source === 'measured' ? ' (measured)' : usage?.source === 'estimated' ? ' (estimated)' : ''}`);
+
+      const t = timing(usage, room, now);
+      score *= t.factor;
+      why.push(...t.why);
+
+      // An account that may train on prompts can only take public work, so it gets public work first and
+      // the other accounts keep their quota for private work. A known price leaves this to the cost factor.
+      if (privacy === 'public' && account.trainsOnData && !account.local && unpriced(model) && settings.mode !== 'quality') {
+        score *= PUBLIC_ONLY_BONUS;
+        why.push('takes public work only, so it goes first');
+      }
 
       const c = costFactor(model, account, settings.mode, task.type);
       score *= c;
