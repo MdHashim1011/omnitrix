@@ -140,6 +140,22 @@ export interface TaskSpec {
   /** small, medium or large; used to estimate tokens */
   size?: 'small' | 'medium' | 'large';
   effort?: Effort;
+  /** accounts ("accountId") or models ("accountId/modelId") not to use, such as ones whose result was rejected */
+  avoid?: string[];
+  /** when the job is done, a different account checks the result against `acceptance` */
+  check?: boolean;
+  /** only models without tools (API drivers); set on checks, whose prompt holds another worker's output */
+  textOnly?: boolean;
+}
+
+export interface JobCheck {
+  status: 'pending' | 'pass' | 'fail' | 'unclear' | 'unavailable';
+  /** the job that does the checking */
+  jobId?: string;
+  /** "accountId/modelId" of the checker */
+  by?: string;
+  /** the checker's one-sentence reason, or why no check could run */
+  note?: string;
 }
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -176,6 +192,11 @@ export interface Job {
   verdict?: 'accepted' | 'rejected';
   /** why Claude accepted or rejected the result, as it said in rate_result */
   verdictNote?: string;
+  /** the rejected job this one retries */
+  retryOf?: string;
+  check?: JobCheck;
+  /** the job whose result this job checks */
+  checkOf?: string;
 }
 
 export interface DriverRequest {

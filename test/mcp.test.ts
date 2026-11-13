@@ -133,3 +133,57 @@ describe('MCP server with a forecast', () => {
     }
   }, 30_000);
 });
+
+describe('MCP retry after a rejection', () => {
+  it('sends the task to another model and returns the new job id', async () => {
+    const home = tempHome();
+    const first = await mockProvider(() => ({ json: chatReply('first answer') }));
+    const second = await mockProvider(() => ({ json: chatReply('second answer') }));
+    writeConfig([account({ id: 'first', baseUrl: first.url, local: true, priority: 0 }), account({ id: 'second', baseUrl: second.url, local: true, priority: 1 })]);
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [cli, 'mcp'], env: { ...(process.env as Record<string, string>), OMNITRIX_HOME: home }, stderr: 'pipe' }));
+    try {
+      const sent: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 'summary', type: 'writing', prompt: 'write the summary' }] } });
+      const id = sent.structuredContent.job_ids[0];
+      await client.callTool({ name: 'get_results', arguments: { job_ids: [id], wait_seconds: 10 } });
+      // a retry without a reason is refused: the next worker needs to know what was wrong
+      const bare: any = await client.callTool({ name: 'rate_result', arguments: { job_id: id, accepted: false, retry: true } });
+      expect(bare.isError).toBe(true);
+      const r: any = await client.callTool({ name: 'rate_result', arguments: { job_id: id, accepted: false, note: 'the deadline is missing', retry: true } });
+      expect(r.isError).toBeFalsy();
+      const newId = /retry: (\S+)/.exec(r.content[0].text)![1];
+      const res: any = await client.callTool({ name: 'get_results', arguments: { job_ids: [newId], wait_seconds: 10 } });
+      expect(res.structuredContent.jobs[0]).toMatchObject({ status: 'done', account: 'second' });
+      expect(JSON.stringify(second.calls[0]!.body.messages)).toContain('the deadline is missing');
+    } finally {
+      await client.close();
+      await first.close();
+      await second.close();
+    }
+  }, 30_000);
+});
+
+describe('MCP second-model check', () => {
+  it('waits for the check and shows its verdict with the result', async () => {
+    const home = tempHome();
+    const worker = await mockProvider(() => ({ json: chatReply('The report is due on Friday.'), delayMs: 100 }));
+    const checker = await mockProvider(() => ({ json: chatReply('PASS\nIt states the Friday deadline.'), delayMs: 300 }));
+    writeConfig([account({ id: 'worker', baseUrl: worker.url, local: true, priority: 0 }), account({ id: 'checker', baseUrl: checker.url, local: true, priority: 1 })]);
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [cli, 'mcp'], env: { ...(process.env as Record<string, string>), OMNITRIX_HOME: home }, stderr: 'pipe' }));
+    try {
+      const noLine: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 's', type: 'writing', prompt: 'summarise', check: true }] } });
+      expect(noLine.isError).toBe(true);
+      const sent: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 'summary', type: 'writing', prompt: 'summarise the email', acceptance: 'mentions the deadline', check: true }] } });
+      const id = sent.structuredContent.job_ids[0];
+      const res: any = await client.callTool({ name: 'get_results', arguments: { job_ids: [id], wait_seconds: 10 } });
+      expect(res.isError).toBeFalsy();
+      expect(res.structuredContent.pending).toBe(0);
+      expect(res.structuredContent.jobs[0]).toMatchObject({ status: 'done', account: 'worker', check: { status: 'pass', by: 'checker/test-model', note: 'It states the Friday deadline.' } });
+    } finally {
+      await client.close();
+      await worker.close();
+      await checker.close();
+    }
+  }, 30_000);
+});

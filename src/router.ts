@@ -101,6 +101,8 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
   for (const account of ctx.config.accounts) {
     const reject = (reason: string, model?: string) => rejected.push({ accountId: account.id, model, reason });
     if (forcedAccount && account.id !== forcedAccount) continue;
+    if (task.avoid?.includes(account.id)) { reject('avoided for this task'); continue; }
+    if (task.textOnly && account.driver === 'cli') { reject('this task runs without tools, so agent CLIs are not used'); continue; }
     if (!account.enabled) { reject('disabled'); continue; }
     if (settings.bannedProviders.includes(account.provider)) { reject('provider is banned in settings'); continue; }
 
@@ -125,6 +127,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
     const busy = (ctx.running[account.id] ?? 0) >= account.concurrency;
 
     for (const model of models) {
+      if (task.avoid?.includes(`${account.id}/${model.id}`)) { reject('avoided for this task', model.id); continue; }
       const paused = ctx.health[modelHealthKey(account.id, model.id)];
       if (paused && paused.state === 'cooling' && (paused.until ?? 0) > now) {
         reject(`paused until ${new Date(paused.until!).toLocaleTimeString()} (${paused.reason ?? 'not answering'})`, model.id);

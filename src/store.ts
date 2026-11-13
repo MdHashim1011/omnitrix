@@ -167,6 +167,11 @@ export function uniqueAccountId(cfg: Config, base: string): string {
 /** Hide anything that looks like a secret before it is shown or saved. */
 export function redact(text: string): string {
   return text
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '-----PRIVATE KEY***-----')
+    .replace(/\b(ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{20,}/g, '$1_***')
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, 'AKIA***')
+    .replace(/\b(xox[abprs])-[A-Za-z0-9-]{10,}/g, '$1-***')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, 'jwt-***')
     .replace(/(sk|pk|rk|gsk|xai|nvapi|hf)[-_][A-Za-z0-9_\-]{12,}/g, '$1-***')
     .replace(/(Bearer\s+)[A-Za-z0-9._\-]{12,}/gi, '$1***')
     .replace(/("?(api[_-]?key|authorization|x-api-key|token)"?\s*[:=]\s*"?)[^"\s,}]{8,}/gi, '$1***');

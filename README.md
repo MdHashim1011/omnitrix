@@ -136,12 +136,18 @@ omnitrix runs as an MCP server and gives Claude the following tools:
 | `dispatch` | Sends up to 30 tasks at once and runs independent tasks in parallel |
 | `get_results` | Waits for jobs and returns a short preview of each result |
 | `read_output` | Reads a full result in pages when the preview is not sufficient |
-| `rate_result` | Accepts or rejects a result so that the router can learn from it |
+| `rate_result` | Accepts or rejects a result so that the router can learn from it, and can send a rejected task to another model |
 | `cancel_job`, `list_jobs` | Cancels a job or lists recent jobs |
 
 The `pool_status`, `dispatch` and `get_results` tools declare output schemas, and their structured data contains everything their text shows. `list_jobs` also lists jobs that other omnitrix processes started, and `cancel_job` can cancel them.
 
 A task can set `effort` to `low`, `medium` or `high` to ask a reasoning model to think less or more. omnitrix passes it to Codex and to OpenAI-compatible APIs such as Gemini; without it, each provider uses its own default. From the command line, use `omnitrix run --effort high`.
+
+### Checking and retrying results
+
+A task can set `check` to `true` together with an `acceptance` line. When the result is ready, omnitrix sends a short review task to a different account. That task contains the instructions, the acceptance line and the result, with secrets removed and the result marked as data rather than instructions, and asks for PASS or FAIL with a one-sentence reason. Checks run only on models without tools, never on an agent CLI that can read files or run commands. `get_results` waits for this verdict and shows it next to the result. The check follows the privacy level of the task, so private work is checked only by an account that may receive private work. If no other suitable account is available, the check is reported as unavailable. The check uses the checking account's quota, and it reads the worker's report, not the changed files. It is advice for Claude's own review and does not replace it.
+
+When Claude rejects a result, it can call `rate_result` with `retry` set to `true` and a note that explains what was wrong. omnitrix then sends the same task to a model that has not been rejected for it, with the note added to the instructions. The new worker sees the note but not the rejected answer.
 
 By default, previews are limited to 1,500 characters to keep Claude's token usage low; `omnitrix settings --preview-chars` changes the limit. Full outputs remain on disk.
 
@@ -183,7 +189,7 @@ Remaining quota is measured for ChatGPT plans. For other subscriptions it is an 
 
 ## Roadmap
 
-The next planned feature is friend nodes. A friend would run a small agent on their own computer with their own login and a daily cap that they can pause at any time, so their account never leaves their machine. Later plans include a second model to verify critical results, and drivers for Aider and Goose.
+The next planned feature is friend nodes. A friend would run a small agent on their own computer with their own login and a daily cap that they can pause at any time, so their account never leaves their machine. Later plans include drivers for Aider and Goose.
 
 ## Development
 
