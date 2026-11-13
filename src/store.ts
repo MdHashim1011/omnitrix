@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { loadTeam } from './team.js';
 import type { Account, AccountHealth, Config, Settings } from './types.js';
 
 export function homeDir(): string {
@@ -87,19 +88,26 @@ export function loadConfig(): Config {
   if (!cfg) return { version: 1, accounts: [], settings: { ...defaultSettings } };
   cfg.settings = { ...defaultSettings, ...cfg.settings };
   cfg.accounts ??= [];
+  if (cfg.settings.team) {
+    // the developer's own account wins when an id is used by both
+    const own = new Set(cfg.accounts.map((a) => a.id));
+    cfg.accounts.push(...loadTeam(cfg.settings.team).accounts.filter((a) => !own.has(a.id)));
+  }
   return cfg;
 }
 
 export function saveConfig(cfg: Config): void {
   ensureHome();
-  writeJson(files.config(), cfg);
+  // team accounts come from the team file on every load; saving them would freeze an old copy here
+  writeJson(files.config(), { ...cfg, accounts: cfg.accounts.filter((a) => !a.team) });
 }
 
 /** Remove a model the provider no longer serves, so the router stops choosing it. */
 export function dropModel(accountId: string, modelId: string): void {
   const cfg = loadConfig();
   const acc = findAccount(cfg, accountId);
-  if (!acc || !acc.models.some((m) => m.id === modelId)) return;
+  // a team account is rebuilt from the team file on every load; its model rests instead (see the engine)
+  if (!acc || acc.team || !acc.models.some((m) => m.id === modelId)) return;
   acc.models = acc.models.filter((m) => m.id !== modelId);
   saveConfig(cfg);
 }

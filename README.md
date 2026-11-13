@@ -137,6 +137,48 @@ omnitrix set deepseek --tpd 4000000      # tokens per day
 
 The available options are `--rpm` (requests per minute), `--r5h` (requests per 5 hours), `--rpd` (requests per day), `--rpw` (requests per week), `--tpd` (tokens per day) and `--tpm` (tokens per month).
 
+## Team mode
+
+A company that pays for API usage can share its accounts with every developer through one team file, so that each developer's Claude Code can use them without buying extra credits. The file lists the shared API accounts, the price of each model and the budgets. It never contains keys: each account names the environment variable that holds the key on each developer's computer.
+
+```json
+{
+  "version": 1,
+  "name": "Acme",
+  "accounts": [
+    { "id": "acme-openai", "provider": "openai", "keyEnv": "ACME_OPENAI_KEY", "models": ["gpt-5.2"], "usdPerDay": 40 }
+  ],
+  "prices": { "gpt-5.2": { "input": 1.25, "output": 10 } },
+  "budgets": { "usdPerDay": 5, "usdPerMonth": 60, "people": { "lead@acme.com": { "usdPerDay": 20 } } },
+  "auditDir": "//fileserver/omnitrix-audit"
+}
+```
+
+Prices are in US dollars per million tokens. On Windows, `auditDir` can be a network path such as `//fileserver/omnitrix-audit`; on macOS and Linux, use the folder where the share is mounted, such as `/Volumes/omnitrix-audit` or `/mnt/omnitrix-audit`.
+
+```bash
+omnitrix team join ./omnitrix.team.json
+omnitrix team join ./omnitrix.team.json --yes <review code>
+omnitrix team
+omnitrix usage --by person
+```
+
+The first command changes nothing. It shows each shared account, the server that its key would be sent to, whether the key's environment variable is set on this computer, any team limit on the account, your budget and the shared folder, together with a short review code. It warns when a server is not the provider's own address, when an account uses a variable that usually holds a personal key, such as `OPENAI_API_KEY`, and when a model has no price. The second command joins the team, and it works only with the review code of the exact contents that were shown, so a file that was edited in between is refused.
+
+You are identified by the email address in your global git configuration, or by your login name if none is set; use `--as <name>` to choose another name. Names in the team file must match exactly, including capital letters, and omnitrix does not verify them. `omnitrix team` shows what you have spent today and this month, and `omnitrix team leave` stops using the file.
+
+omnitrix records the contents of the file when you join. If the file changes later, for example when someone adds an account or changes a server address, its accounts stop loading until you review and join it again. A team file is refused if an account has a field named like a key (such as `apiKey`, `key`, `secret`, `token`, `password` or `authorization`), names a CLI provider such as Codex, Claude Code or Gemini CLI, names a local model server, or has a `baseUrl` that is not a valid `https://` address. It is also refused if an account takes its key from a variable for another kind of credential (for example `AWS_*`, `GITHUB_TOKEN` or a password), sends a variable that usually holds a personal key to a server other than the provider's own, or marks a provider that may train on prompts as safe for private work. omnitrix does not inspect the values of other fields, so a team file should still be checked for pasted keys.
+
+Team accounts are loaded from the file each time and are never saved into your own configuration. For this reason, `omnitrix set`, `enable`, `disable`, `remove`, `model` and `models --refresh` refuse to change them. If you already have an account with the same id, your own account is used, and team budgets never apply to it.
+
+Each request that omnitrix sends to a team account, including `omnitrix test`, is recorded with your name, the team, the account, the model, the tokens, the cost, the time and the job id. When the provider does not report the cost, omnitrix estimates it from the prices in the file; a model without a price counts as costing nothing, so every team model should have one. When your daily or monthly budget is used up, the router skips the team's accounts, and your own accounts and local models still work. A person can have their own budget under `people`. An account can also have a limit for the whole team, `usdPerDay` or `usdPerMonth`. Days and months follow each computer's local time. If budgets cannot be worked out, the team's accounts are skipped rather than used.
+
+When the file names an `auditDir`, the records of your requests on team accounts are also copied to that shared folder, in one file per person. These records hold no prompts or results. omnitrix then counts everyone's spending against the account limits, and `omnitrix usage --team` reports on the whole team. Records that are malformed, that do not belong to the file they are in, or that are dated in the future are ignored, and links, folders and files larger than 10 MB in the shared folder are skipped. Other developers' spending is read from the folder at most once a minute; your own spending counts at once. If the folder cannot be reached, account limits count only your own spending, and `pool_status` says so.
+
+While a request on a team account is running, its largest possible cost, estimated from its prompt and its output limit, counts against your budget and the account's limit in the omnitrix process that sends it, so a burst of requests from one process cannot run far past either. Requests running in other omnitrix processes or on other computers are counted only once their records exist. A request can still cost more than its estimate when its prompt includes large files. Your personal budget counts only the requests made from this computer, and anyone who can write to the shared folder can affect the account limits. Budgets are therefore safeguards rather than strict enforcement; a provider's own spending limit on the company account remains the most reliable protection, and a team should set one as well.
+
+Personal subscriptions cannot be team accounts, because a seat on a plan such as ChatGPT Plus or Claude Pro belongs to one person.
+
 ## MCP tools
 
 omnitrix runs as an MCP server and gives Claude the following tools:
@@ -182,6 +224,8 @@ omnitrix run <prompt>           run one task and print the answer
 omnitrix settings               set the mode, privacy, and pinned or banned providers
 omnitrix dashboard              open a live web dashboard on 127.0.0.1
 omnitrix setup-claude           register with Claude Code
+omnitrix team                   join, review or leave a team file, and show your spending
+omnitrix usage                  requests, tokens and cost by person, account or model for the last 30 days (--team reads the shared folder)
 omnitrix clean                  delete finished jobs and worktrees older than 14 days (--branches also deletes branches no longer needed)
 omnitrix doctor                 check the setup
 ```

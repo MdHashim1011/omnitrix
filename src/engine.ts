@@ -6,6 +6,7 @@ import path from 'node:path';
 import { runDriver } from './drivers/index.js';
 import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
 import { reachable } from './init.js';
+import { budgetBlocks, budgetFor, estimateCost, loadTeam, periodStart, personSpend, readShared, shareRecord, type Reserved, type TeamSummary } from './team.js';
 import { loadQuotas, refreshQuotas } from './quota.js';
 import { route, effectivePrivacy, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
@@ -175,6 +176,74 @@ export class Engine {
     }));
   }
 
+  private sharedCache?: { dir: string; at: number; records: UsageRecord[]; readable: boolean };
+  /** estimated cost of each running request on a team account, counted against budgets until its record exists */
+  private reserved = new Map<string, { accountId: string; usd: number }>();
+
+  /** Everyone's team records from the shared folder, read at most once a minute. */
+  private sharedRecords(dir: string): UsageRecord[] {
+    const now = Date.now();
+    if (this.sharedCache?.dir !== dir || now - this.sharedCache.at > 60_000) {
+      let readable = true;
+      try {
+        fs.readdirSync(dir);
+      } catch {
+        readable = false;
+      }
+      this.sharedCache = { dir, at: now, records: readShared(dir, periodStart(now, 'month')), readable };
+    }
+    return this.sharedCache.records;
+  }
+
+  /**
+   * Which team accounts are out of budget. If budgets cannot be worked out, the team's accounts are held back
+   * rather than let through: they spend the company's money. The developer's own accounts are never affected.
+   */
+  private teamBlocks(cfg: Config, records: Map<string, UsageRecord[]>): Record<string, string> | undefined {
+    const state = this.team(cfg);
+    if (!state?.team) return undefined;
+    try {
+      const { user } = state.membership;
+      const own = [...records.values()].flat();
+      // colleagues' records from the shared folder (up to a minute old) plus this person's own, which are current
+      const everyone = state.team.auditDir ? [...this.sharedRecords(state.team.auditDir).filter((r) => r.user !== user), ...own] : own;
+      const reserved: Reserved = {};
+      for (const r of this.reserved.values()) reserved[r.accountId] = (reserved[r.accountId] ?? 0) + r.usd;
+      return budgetBlocks(state.team, user, own, everyone, Date.now(), reserved);
+    } catch (err) {
+      const reason = `team budgets could not be checked (${err instanceof Error ? err.message : err})`;
+      return Object.fromEntries(state.team.accounts.map((a) => [a.id, reason]));
+    }
+  }
+
+  private team(cfg: Config) {
+    return cfg.settings.team ? loadTeam(cfg.settings.team) : undefined;
+  }
+
+  /** The joined team, the person and their spending, for pool_status and the dashboard. */
+  teamSummary(cfg = this.config()): TeamSummary | undefined {
+    const state = this.team(cfg);
+    if (!state) return undefined;
+    const { user } = state.membership;
+    if (!state.team) return { name: '(not loaded)', user, spentToday: 0, spentMonth: 0, error: state.error };
+    const s = personSpend(state.team, user, [...this.records().values()].flat());
+    const b = budgetFor(state.team, user);
+    const dir = state.team.auditDir;
+    if (dir) this.sharedRecords(dir);
+    const warning = dir && this.sharedCache && !this.sharedCache.readable ? `the shared folder ${dir} cannot be read, so account limits count only your own spending` : undefined;
+    return { name: state.team.name, user, spentToday: s.day, spentMonth: s.month, dayBudget: b.day, monthBudget: b.month, ...(warning ? { warning } : {}) };
+  }
+
+  /** Write a request to the ledger, marked with the person and team when it used a team account. */
+  private record(account: Account, rec: UsageRecord, cfg: Config): void {
+    const state = account.team ? this.team(cfg) : undefined;
+    const full = state?.team ? { ...rec, user: state.membership.user, team: state.team.name } : rec;
+    recordUsage(full);
+    if (state?.team?.auditDir) shareRecord(state.team.auditDir, state.membership.user, full);
+    // the person's own records count from the local ledger, so the shared folder need not be read again now
+    this.usageCache = undefined;
+  }
+
   private routeContext(cfg: Config): RouteContext {
     const records = this.records();
     // another process (a CLI "set" or "test", a second server) may have seen the account more recently
@@ -184,7 +253,7 @@ export class Engine {
     const quotas = loadQuotas();
     const usage: Record<string, UsageSummary> = {};
     for (const a of cfg.accounts) usage[a.id] = summarize(a, records.get(a.id) ?? [], this.health[a.id], Date.now(), quotas[a.id]);
-    return { config: cfg, health: this.health, usage, running: this.running, stats: loadStats() };
+    return { config: cfg, health: this.health, usage, running: this.running, stats: loadStats(), blocked: this.teamBlocks(cfg, records) };
   }
 
   pool(): PoolAccountView[] {
@@ -535,6 +604,8 @@ export class Engine {
       });
       if (free) {
         void this.start(job, free, cfg, seat);
+        // the job just started holds a reservation, so later jobs in this pass see the budget it may use
+        if (findAccount(cfg, free.accountId)?.team) ctx!.blocked = this.teamBlocks(cfg, this.records());
         continue;
       }
       if (fresh.length === 0) {
@@ -564,6 +635,12 @@ export class Engine {
     job.model = cand.model;
     job.updatedAt = Date.now();
     this.saveJob(job);
+    if (account.team) {
+      // what this request may cost at most, from its prompt and its output limit, until its record exists
+      const model = account.models.find((m) => m.id === cand.model);
+      const out = job.task.size === 'small' ? 4000 : job.task.size === 'large' ? 32000 : 16000;
+      this.reserved.set(job.id, { accountId: account.id, usd: estimateCost(model, Math.ceil(job.task.prompt.length / 4), out) ?? 0 });
+    }
 
     const t0 = Date.now();
     let worktree: { path: string; branch: string; root: string } | undefined;
@@ -599,8 +676,9 @@ export class Engine {
         edit,
       );
 
-      recordUsage({ ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ok: true, latencyMs: Date.now() - t0, costUsd: result.costUsd });
-      this.usageCache = undefined;
+      // the provider's own figure when it gives one, otherwise the model's price per million tokens
+      const costUsd = result.costUsd ?? estimateCost(account.models.find((m) => m.id === cand.model), result.inputTokens, result.outputTokens);
+      this.record(account, { ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ok: true, latencyMs: Date.now() - t0, costUsd }, cfg);
       const measured = result.rate ? { ...result.rate, at: Date.now(), source: 'response headers' } : this.health[account.id]?.measured;
       this.setHealth(account.id, { state: 'ready', measured });
 
@@ -615,7 +693,7 @@ export class Engine {
       job.outputFile = outFile;
       job.outputChars = text.length;
       job.preview = text.slice(0, cfg.settings.resultPreviewChars);
-      job.usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: result.costUsd };
+      job.usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd };
       job.status = 'done';
       job.error = undefined;
       if (job.task.check) job.check = { status: 'pending' };
@@ -626,8 +704,7 @@ export class Engine {
       attempt.error = redact(e.message).slice(0, 600);
       attempt.errorKind = e.kind;
       if (calling && e.kind !== 'bad_request' && e.kind !== 'cancelled') {
-        recordUsage({ ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: 0, outputTokens: 0, ok: false, status: e.status, errorKind: e.kind, latencyMs: Date.now() - t0 });
-        this.usageCache = undefined;
+        this.record(account, { ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: 0, outputTokens: 0, ok: false, status: e.status, errorKind: e.kind, latencyMs: Date.now() - t0 }, cfg);
       }
       this.applyFailure(account, e, cand.model);
       this.tripBreaker(account, e);
@@ -661,6 +738,7 @@ export class Engine {
       attempt.endedAt = Date.now();
       this.running[account.id] = Math.max(0, (this.running[account.id] ?? 1) - 1);
       freeSeat(seat);
+      this.reserved.delete(job.id);
       this.controllers.delete(job.id);
       job.updatedAt = Date.now();
       this.saveJob(job);

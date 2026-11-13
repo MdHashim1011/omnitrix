@@ -58,7 +58,17 @@ const accountOut = z.object({
   windows: z.array(z.object({ name: z.string(), unit: z.enum(['requests', 'tokens', 'percent']), used: z.number(), limit: z.number(), remaining: z.number(), resetsAt: z.number().nullable(), runsOutAt: z.number().nullable() })).describe('the same windows as quota, as numbers; resetsAt is epoch ms; runsOutAt (epoch ms) is set when the current pace uses the window up before it resets'),
   pausedModels: z.array(z.string()).describe('models resting after errors; the router skips them until their break ends'),
 });
-const poolOut = z.object({ ready: z.number(), total: z.number(), accounts: z.array(accountOut) });
+const teamOut = z.object({
+  name: z.string(), user: z.string(), spentToday: z.number(), spentMonth: z.number(),
+  dayBudget: z.number().optional(), monthBudget: z.number().optional(), error: z.string().optional(), warning: z.string().optional(),
+}).describe('the team this developer joined: their spending on team accounts in US dollars and their budget; team accounts are skipped once a budget is used up');
+const poolOut = z.object({ ready: z.number(), total: z.number(), accounts: z.array(accountOut), team: teamOut.optional() });
+
+function describeTeam(t: z.infer<typeof teamOut>): string {
+  if (t.error) return `team: not loaded (${t.error})`;
+  const part = (spent: number, budget: number | undefined, when: string) => `$${spent.toFixed(2)}${budget !== undefined ? ` of $${budget.toFixed(2)}` : ''} ${when}`;
+  return `team ${t.name} as ${t.user}: ${part(t.spentToday, t.dayBudget, 'today')}, ${part(t.spentMonth, t.monthBudget, 'this month')}${t.warning ? ` (${t.warning})` : ''}`;
+}
 const dispatchOut = z.object({
   job_ids: z.array(z.string()),
   jobs: z.array(z.object({ job_id: z.string(), title: z.string(), status: z.string(), account: z.string().optional(), model: z.string().optional(), error: z.string().optional() })),
@@ -151,9 +161,10 @@ export function buildServer(engine: Engine): McpServer {
       // Wait briefly for fresh quota; a slow Codex keeps reading in the background and the saved numbers are used meanwhile.
       await Promise.all([refreshQuotas(engine.config().accounts, 60_000, 5_000), engine.checkLocal()]);
       const pool = engine.pool();
+      const team = engine.teamSummary();
       if (!pool.length) return text('No accounts yet. The user can add some with: omnitrix add <provider> (run "omnitrix providers" for the list).', { ready: 0, total: 0, accounts: [] });
       const ready = pool.filter((a) => a.state === 'ready' || a.state === 'busy').length;
-      const lines = [`${ready}/${pool.length} accounts available`, ...pool.map(describeAccount)];
+      const lines = [`${ready}/${pool.length} accounts available`, ...(team ? [describeTeam(team)] : []), ...pool.map(describeAccount)];
       const accounts = pool.map((a) => ({
         id: a.id,
         label: a.label,
@@ -176,7 +187,7 @@ export function buildServer(engine: Engine): McpServer {
         windows: a.usage.windows.map((w) => ({ name: w.name, unit: w.unit, used: w.used, limit: w.limit, remaining: w.remaining, resetsAt: w.resetsAt ?? null, runsOutAt: w.runsOutAt ?? null })),
         pausedModels: a.pausedModels,
       }));
-      return text(lines.join('\n'), { ready, total: pool.length, accounts });
+      return text(lines.join('\n'), { ready, total: pool.length, accounts, ...(team ? { team } : {}) });
     },
   );
 

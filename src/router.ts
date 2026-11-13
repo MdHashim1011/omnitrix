@@ -37,6 +37,8 @@ export interface RouteContext {
   running: Record<string, number>;
   stats: Record<string, { ok: number; bad: number; at: number }>;
   now?: number;
+  /** accounts that must not be used right now, with the reason (team budgets) */
+  blocked?: Record<string, string>;
 }
 
 export function fit(skills: Skills, type: TaskType): number {
@@ -102,6 +104,8 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
     const reject = (reason: string, model?: string) => rejected.push({ accountId: account.id, model, reason });
     if (forcedAccount && account.id !== forcedAccount) continue;
     if (task.avoid?.includes(account.id)) { reject('avoided for this task'); continue; }
+    // only a team account is held to the team's budgets, even when the developer has an account with the same id
+    if (account.team && ctx.blocked?.[account.id]) { reject(ctx.blocked[account.id]!); continue; }
     if (task.textOnly && account.driver === 'cli') { reject('this task runs without tools, so agent CLIs are not used'); continue; }
     if (!account.enabled) { reject('disabled'); continue; }
     if (settings.bannedProviders.includes(account.provider)) { reject('provider is banned in settings'); continue; }

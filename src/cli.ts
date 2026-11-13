@@ -17,10 +17,11 @@ import { PROVIDERS, getProvider } from './providers.js';
 import { renderStatusLine } from './statusline.js';
 import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
 import { branchExists, branchMerged, deleteBranch, pruneWorktree } from './worktree.js';
-import { EFFORTS, DriverError, TASK_TYPES, type Account, type Job, type Limits, type TaskType } from './types.js';
+import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, type Limits, type TaskType, type UsageRecord } from './types.js';
 import { refreshQuotas } from './quota.js';
-import { recordUsage } from './usage.js';
+import { formatTokens, readLedger, recordUsage } from './usage.js';
 import { detect } from './init.js';
+import { budgetFor, estimateCost, fingerprint, loadTeam, officialHost, parseTeam, periodStart, personSpend, readShared, reviewCode, shareRecord, teamAccounts, unpricedModels, type TeamFile } from './team.js';
 import { VERSION } from './version.js';
 
 const program = new Command();
@@ -37,6 +38,13 @@ function fail(msg: string): void {
 function die(msg: string): never {
   process.stderr.write(`error: ${msg}\n`);
   process.exit(1);
+}
+
+/** Team accounts come from the team file; a local change would be lost on the next load, so refuse it. */
+function ownAccount(cfg: Config, id: string): Account {
+  const acc = findAccount(cfg, id) ?? die(`no account "${id}"`);
+  if (acc.team) die(`${id} is managed by the team file ${cfg.settings.team?.file ?? ''}; change it there`);
+  return acc;
 }
 
 function int(v: string): number {
@@ -241,7 +249,7 @@ limitOptions(
     .option('--base-url <url>'),
 ).action((id: string, o: Record<string, any>) => {
   const cfg = loadConfig();
-  const acc = findAccount(cfg, id) ?? die(`no account "${id}"`);
+  const acc = ownAccount(cfg, id);
   if (o.label) acc.label = o.label;
   if (o.owner) acc.owner = o.owner;
   if (o.concurrency !== undefined) acc.concurrency = Math.max(1, o.concurrency);
@@ -267,7 +275,7 @@ for (const [name, value] of [['enable', true], ['disable', false]] as const) {
     .description(`${name} an account`)
     .action((id: string) => {
       const cfg = loadConfig();
-      const acc = findAccount(cfg, id) ?? die(`no account "${id}"`);
+      const acc = ownAccount(cfg, id);
       acc.enabled = value;
       saveConfig(cfg);
       if (value) saveHealth({ [id]: { state: 'ready' } });
@@ -281,7 +289,7 @@ program
   .option('--purge', 'also delete the profile folder with the saved login')
   .action((id: string, o) => {
     const cfg = loadConfig();
-    const acc = findAccount(cfg, id) ?? die(`no account "${id}"`);
+    const acc = ownAccount(cfg, id);
     cfg.accounts = cfg.accounts.filter((a) => a.id !== id);
     saveConfig(cfg);
     deleteSecret(id);
@@ -295,7 +303,7 @@ program
   .option('--refresh', 'ask the provider for its current model list')
   .action(async (id: string, o) => {
     const cfg = loadConfig();
-    const acc = findAccount(cfg, id) ?? die(`no account "${id}"`);
+    const acc = o.refresh ? ownAccount(cfg, id) : findAccount(cfg, id) ?? die(`no account "${id}"`);
     if (o.refresh) {
       const found = (await discoverModels(acc)).filter(isChatModel);
       if (!found.length) die('the provider returned no models');
@@ -326,7 +334,7 @@ program
   .option('--remove', 'remove this model from the account')
   .action((id: string, modelId: string, o: Record<string, any>) => {
     const cfg = loadConfig();
-    const acc = findAccount(cfg, id) ?? die(`no account "${id}"`);
+    const acc = ownAccount(cfg, id);
     if (o.remove) {
       acc.models = acc.models.filter((m) => m.id !== modelId);
       saveConfig(cfg);
@@ -359,7 +367,8 @@ program
   .description('send a tiny request to check that an account works')
   .option('--model <id>')
   .action(async (id: string, o) => {
-    const acc = findAccount(loadConfig(), id) ?? die(`no account "${id}"`);
+    const cfg = loadConfig();
+    const acc = findAccount(cfg, id) ?? die(`no account "${id}"`);
     // try the listed models in order until one answers; a provider may still list models it has retired
     const queue = o.model ? [o.model] : acc.models.length ? acc.models.map((m) => m.id) : ['default'];
     for (const model of queue) {
@@ -368,7 +377,13 @@ program
       try {
         const r = await runDriver({ account: acc, model, prompt: 'Reply with the single word OK.', timeoutMs: 180_000, maxOutputTokens: 64 });
         const ms = Date.now() - t0;
-        recordUsage({ ts: Date.now(), accountId: id, model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ok: true, latencyMs: ms, costUsd: r.costUsd });
+        const costUsd = r.costUsd ?? estimateCost(acc.models.find((m) => m.id === model), r.inputTokens, r.outputTokens);
+        const rec = { ts: Date.now(), accountId: id, model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ok: true, latencyMs: ms, costUsd };
+        // a test on a team account spends the team's money like any other request
+        const team = acc.team && cfg.settings.team ? loadTeam(cfg.settings.team) : undefined;
+        const tagged = team?.team ? { ...rec, user: team.membership.user, team: team.team.name } : rec;
+        recordUsage(tagged);
+        if (team?.team?.auditDir) shareRecord(team.team.auditDir, team.membership.user, tagged);
         saveHealth({ [id]: { state: 'ready', measured: r.rate ? { ...r.rate, at: Date.now(), source: 'response headers' } : undefined } });
         console.log(`ok in ${(ms / 1000).toFixed(1)}s: "${r.text.trim().slice(0, 60)}"`);
         if (r.rate?.remainingRequests !== undefined) console.log(`provider says ${r.rate.remainingRequests} requests left in this window`);
@@ -530,6 +545,156 @@ program
       }
     }
     console.log('\nTo use omnitrix from Claude Code, run "omnitrix setup-claude" once, then restart Claude Code.');
+  });
+
+function money(v: number): string {
+  return `$${v.toFixed(2)}`;
+}
+
+/** Who this developer is in the team: an explicit name, else their git email, else their login name. */
+function defaultUser(): string {
+  const git = spawnSync('git', ['config', '--global', 'user.email'], { encoding: 'utf8', windowsHide: true });
+  return git.status === 0 && git.stdout.trim() ? git.stdout.trim() : os.userInfo().username;
+}
+
+const team = program.command('team').description('share company API accounts, prices and budgets through a team file');
+
+team
+  .command('join <file>')
+  .description('review a team file, then join it with --yes')
+  .option('--as <name>', 'who you are in the team (default: your git email)')
+  .option('--yes <code>', 'join, giving the review code shown when you reviewed the file')
+  .action((file: string, o) => {
+    const full = path.resolve(file);
+    let text: string;
+    try {
+      text = fs.readFileSync(full, 'utf8');
+    } catch {
+      die(`cannot read ${full}`);
+    }
+    let parsed: TeamFile;
+    try {
+      parsed = parseTeam(text);
+    } catch (err) {
+      die(err instanceof Error ? err.message : String(err));
+    }
+    const user = o.as ?? defaultUser();
+    const code = reviewCode(text);
+    if (o.yes !== undefined && o.yes !== code) {
+      // the code ties the join to the exact contents that were reviewed, so a file edited in between is not pinned
+      die(`the review code ${o.yes} does not match this file: it has changed since you reviewed it, or the code is wrong. Run "omnitrix team join ${file}" without --yes to review it again`);
+    }
+    // everything a key could be sent to, so the developer can see where their keys would go
+    console.log(`${parsed.name} (${full})`);
+    console.log('Accounts, and where their keys would be sent:');
+    const warnings: string[] = [];
+    for (const a of teamAccounts(parsed)) {
+      const spec = parsed.accounts.find((s) => s.id === a.id)!;
+      const host = new URL(a.baseUrl!).host;
+      const official = officialHost(a.provider);
+      const where = official === undefined ? `${host} (a custom address)` : host === official ? host : `${host} (not the provider's own address, ${official})`;
+      const set = process.env[spec.keyEnv] ? 'set' : 'not set on this computer';
+      const limit = [spec.usdPerDay !== undefined ? `${money(spec.usdPerDay)} a day` : '', spec.usdPerMonth !== undefined ? `${money(spec.usdPerMonth)} a month` : ''].filter(Boolean).join(', ');
+      console.log(`  ${a.id.padEnd(18)} ${a.provider.padEnd(14)} ${where.padEnd(30)} key from ${spec.keyEnv} (${set})${limit ? `; team limit ${limit}` : ''}${a.trainsOnData ? '; may train on prompts, so public tasks only' : ''}`);
+      if (PROVIDERS.some((p) => p.keyEnv === spec.keyEnv)) warnings.push(`${spec.keyEnv} usually holds a personal key; ask the team to use a variable of its own, such as ACME_${spec.keyEnv}`);
+    }
+    for (const m of unpricedModels(parsed)) warnings.push(`no price for ${m}, so its requests count as costing nothing against budgets`);
+    const b = budgetFor(parsed, user);
+    console.log(`Your budget as ${user}: ${b.day !== undefined ? `${money(b.day)} a day` : 'no daily limit'}, ${b.month !== undefined ? `${money(b.month)} a month` : 'no monthly limit'}`);
+    if (o.as && o.as !== defaultUser()) console.log(`  (your git email is ${defaultUser()})`);
+    if (parsed.auditDir) console.log(`Your name and your requests on team accounts (account, model, tokens, cost; never prompts or results) are also copied to ${parsed.auditDir}`);
+    for (const w of warnings) console.log(`warning: ${w}`);
+    if (o.yes === undefined) {
+      console.log(`\nreview code: ${code}`);
+      console.log(`Nothing was changed. If this looks right, join with: omnitrix team join ${file}${o.as ? ` --as ${o.as}` : ''} --yes ${code}`);
+      return;
+    }
+    const cfg = loadConfig();
+    const clash = parsed.accounts.filter((a) => cfg.accounts.some((own) => own.id === a.id && !own.team)).map((a) => a.id);
+    cfg.settings.team = { file: full, user, sha256: fingerprint(text) };
+    saveConfig(cfg);
+    console.log(`\njoined ${parsed.name} as ${user}`);
+    if (clash.length) console.log(`note: you already have accounts named ${clash.join(', ')}; your own ones are used, and the team's are not loaded`);
+    console.log('If the team file changes later, its accounts stop loading until you review it here again.');
+  });
+
+team
+  .command('leave')
+  .description('stop using the team file')
+  .action(() => {
+    const cfg = loadConfig();
+    const state = cfg.settings.team ? loadTeam(cfg.settings.team) : undefined;
+    if (!state) {
+      console.log('You are not in a team.');
+      return;
+    }
+    cfg.settings.team = undefined;
+    saveConfig(cfg);
+    console.log(`left ${state.team?.name ?? 'the team'}`);
+  });
+
+team
+  .command('status', { isDefault: true })
+  .description('show the team, who you are and what you have spent')
+  .action(() => {
+    const cfg = loadConfig();
+    if (!cfg.settings.team) {
+      console.log('You are not in a team. Join one with: omnitrix team join <file>');
+      return;
+    }
+    const state = loadTeam(cfg.settings.team);
+    if (!state.team) {
+      console.log(`Team accounts are not loaded: ${state.error}`);
+      return;
+    }
+    const { user } = state.membership;
+    const s = personSpend(state.team, user, readLedger(periodStart(Date.now(), 'month')));
+    const b = budgetFor(state.team, user);
+    console.log(`${state.team.name}, as ${user} (${state.membership.file})`);
+    console.log(`  today: ${money(s.day)}${b.day !== undefined ? ` of ${money(b.day)}` : ''}`);
+    console.log(`  this month: ${money(s.month)}${b.month !== undefined ? ` of ${money(b.month)}` : ''}`);
+    console.log(`  accounts: ${state.accounts.map((a) => a.id).join(', ')}`);
+  });
+
+program
+  .command('usage')
+  .description('requests, tokens and cost, grouped by person, account or model')
+  .addOption(new Option('--by <what>', 'how to group').choices(['person', 'account', 'model']).default('account'))
+  .option('--days <n>', 'how far back', int, 30)
+  .option('--team', "everyone's usage from the team's shared folder instead of this computer's")
+  .action((o) => {
+    const since = Date.now() - o.days * 24 * 3600_000;
+    let records: UsageRecord[];
+    if (o.team) {
+      const cfg = loadConfig();
+      const state = cfg.settings.team ? loadTeam(cfg.settings.team) : undefined;
+      if (!state?.team?.auditDir) die('the team file names no shared folder (auditDir), so there is no team-wide log to read');
+      records = readShared(state.team.auditDir, since);
+    } else {
+      records = readLedger(since);
+    }
+    const groups = new Map<string, { n: number; failed: number; tokens: number; cost: number }>();
+    for (const r of records) {
+      const key = o.by === 'person' ? r.user ?? '(you, outside a team)' : o.by === 'model' ? `${r.accountId}/${r.model}` : r.accountId;
+      const g = groups.get(key) ?? { n: 0, failed: 0, tokens: 0, cost: 0 };
+      g.n++;
+      if (!r.ok) g.failed++;
+      g.tokens += r.inputTokens + r.outputTokens;
+      g.cost += r.costUsd ?? 0;
+      groups.set(key, g);
+    }
+    if (!groups.size) {
+      console.log(`no requests in the last ${o.days} days`);
+      return;
+    }
+    const rows = [...groups.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].n - a[1].n);
+    const width = Math.max(...rows.map(([k]) => k.length)) + 2;
+    for (const [key, g] of rows) {
+      // shared records come from colleagues' machines; never print control characters from them
+      const k = key.replace(/[\p{Cc}\p{Cf}]/gu, '?');
+      console.log(`${k.padEnd(width)}${`${g.n} requests`.padEnd(14)}${`${formatTokens(g.tokens)} tokens`.padEnd(16)}${money(g.cost).padEnd(10)}${g.failed ? `${g.failed} failed` : ''}`);
+    }
+    console.log('\nCosts are those reported by the provider, or estimated from model prices where they are known.');
   });
 
 program

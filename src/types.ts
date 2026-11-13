@@ -71,6 +71,8 @@ export interface Account {
   /** lower number = preferred when scores tie */
   priority: number;
   addedAt: string;
+  /** comes from the team file the developer joined; rebuilt on every load and never saved locally */
+  team?: boolean;
 }
 
 export interface Settings {
@@ -85,6 +87,8 @@ export interface Settings {
   bannedProviders: string[];
   /** task type -> list of "accountId/modelId" to always try first */
   pins: Partial<Record<TaskType, string[]>>;
+  /** the team file this developer joined, if any */
+  team?: { file: string; user: string; sha256: string };
 }
 
 export interface Config {
@@ -116,7 +120,11 @@ export interface UsageRecord {
   status?: number;
   errorKind?: ErrorKind;
   latencyMs: number;
+  /** reported by the provider, or estimated from the model's price */
   costUsd?: number;
+  /** who sent it, and for which team, when the request used a team account */
+  user?: string;
+  team?: string;
 }
 
 export const EFFORTS = ['low', 'medium', 'high'] as const;
