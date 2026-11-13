@@ -3,8 +3,8 @@
 Claude plans the work, and your other AI accounts carry it out.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/job-dark.svg">
-  <img alt="Claude splits 'add rate limiting to the public API' into six tasks. Gemini reads the logs, Codex writes the middleware, DeepSeek reviews it, Kimi is rate limited so the tests move to GLM, Groq drafts the changelog and a local Ollama model checks for leaked keys." src="assets/job-light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/job-v3-dark.svg">
+  <img alt="An example job, 'add rate limiting to the public API', split by Claude into six tasks in two rounds. First, Gemini reads the exported issues, Codex writes the middleware on its own git branch, Groq drafts the changelog and a local Ollama model checks the .env file for leaked keys. Then DeepSeek reviews the middleware diff, and the edge-case task moves to GLM because Kimi is rate limited. Claude checks each result and merges the accepted branch." src="assets/job-v3-light.svg" width="100%">
 </picture>
 
 I built omnitrix because I repeatedly ran out of Claude credits while the ChatGPT Plus and Gemini subscriptions that my friends and I pay for remained largely unused.
@@ -39,8 +39,8 @@ Restart Claude Code and give it a substantial task, such as "add tests for the b
 ## How tasks are routed
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/routing-v2-dark.svg">
-  <img alt="A review task marked private. Kimi is skipped because it is cooling down, and Mistral because it is flagged as possibly training on prompts. DeepSeek scores highest and gets the task, with GLM and Codex as fallbacks." src="assets/routing-v2-light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/routing-v3-dark.svg">
+  <img alt="An example: a review task marked private. Kimi is skipped because it is cooling down, and Mistral because it may train on prompts. The rest are scored on fit, quota left, cost and past results. DeepSeek scores highest and gets the task, with GLM and Codex as fallbacks." src="assets/routing-v3-light.svg" width="100%">
 </picture>
 
 Every task that Claude sends has a type, such as code, review or bulk work, and a privacy level. omnitrix first excludes any account that cannot accept the task at that moment because it is:
@@ -69,8 +69,8 @@ omnitrix route --type review "check this diff for auth bugs"
 ## Monitoring quota
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-v2-dark.png">
-  <img alt="The omnitrix dashboard with example data: six accounts with quota meters and reset times, one resting after a rate limit and one that needs sign-in, and the latest jobs with their results." src="assets/dashboard-v2-light.png" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-4k-dark.png">
+  <img alt="The omnitrix dashboard with example data: six accounts, with quota meters where limits are known, one resting after a rate limit and one that needs sign-in, and the latest jobs with their results." src="assets/dashboard-4k-light.png" width="100%">
 </picture>
 
 <sub>The dashboard, shown with example data. Run `omnitrix dashboard` to open your own.</sub>

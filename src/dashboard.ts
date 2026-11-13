@@ -80,13 +80,15 @@ const PAGE = /* html */ `<!doctype html>
   --focus:#6ea3f2;color-scheme:dark;
 }}
 *{box-sizing:border-box}
+html{scroll-padding-top:72px}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--font);-webkit-font-smoothing:antialiased}
 a{color:var(--accent)}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
-.wrap{max-width:1180px;margin:0 auto;padding:24px 24px 48px}
-header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+.wrap{max-width:1180px;margin:0 auto;padding:10px 24px 48px}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 -24px 20px;padding:14px 24px;position:sticky;top:0;z-index:5;background:var(--bg)}
+@supports (background:color-mix(in srgb,red 50%,transparent)){header{background:color-mix(in srgb,var(--bg) 88%,transparent);-webkit-backdrop-filter:blur(18px) saturate(140%);backdrop-filter:blur(18px) saturate(140%)}}
 .brand{display:flex;align-items:center;gap:10px}
-.brand h1{font-size:20px;font-weight:600;margin:0;letter-spacing:-.01em}
+.brand h1{font-size:20px;font-weight:600;margin:0;line-height:1.2;letter-spacing:-.015em}
 .chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;line-height:1;padding:5px 9px;border-radius:999px;background:var(--tile);color:var(--ink-2);white-space:nowrap}
 .fresh{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
@@ -94,8 +96,8 @@ header{display:flex;align-items:center;justify-content:space-between;gap:16px;fl
 .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:28px}
 .kpi{background:var(--tile);border-radius:var(--r);padding:14px 16px}
 .kpi span{display:block;font-size:13px;color:var(--ink-2)}
-.kpi b{display:block;font-size:26px;font-weight:600;line-height:1.25;margin-top:2px;font-variant-numeric:tabular-nums}
-h2{font-size:15px;font-weight:600;margin:0 0 12px;display:flex;align-items:baseline;gap:8px}
+.kpi b{display:block;font-size:26px;font-weight:600;line-height:1.15;margin-top:4px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+h2{font-size:15px;font-weight:600;margin:0 0 12px;letter-spacing:-.005em;display:flex;align-items:baseline;gap:8px}
 h2 small{font-size:13px;font-weight:400;color:var(--ink-3)}
 .kpi em{display:block;font-style:normal;font-size:13px;color:var(--warn);margin-top:2px}
 .ver{font-size:13px;color:var(--ink-3)}
@@ -104,7 +106,7 @@ h2 small{font-size:13px;font-weight:400;color:var(--ink-3)}
 .head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .title{display:flex;align-items:center;gap:10px;min-width:0}
 .title svg{flex:none;color:var(--ink-2)}
-.title h3{font-size:16px;font-weight:600;margin:0;overflow-wrap:break-word}
+.title h3{font-size:16px;font-weight:600;margin:0;line-height:1.3;letter-spacing:-.01em;overflow-wrap:break-word}
 .sub{font-size:13px;color:var(--ink-3);margin-top:1px;overflow-wrap:break-word}
 .state{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;padding:4px 10px;border-radius:999px;white-space:nowrap}
 .state i{width:7px;height:7px;border-radius:50%;background:currentColor}
@@ -120,14 +122,15 @@ h2 small{font-size:13px;font-weight:400;color:var(--ink-3)}
 .bar{height:8px;border-radius:99px;background:var(--track);overflow:hidden;margin:6px 0 4px}
 .bar i{display:block;height:100%;border-radius:99px;background:var(--accent);transition:width .4s ease}
 .bar i.low{background:var(--warn)}.bar i.out{background:var(--bad)}
-.when{font-size:12.5px;color:var(--ink-3)}
-.prov{font-size:12.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px}
+.when{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3)}
+.prov{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);display:flex;align-items:center;gap:6px}
 .stats{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--ink-2);border-top:1px solid var(--line);padding-top:10px}
 .stats b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
 .stats .prov{margin-left:auto}
 details{font-size:13px;color:var(--ink-2)}
 summary{cursor:pointer;color:var(--ink-2);width:max-content;padding:4px 0;min-height:24px}
 summary:hover{color:var(--ink)}
+summary:active{color:var(--ink)}
 .models{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:6px}
 .models li{font:12px var(--mono);background:var(--tile);border-radius:6px;padding:3px 7px;overflow-wrap:anywhere}
 .jobs{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;list-style:none;margin:0;padding:0}
@@ -141,10 +144,14 @@ summary:hover{color:var(--ink)}
 .empty{background:var(--surface);border:1px dashed var(--line-strong);border-radius:var(--r);padding:22px;color:var(--ink-2)}
 .empty h3{margin:0 0 6px;font-size:16px;color:var(--ink)}
 .empty ol{margin:10px 0 0;padding-left:20px;line-height:2}
-footer{font-size:12.5px;color:var(--ink-3);margin-top:28px}
+footer{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);margin-top:28px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-@media (max-width:720px){.wrap{padding:16px 16px 40px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi b{font-size:22px}.job{grid-template-columns:auto minmax(0,1fr)}.job .r{grid-column:2;text-align:left}.job details{grid-column:1/3}}
+@media (max-width:720px){.wrap{padding:6px 16px 40px}header{margin:0 -16px 16px;padding:12px 16px}html{scroll-padding-top:112px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi b{font-size:22px}.job{grid-template-columns:auto minmax(0,1fr)}.job .r{grid-column:2;text-align:left}.job details{grid-column:1/3}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media (max-height:500px){header{position:static}html{scroll-padding-top:0}}
+@media (prefers-reduced-transparency:reduce),(prefers-contrast:more){header{background:var(--bg);-webkit-backdrop-filter:none;backdrop-filter:none;border-bottom:1px solid var(--line)}}
+@media (prefers-contrast:more){:root{--line:var(--line-strong);--ink-3:var(--ink-2)}.card,.jobs,.kpi,.bar{border:1px solid var(--ink-3)}}
+@media (forced-colors:active){.bar{border:1px solid CanvasText}.bar i,.dot,.state i{forced-color-adjust:none;background:Highlight}header{background:Canvas;-webkit-backdrop-filter:none;backdrop-filter:none}}
 </style>
 </head>
 <body>
@@ -193,7 +200,10 @@ function cardHtml(a,open){
   var notes='';
   if(a.state!=='ready'&&a.state!=='busy'){
     var DEFAULT={exhausted:'No quota left in the current window',offline:'omnitrix cannot reach this account',cooling:'Taking a short break after errors',auth_error:'Not signed in',disabled:'Turned off in omnitrix'};
+    // the engine's own reasons are lower case ("rate limited"); here they start a sentence. Provider
+    // messages pass through untouched, since they may begin with a name like "openai".
     var why=String(a.reason||DEFAULT[a.state]||'').replace(/[.]+$/,'');
+    if(/^(rate limited|provider error|no answer|every model is paused)/.test(why))why=why.charAt(0).toUpperCase()+why.slice(1);
     var back=a.until?' Back in '+esc(span(a.until-Date.now()))+', '+esc(clock(a.until))+'.':'';
     var fix=a.state==='auth_error'?' Run <code>omnitrix login '+esc(a.id)+'</code> to sign in again.':a.state==='disabled'?' Run <code>omnitrix enable '+esc(a.id)+'</code> to turn it on.':'';
     var text=(why?esc(why)+'.':'')+back+fix;
@@ -257,7 +267,7 @@ async function load(){
     :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>';
   document.getElementById('jobs').innerHTML=d.jobs.length?'<ul class="jobs">'+d.jobs.map(function(j){return jobHtml(j,open)}).join('')+'</ul>'
     :'<div class="empty"><h3>No jobs yet</h3>Ask Claude to hand out a task, and it shows up here.</div>';
-  if(focusKey){var again=document.querySelector('details[data-key="'+focusKey+'"] summary');if(again)again.focus()}
+  if(focusKey){var again=document.querySelector('details[data-key="'+focusKey+'"] summary');if(again)again.focus({preventScroll:true})}
   tick();
 }
 load();setInterval(load,4000);setInterval(tick,1000);
