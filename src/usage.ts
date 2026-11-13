@@ -155,6 +155,8 @@ export interface WindowUse {
   remaining: number;
   unit: 'requests' | 'tokens' | 'percent';
   resetsAt?: number;
+  /** when the window runs out if use keeps its current pace; only set when that comes before any reset */
+  runsOutAt?: number;
 }
 
 export interface UsageSummary {
@@ -179,6 +181,20 @@ function monthStart(now: number): number {
   return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
 }
 
+/**
+ * When `remaining` is used up at `perMs`, if that happens within `horizonMs`. Past the horizon the
+ * window resets, or for a rolling window its oldest use drops off, so a forecast would be wrong.
+ */
+function runOut(remaining: number, perMs: number, now: number, horizonMs: number): number | undefined {
+  if (remaining <= 0 || perMs <= 0) return undefined;
+  const ms = remaining / perMs;
+  return ms < horizonMs ? Math.round(now + ms) : undefined;
+}
+
+// A pace needs some evidence: three requests in the last hour, or a provider window at least 15 minutes old.
+const MIN_PACE_REQUESTS = 3;
+const MIN_PACE_MS = 15 * MIN;
+
 export function summarize(account: Account, records: UsageRecord[], health: AccountHealth | undefined, now = Date.now(), quota?: AccountQuota): UsageSummary {
   // One pass fills every window; this runs for every account on each routing pass and status call.
   let minute = 0;
@@ -188,6 +204,8 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
   let dayTokens = 0;
   let dayCost = 0;
   let monthTokens = 0;
+  let hour = 0;
+  let hourTokens = 0;
   const monthFrom = monthStart(now);
   for (const r of records) {
     if (r.accountId !== account.id) continue;
@@ -195,6 +213,10 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
     if (!(r.ok || r.errorKind === 'rate_limit' || r.errorKind === 'quota')) continue;
     const t = r.inputTokens + r.outputTokens;
     if (r.ts >= now - MIN) minute++;
+    if (r.ts >= now - HOUR) {
+      hour++;
+      hourTokens += t;
+    }
     if (r.ts >= now - 5 * HOUR) fiveHours++;
     if (r.ts >= now - 7 * DAY) week++;
     if (r.ts >= now - DAY) {
@@ -205,22 +227,34 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
     if (r.ts >= monthFrom) monthTokens += t;
   }
   const windows: WindowUse[] = [];
-  const add = (name: string, used: number, limit: number | undefined, unit: WindowUse['unit']) => {
-    if (limit && limit > 0) windows.push({ name, used, limit, remaining: Math.max(0, limit - used), unit });
+  // Counted windows take their pace from the last hour, the best guide to the next few hours. One busy
+  // hour says little about a week or a month, so those windows (horizon 0) get no forecast.
+  const paced = hour >= MIN_PACE_REQUESTS;
+  const add = (name: string, used: number, limit: number | undefined, unit: WindowUse['unit'], horizonMs: number) => {
+    if (!limit || limit <= 0) return;
+    const remaining = Math.max(0, limit - used);
+    const perMs = paced ? (unit === 'tokens' ? hourTokens : hour) / HOUR : 0;
+    windows.push({ name, used, limit, remaining, unit, runsOutAt: runOut(remaining, perMs, now, horizonMs) });
   };
   const l = account.limits;
-  add('1 minute', minute, l.requestsPerMinute, 'requests');
-  add('5 hours', fiveHours, l.requestsPer5h, 'requests');
-  add('24 hours', day, l.requestsPerDay, 'requests');
-  add('7 days', week, l.requestsPerWeek, 'requests');
-  add('24 hours', dayTokens, l.tokensPerDay, 'tokens');
-  add('this month', monthTokens, l.tokensPerMonth, 'tokens');
+  add('1 minute', minute, l.requestsPerMinute, 'requests', 0);
+  add('5 hours', fiveHours, l.requestsPer5h, 'requests', 5 * HOUR);
+  add('24 hours', day, l.requestsPerDay, 'requests', DAY);
+  add('7 days', week, l.requestsPerWeek, 'requests', 0);
+  add('24 hours', dayTokens, l.tokensPerDay, 'tokens', DAY);
+  add('this month', monthTokens, l.tokensPerMonth, 'tokens', 0);
 
   // Use only climbs inside a window, so an old reading stays a safe lower bound until the window resets.
   // Without a reset time there is no telling when it stopped being true.
   const live = quota?.windows.filter((w) => (w.resetsAt ? w.resetsAt > now : now - quota.at < 10 * MIN)) ?? [];
   for (const w of live) {
-    windows.push({ name: w.name, used: w.usedPercent, limit: 100, remaining: 100 - w.usedPercent, unit: 'percent', resetsAt: w.resetsAt });
+    // A provider window's pace is its use divided by how long it had been open when it was read. Counting
+    // from the reading, not from now, keeps an older reading from making the forecast late.
+    const at = quota!.at;
+    const elapsed = w.minutes && w.resetsAt ? w.minutes * MIN - (w.resetsAt - at) : 0;
+    const end = elapsed >= MIN_PACE_MS ? runOut(100 - w.usedPercent, w.usedPercent / elapsed, at, w.resetsAt! - at) : undefined;
+    const runsOutAt = end && end > now ? end : undefined;
+    windows.push({ name: w.name, used: w.usedPercent, limit: 100, remaining: 100 - w.usedPercent, unit: 'percent', resetsAt: w.resetsAt, runsOutAt });
   }
 
   let percentUsed: number | undefined;

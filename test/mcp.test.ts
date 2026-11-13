@@ -69,7 +69,7 @@ describe('MCP server (real stdio process)', () => {
     expect(status.structuredContent.accounts[0]).toMatchObject({ id: 'worker', label: 'Test worker', models: ['test-model'], quota: [expect.stringMatching(/requests left/)] });
     expect(status.structuredContent.accounts[0]).toMatchObject({ requestsToday: expect.any(Number), costToday: expect.any(Number), remainingRequests: null });
     // numbers a widget can draw from, not just the text line
-    expect(status.structuredContent.accounts[0].windows).toContainEqual({ name: '24 hours', unit: 'requests', used: expect.any(Number), limit: 100, remaining: expect.any(Number), resetsAt: null });
+    expect(status.structuredContent.accounts[0].windows).toContainEqual({ name: '24 hours', unit: 'requests', used: expect.any(Number), limit: 100, remaining: expect.any(Number), resetsAt: null, runsOutAt: null });
     expect(status.structuredContent.accounts[0].pausedModels).toEqual([]);
   });
 
@@ -102,6 +102,32 @@ describe('MCP server with no accounts', () => {
       const status: any = await client.callTool({ name: 'pool_status', arguments: {} });
       expect(status.isError).toBeFalsy();
       expect(status.structuredContent).toEqual({ ready: 0, total: 0, accounts: [] });
+    } finally {
+      await client.close();
+    }
+  }, 30_000);
+});
+
+describe('MCP server with a forecast', () => {
+  it('reports when a window runs out, in both text and numbers', async () => {
+    const home = tempHome();
+    writeConfig([account({ id: 'worker', limits: { requestsPerDay: 100 } })]);
+    const now = Date.now();
+    const hour = 3600_000;
+    // 2 hours into a 5-hour window with 60% used: at that pace the rest lasts about 80 minutes
+    fs.writeFileSync(path.join(home, 'quota.json'), JSON.stringify({ worker: { at: now, windows: [{ name: '5 hours', minutes: 300, usedPercent: 60, resetsAt: now + 3 * hour }] } }));
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [cli, 'mcp'], env: { ...(process.env as Record<string, string>), OMNITRIX_HOME: home }, stderr: 'pipe' }));
+    try {
+      const status: any = await client.callTool({ name: 'pool_status', arguments: {} });
+      expect(status.isError).toBeFalsy();
+      const windows = status.structuredContent.accounts[0].windows;
+      const plan = windows.find((w: any) => w.unit === 'percent');
+      expect(plan.runsOutAt).toBeGreaterThan(now + 75 * 60_000);
+      expect(plan.runsOutAt).toBeLessThan(plan.resetsAt);
+      expect(windows.find((w: any) => w.unit === 'requests').runsOutAt).toBeNull();
+      expect(status.structuredContent.accounts[0].quota.join(' ')).toMatch(/runs out in about 1 h (19|20) min at this pace/);
+      expect(status.content[0].text).toMatch(/runs out in about 1 h (19|20) min at this pace/);
     } finally {
       await client.close();
     }

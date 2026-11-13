@@ -75,13 +75,17 @@ omnitrix route --type review "check this diff for auth bugs"
 
 <sub>The dashboard, shown with example data. Run `omnitrix dashboard` to open your own.</sub>
 
-The dashboard shows each account's name, owner, usage today and the quota remaining in each tracked window. In Claude Code, the status line gives a compact summary of up to four accounts. The Claude figures at the end appear when Claude Code provides them, which it does on Pro and Max plans:
+The dashboard shows each account's name, owner, usage in the last 24 hours and the quota remaining in each tracked window. In Claude Code, the status line gives a compact summary of up to four accounts. The Claude figures at the end appear when Claude Code provides them, which it does on Pro and Max plans:
 
 ```
-omnitrix 5/6 ready · codex-main 38% · deepseek 788 left · kimi wait · groq-free 36% │ Claude 5h 34% 7d 12%
+omnitrix 5/6 ready · codex-main 38% · deepseek 788 left · kimi wait · groq-free 36% +2 │ Claude 5h 34% 7d 12%
 ```
 
-Most subscriptions neither publish exact limits nor provide a way to query the remaining allowance, so omnitrix states the source of each figure. For a ChatGPT plan, it queries Codex directly and shows the percentage remaining in the 5-hour and 7-day windows, along with the time each window resets. This query ignores any API key exported in your environment, so the figures always belong to the account's own plan. When a provider sends rate-limit headers, omnitrix displays those values. In all other cases, it counts the requests and tokens it has sent against the limits you configured. A `429` or `402` response from the provider always overrides the count.
+Account percentages show the share remaining, and the Claude figures show the share used.
+
+Most subscriptions neither publish exact limits nor provide a way to query the remaining allowance, so omnitrix states the source of each figure. For a ChatGPT plan, it queries Codex directly and shows the percentage remaining in each window that Codex reports, usually 5 hours and 7 days, along with the time each window resets. This query ignores any API key exported in your environment, so the figures always belong to the account's own plan. When a provider sends rate-limit headers, omnitrix reports the remaining requests in the status line and in `pool_status`. In all other cases, it counts the requests and tokens it has sent against the limits you configured. A `429` or `402` response from the provider pauses the account, whatever the count shows.
+
+omnitrix also estimates when a window will run out if use continues at its current pace. For the windows that Codex reports for a ChatGPT plan, the pace is the share used between the opening of the window and the latest reading, and an estimate is possible once the window has been open for at least 15 minutes. For the 5-hour and 24-hour limits that omnitrix counts itself, the pace is the number of requests, or tokens, sent in the last hour, and an estimate is possible once at least three requests were sent in that hour. Weekly, monthly and one-minute limits are not estimated, because a single hour says little about them. An estimate is shown only when it falls before the window resets or, for a rolling window, within the length of the window. The estimate is a straight-line projection that does not account for older use leaving a rolling window, so it is a warning rather than a prediction. In `pool_status` it reads, for example, "runs out in about 1 h 7 min at this pace", and the dashboard shows "At this pace it runs out in about 1 h 7 min", followed by the time.
 
 ## Privacy
 

@@ -9,6 +9,8 @@ import { VERSION } from './version.js';
 
 export interface QuotaWindow {
   name: string;
+  /** length of the window; readings saved before 0.1.11 lack it and get no forecast */
+  minutes?: number;
   usedPercent: number;
   resetsAt?: number;
 }
@@ -35,6 +37,7 @@ export function parseCodexRateLimits(result: unknown, now = Date.now()): Account
         || typeof mins !== 'number' || !Number.isFinite(mins) || mins <= 0) continue;
       const window: QuotaWindow = {
         name: mins === 300 ? '5 hours' : mins === 10080 ? '7 days' : `${mins} minutes`,
+        minutes: mins,
         usedPercent: Math.max(0, Math.min(100, usedPercent)),
       };
       // A window cannot reset later than its own length from now. A later time (or one in milliseconds)

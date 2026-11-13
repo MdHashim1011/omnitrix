@@ -54,7 +54,7 @@ const accountOut = z.object({
   reason: z.string().nullable(),
   models: z.array(z.string()).describe('first six models'),
   modelCount: z.number(),
-  windows: z.array(z.object({ name: z.string(), unit: z.enum(['requests', 'tokens', 'percent']), used: z.number(), limit: z.number(), remaining: z.number(), resetsAt: z.number().nullable() })).describe('the same windows as quota, as numbers; resetsAt is epoch ms'),
+  windows: z.array(z.object({ name: z.string(), unit: z.enum(['requests', 'tokens', 'percent']), used: z.number(), limit: z.number(), remaining: z.number(), resetsAt: z.number().nullable(), runsOutAt: z.number().nullable() })).describe('the same windows as quota, as numbers; resetsAt is epoch ms; runsOutAt (epoch ms) is set when the current pace uses the window up before it resets'),
   pausedModels: z.array(z.string()).describe('models resting after errors; the router skips them until their break ends'),
 });
 const poolOut = z.object({ ready: z.number(), total: z.number(), accounts: z.array(accountOut) });
@@ -85,13 +85,23 @@ function fail(t: string) {
   return { content: [{ type: 'text' as const, text: t }], isError: true };
 }
 
-export function describeWindow(w: WindowUse): string {
+/** "45 min", "1 h 20 min", "2 d 3 h": rounded, because a forecast is never exact. */
+export function roughSpan(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60_000));
+  if (min < 60) return `${min} min`;
+  if (min < 24 * 60) return `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}`;
+  const h = Math.round(min / 60);
+  return `${Math.floor(h / 24)} d${h % 24 ? ` ${h % 24} h` : ''}`;
+}
+
+export function describeWindow(w: WindowUse, now = Date.now()): string {
+  const pace = w.runsOutAt ? `, runs out in about ${roughSpan(w.runsOutAt - now)} at this pace` : '';
   if (w.unit === 'percent') {
-    const reset = w.resetsAt ? ` (resets ${new Date(w.resetsAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })})` : '';
+    const reset = w.resetsAt ? ` (resets ${new Date(w.resetsAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}${pace})` : '';
     return `${w.name}: ${Math.round(w.remaining)}% left${reset}`;
   }
   const n = (v: number) => (w.unit === 'tokens' ? formatTokens(v) : String(v));
-  return `${w.name}: ${n(w.remaining)}/${n(w.limit)} ${w.unit} left`;
+  return `${w.name}: ${n(w.remaining)}/${n(w.limit)} ${w.unit} left${pace}`;
 }
 
 export function describeAccount(a: PoolAccountView): string {
@@ -99,7 +109,7 @@ export function describeAccount(a: PoolAccountView): string {
   const bits = [`${a.id} [${a.state}]`, `${a.provider}`, `owner ${a.owner}`];
   if (u.plan) bits.push(`${u.plan} plan`);
   if (u.windows.length) {
-    bits.push(u.windows.map(describeWindow).join(', ') + (u.source === 'measured' ? ' (measured)' : ' (estimated)'));
+    bits.push(u.windows.map((w) => describeWindow(w)).join('; ') + (u.source === 'measured' ? ' (measured)' : ' (estimated)'));
   } else {
     bits.push('no limits set');
   }
@@ -159,7 +169,7 @@ export function buildServer(engine: Engine): McpServer {
         plan: typeof a.usage.plan === 'string' ? a.usage.plan : null,
         percentUsed: Number.isFinite(a.usage.percentUsed) ? a.usage.percentUsed! : null,
         source: a.usage.source,
-        quota: a.usage.windows.map(describeWindow),
+        quota: a.usage.windows.map((w) => describeWindow(w)),
         requestsToday: a.usage.requestsToday,
         tokensToday: a.usage.tokensToday,
         costToday: a.usage.costToday,
@@ -168,7 +178,7 @@ export function buildServer(engine: Engine): McpServer {
         reason: a.reason ?? null,
         models: a.models.slice(0, 6),
         modelCount: a.models.length,
-        windows: a.usage.windows.map((w) => ({ name: w.name, unit: w.unit, used: w.used, limit: w.limit, remaining: w.remaining, resetsAt: w.resetsAt ?? null })),
+        windows: a.usage.windows.map((w) => ({ name: w.name, unit: w.unit, used: w.used, limit: w.limit, remaining: w.remaining, resetsAt: w.resetsAt ?? null, runsOutAt: w.runsOutAt ?? null })),
         pausedModels: a.pausedModels,
       }));
       return text(lines.join('\n'), { ready, total: pool.length, accounts });

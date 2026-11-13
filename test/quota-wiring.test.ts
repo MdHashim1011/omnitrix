@@ -176,7 +176,7 @@ lines.on('line', line => {
     await refreshQuotas([acc], 60_000);
     const saved = JSON.parse(fs.readFileSync(files.quota(), 'utf8'));
     expect(saved.other).toEqual(other);
-    expect(saved[acc.id]).toEqual({ at: expect.any(Number), plan: 'plus', windows: [{ name: '5 hours', usedPercent: 3, resetsAt: fake.resetsAt }] });
+    expect(saved[acc.id]).toEqual({ at: expect.any(Number), plan: 'plus', windows: [{ name: '5 hours', minutes: 300, usedPercent: 3, resetsAt: fake.resetsAt }] });
     expect(saved[acc.id].at).toBeGreaterThanOrEqual(startedAt);
     expect(fs.readFileSync(fake.counter, 'utf8')).toBe('start\n');
   });

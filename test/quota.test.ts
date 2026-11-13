@@ -13,8 +13,8 @@ describe('parseCodexRateLimits', () => {
       at: 1794350975000,
       plan: 'plus',
       windows: [
-        { name: '5 hours', usedPercent: 1, resetsAt: 1794366122000 },
-        { name: '7 days', usedPercent: 0, resetsAt: 1794518336000 },
+        { name: '5 hours', minutes: 300, usedPercent: 1, resetsAt: 1794366122000 },
+        { name: '7 days', minutes: 10080, usedPercent: 0, resetsAt: 1794518336000 },
       ],
     });
   });
@@ -23,13 +23,13 @@ describe('parseCodexRateLimits', () => {
     expect(parseCodexRateLimits({ rateLimits: {
       primary: { usedPercent: 20, windowDurationMins: 300 },
       secondary: null,
-    } }, 123)).toEqual({ at: 123, windows: [{ name: '5 hours', usedPercent: 20 }] });
+    } }, 123)).toEqual({ at: 123, windows: [{ name: '5 hours', minutes: 300, usedPercent: 20 }] });
   });
 
   it('names unknown durations in minutes', () => {
     expect(parseCodexRateLimits({ rateLimits: {
       secondary: { usedPercent: 10, windowDurationMins: 60 },
-    } }, 123)).toEqual({ at: 123, windows: [{ name: '60 minutes', usedPercent: 10 }] });
+    } }, 123)).toEqual({ at: 123, windows: [{ name: '60 minutes', minutes: 60, usedPercent: 10 }] });
   });
 
   it('clamps percentages above 100', () => {
@@ -42,7 +42,7 @@ describe('parseCodexRateLimits', () => {
     const now = 1_794_350_000_000;
     // milliseconds sent where seconds are expected would otherwise keep the window alive for decades
     const q = parseCodexRateLimits({ rateLimits: { primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: now } } }, now);
-    expect(q?.windows[0]).toEqual({ name: '5 hours', usedPercent: 0 });
+    expect(q?.windows[0]).toEqual({ name: '5 hours', minutes: 300, usedPercent: 0 });
     const ok = parseCodexRateLimits({ rateLimits: { primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: now / 1000 + 3600 } } }, now);
     expect(ok?.windows[0]?.resetsAt).toBe(now + 3600_000);
   });
