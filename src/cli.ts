@@ -20,6 +20,7 @@ import { pruneWorktree } from './worktree.js';
 import { EFFORTS, DriverError, TASK_TYPES, type Account, type Job, type Limits, type TaskType } from './types.js';
 import { refreshQuotas } from './quota.js';
 import { recordUsage } from './usage.js';
+import { detect } from './init.js';
 import { VERSION } from './version.js';
 
 const program = new Command();
@@ -101,7 +102,10 @@ limitOptions(
     .option('--trains-on-data', 'mark that this provider may train on your prompts')
     .option('--no-trains-on-data', 'mark that this provider does not train on your prompts')
     .option('--login', 'for CLI accounts: sign in right away'),
-).action(async (providerId: string, o: Record<string, any>) => {
+).action(addAccount);
+
+/** Shared by `add` and `init --apply`, so both connect an account in exactly the same way. */
+async function addAccount(providerId: string, o: Record<string, any>): Promise<void> {
   const spec = getProvider(providerId);
   if (!spec) die(`unknown provider "${providerId}". Run "omnitrix providers".`);
   if (o.key && o.keyEnv) die('use either --key or --key-env, not both');
@@ -124,8 +128,8 @@ limitOptions(
   let apiKey: string | undefined;
   if (o.keyEnv) apiKey = `env:${o.keyEnv}`;
   else if (o.key) apiKey = 'secret';
-  // a key already sitting in the usual environment variable is used without asking
-  else if (spec.keyEnv && process.env[spec.keyEnv] && driver !== 'cli') apiKey = `env:${spec.keyEnv}`;
+  // a key already sitting in the usual environment variable is used without asking (also by CLIs that need one)
+  else if (spec.keyEnv && process.env[spec.keyEnv]) apiKey = `env:${spec.keyEnv}`;
   if (!apiKey && driver !== 'cli' && !spec.local) die(`an API key is needed: --key-env ${spec.keyEnv ?? 'NAME'} or --key <value>`);
 
   const account: Account = {
@@ -186,12 +190,13 @@ limitOptions(
     if (o.login) {
       const code = loginCli(account);
       if (code !== 0) console.log(`login exited with code ${code}; try again with: omnitrix login ${id}`);
-    } else if (spec.id === 'codex' || spec.id === 'claude-code' || spec.id === 'opencode') {
+    } else if (!account.apiKey) {
+      // each CLI account has its own empty profile, so it must sign in once before it can run jobs
       console.log(`next: omnitrix login ${id}`);
     }
   }
   console.log(`check it with: omnitrix test ${id}`);
-});
+}
 
 program
   .command('login <id>')
@@ -495,6 +500,36 @@ program
   .action(async () => {
     const { startMcp } = await import('./mcp.js');
     startMcp();
+  });
+
+program
+  .command('init')
+  .description('find AI tools, API keys and local models on this computer and connect them')
+  .option('--apply', 'connect what was found; without it, nothing is changed')
+  .action(async (o) => {
+    // looking changes nothing; addAccount creates the data folder when something is connected
+    const found = await detect(loadConfig());
+    if (!found.length) {
+      console.log('Nothing to connect was found. Run "omnitrix providers" to see what omnitrix supports.');
+      return;
+    }
+    console.log('Found on this computer:');
+    for (const f of found) {
+      const mark = f.action === 'add' ? '+' : f.action === 'connected' ? '=' : '-';
+      const state = f.action === 'add' ? (o.apply ? 'connecting' : 'not connected yet')
+        : f.action === 'connected' ? `already connected as ${f.connectedAs!.join(', ')}` : `not added: ${f.reason}`;
+      console.log(`  ${mark} ${f.name.padEnd(26)} ${f.how.padEnd(44)} ${state}`);
+    }
+    const todo = found.filter((f) => f.action === 'add');
+    if (!o.apply) {
+      console.log(todo.length ? `\nNothing was changed. Run "omnitrix init --apply" to connect the ${todo.length} marked with +.` : '\nEverything found is already connected.');
+    } else {
+      for (const f of todo) {
+        console.log(`\n${f.name}:`);
+        await addAccount(f.provider, { owner: 'me' });
+      }
+    }
+    console.log('\nTo use omnitrix from Claude Code, run "omnitrix setup-claude" once, then restart Claude Code.');
   });
 
 program

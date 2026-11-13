@@ -24,6 +24,18 @@ npm install -g https://github.com/MdHashim1011/omnitrix/releases/latest/download
 ## Quick start
 
 ```bash
+omnitrix init
+omnitrix init --apply
+omnitrix setup-claude
+```
+
+`omnitrix init` lists the agent CLIs that omnitrix supports and finds on your PATH, the API keys set in the environment variables that `omnitrix providers` names (for example `DEEPSEEK_API_KEY`), and the local model servers that answer at their default addresses. It also shows which of them are already connected. Without `--apply`, it does not create or change anything. With `--apply`, it connects each new one in the same way as `omnitrix add <provider>` with no other options. It shows only the names of environment variables, never their values. For API keys, it stores a reference to the environment variable rather than the key itself, so the variable must also be set where Claude Code starts omnitrix.
+
+It lists some tools without adding them: Claude Code, because Claude Code leads the work and would spend the same Claude quota as a worker; Google Antigravity, because Google has suspended accounts used through outside tools; and the Gemini CLI while `GEMINI_API_KEY` is not set, because it cannot run without a key. After `--apply`, CLI accounts that do not use an API key, such as Codex, OpenCode and Qwen Code, need `omnitrix login <id>` once before they can run jobs.
+
+To connect accounts one at a time instead:
+
+```bash
 omnitrix providers
 omnitrix add ollama
 omnitrix add deepseek --key-env DEEPSEEK_API_KEY
@@ -154,6 +166,7 @@ By default, previews are limited to 1,500 characters to keep Claude's token usag
 ## Commands
 
 ```
+omnitrix init                   list what can be connected on this computer (--apply connects it)
 omnitrix providers              list the providers you can connect
 omnitrix add <provider>         connect an account
 omnitrix login <id>             sign in a CLI account in its own profile
