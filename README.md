@@ -62,7 +62,7 @@ Every task that Claude sends has a type, such as code, review or bulk work, and 
 - not permitted to receive the task: private work never goes to an account that may train on prompts while private protection is on, and secret work goes only to local models
 - unable to do the task, such as a model that cannot read images
 
-A model that is resting after errors is skipped, while the account's other models remain available.
+A model that is resting after errors is skipped, while the account's other models remain available. An account that fails three times in a row within ten minutes, through network errors, server errors, timeouts or unknown errors, rests for ten minutes. Rate limits, exhausted quota and sign-in problems are handled separately and do not count towards this. When `pool_status` or the dashboard shows the pool, omnitrix also asks each local model server, such as Ollama, for its model list at most once every 30 seconds, and shows a server that does not answer as offline. The router then skips that server until it answers again. Server errors and timeouts that all come from one model only pause that model, so they do not rest an account that has other models.
 
 Each remaining model receives a score based on how well it fits the task, how much quota the account has left, what the model costs, and how often its past work was accepted. An account that is already running as many jobs as its concurrency limit allows has its score halved. The highest-scoring model receives the task. If that call fails, omnitrix ranks the accounts again, skips those it has already tried, and passes the task on without any action from Claude. A job makes at most three attempts. A model that the provider no longer serves, or for which the plan has no allowance, is removed from the account and rests for 24 hours, and trying it does not count as an attempt.
 
@@ -182,9 +182,11 @@ omnitrix run <prompt>           run one task and print the answer
 omnitrix settings               set the mode, privacy, and pinned or banned providers
 omnitrix dashboard              open a live web dashboard on 127.0.0.1
 omnitrix setup-claude           register with Claude Code
-omnitrix clean                  delete finished jobs and worktrees older than 14 days (branches are kept)
+omnitrix clean                  delete finished jobs and worktrees older than 14 days (--branches also deletes branches no longer needed)
 omnitrix doctor                 check the setup
 ```
+
+`omnitrix clean --branches` also deletes the git branch of each old job that was rejected, failed or cancelled, and the branch of any other old job once its work is already in the repository's current branch. A branch with work that has not been merged is kept, together with its job record, so that a later `clean --branches` can still remove it once it is merged or rejected. Only branches that omnitrix created for its jobs are deleted. Add `--dry-run` to see what would be deleted first; it changes nothing.
 
 `omnitrix settings --mode saver` prefers free and low-cost models, `--mode quality` prefers the strongest models, and `--pin code=codex-main` tries that account first for code tasks whenever it is eligible.
 

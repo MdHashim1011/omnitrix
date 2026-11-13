@@ -52,7 +52,7 @@ describe('MCP server (real stdio process)', () => {
 
     const after: any = await client.callTool({ name: 'pool_status', arguments: {} });
     expect(after.content[0].text).toMatch(/99\/100 requests left/);
-    expect(provider.calls[0]!.body.messages[1].content).toMatch(/## Done means\nhas steps/);
+    expect(provider.calls.find((c) => c.body?.messages)!.body.messages[1].content).toMatch(/## Done means\nhas steps/);
   });
 
   it('rejects code tasks without a repo', async () => {

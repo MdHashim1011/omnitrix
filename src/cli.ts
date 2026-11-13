@@ -16,7 +16,7 @@ import { isChatModel, makeModel } from './models.js';
 import { PROVIDERS, getProvider } from './providers.js';
 import { renderStatusLine } from './statusline.js';
 import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
-import { pruneWorktree } from './worktree.js';
+import { branchExists, branchMerged, deleteBranch, pruneWorktree } from './worktree.js';
 import { EFFORTS, DriverError, TASK_TYPES, type Account, type Job, type Limits, type TaskType } from './types.js';
 import { refreshQuotas } from './quota.js';
 import { recordUsage } from './usage.js';
@@ -584,27 +584,58 @@ program
 
 program
   .command('clean')
-  .description('delete old job records, outputs and worktrees (branches are kept)')
+  .description('delete old job records, outputs and worktrees; --branches also deletes branches no longer needed')
   .option('--days <n>', 'only things older than this many days', int, 14)
+  .option('--branches', 'also delete the branches of rejected, failed or cancelled jobs, and of other jobs once merged')
+  .option('--dry-run', 'only report what would be deleted')
   .action((o) => {
     const cutoff = Date.now() - o.days * 24 * 3600_000;
     let jobs = 0;
     let trees = 0;
+    let branches = 0;
+    let kept = 0;
+    let stuck = 0;
     for (const name of fs.existsSync(files.jobs()) ? fs.readdirSync(files.jobs()) : []) {
       const file = path.join(files.jobs(), name);
       // cancel notes are empty files; one left from a cancel that raced a finishing job is just litter
       if (name.endsWith('.cancel')) {
-        if (fs.statSync(file).mtimeMs < cutoff) fs.rmSync(file, { force: true });
+        if (!o.dryRun && fs.statSync(file).mtimeMs < cutoff) fs.rmSync(file, { force: true });
         continue;
       }
       const job = readJson<Job | null>(file, null);
       if (!job || job.updatedAt > cutoff || job.status === 'queued' || job.status === 'running') continue;
-      if (job.worktree && pruneWorktree(job.worktree.path)) trees++;
+      jobs++;
+      if (o.dryRun) {
+        if (job.worktree && fs.existsSync(job.worktree.path)) trees++;
+      } else {
+        if (job.worktree && pruneWorktree(job.worktree.path)) trees++;
+      }
+      const repo = job.task.repo;
+      // only the branch omnitrix made for this job, in a repository given by absolute path, is ever touched
+      const branch = job.worktree?.branch === `omnitrix/${job.id}` ? job.worktree.branch : undefined;
+      let keepRecord = false;
+      if (o.branches && repo && branch && path.isAbsolute(repo) && fs.existsSync(repo) && branchExists(repo, branch)) {
+        // rejected or broken work is not wanted; anything else goes only once it is in the repo's history
+        const unwanted = job.verdict === 'rejected' || job.status === 'failed' || job.status === 'cancelled';
+        if (!unwanted && !branchMerged(repo, branch)) {
+          kept++;
+          keepRecord = true;
+        } else if (o.dryRun || deleteBranch(repo, branch)) {
+          branches++;
+        } else {
+          // for example, the branch is checked out somewhere
+          stuck++;
+          keepRecord = true;
+        }
+      }
+      // a kept branch keeps its record, so a later clean can still decide about it once it is merged or rejected
+      if (o.dryRun || keepRecord) continue;
       if (job.outputFile) fs.rmSync(job.outputFile, { force: true });
       fs.rmSync(file, { force: true });
-      jobs++;
     }
-    console.log(`removed ${jobs} old jobs and ${trees} worktrees`);
+    const verb = o.dryRun ? 'would remove' : 'removed';
+    console.log(`${verb} ${jobs} old jobs and ${trees} worktrees`);
+    if (o.branches) console.log(`${o.dryRun ? 'would delete' : 'deleted'} ${branches} branches, kept ${kept} that are not merged${stuck ? `, could not delete ${stuck}` : ''}`);
   });
 
 program

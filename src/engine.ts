@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runDriver } from './drivers/index.js';
 import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
+import { reachable } from './init.js';
 import { loadQuotas, refreshQuotas } from './quota.js';
 import { route, effectivePrivacy, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
@@ -25,6 +26,14 @@ const GONE_PAUSE_MS = 24 * 60 * 60_000;
 const MODEL_PAUSE_MS = 5 * 60_000;
 const MODEL_FAULTS = new Set(['model_gone', 'server', 'timeout']);
 const MAX_FILE_BYTES = 400_000;
+const LOCAL_PROBE_MS = 30_000;
+const PROBE_REASON = 'not answering at';
+// An account that fails this many times in a row, in ways that say nothing about when it will be back,
+// rests for a while instead of costing every job an attempt.
+const BREAKER_FAILS = 3;
+const BREAKER_WINDOW_MS = 10 * 60_000;
+const BREAKER_REST_MS = 10 * 60_000;
+const BREAKER_KINDS = new Set(['network', 'server', 'timeout', 'unknown']);
 // what a checker reads: enough of the task and result to judge them, without paying for a huge prompt twice
 const CHECK_TASK_CHARS = 4_000;
 const CHECK_RESULT_CHARS = 20_000;
@@ -144,6 +153,26 @@ export class Engine {
       this.usageCache = { at: now, byAccount };
     }
     return this.usageCache.byAccount;
+  }
+
+  private localProbedAt = new Map<string, number>();
+
+  /** Ask each local server whether it answers, at most every 30 s, so the pool never shows a stopped one as ready. */
+  async checkLocal(): Promise<void> {
+    const now = Date.now();
+    const due = this.config().accounts.filter((a) => a.enabled && a.local && a.baseUrl && now - (this.localProbedAt.get(a.id) ?? 0) >= LOCAL_PROBE_MS);
+    await Promise.all(due.map(async (a) => {
+      this.localProbedAt.set(a.id, now);
+      const up = await reachable(a.baseUrl!);
+      // Decide on the latest state from any process. A rest or a sign-in problem set for another reason is
+      // left alone: answering its model list does not prove the server can do work, and is no reason to shorten it.
+      const disk = loadHealth()[a.id];
+      const h = disk && (disk.at ?? 0) > (this.health[a.id]?.at ?? 0) ? disk : this.health[a.id];
+      const ours = h?.state === 'offline' && h.reason?.startsWith(PROBE_REASON);
+      const idle = !h || h.state === 'ready' || h.state === 'busy' || ((h.until ?? 0) <= Date.now() && h.state !== 'auth_error' && h.state !== 'disabled');
+      if (!up && (idle || ours)) this.setHealth(a.id, { state: 'offline', until: Date.now() + 60_000, reason: `${PROBE_REASON} ${a.baseUrl}`, measured: h?.measured });
+      else if (up && ours) this.setHealth(a.id, { state: 'ready', measured: h?.measured });
+    }));
   }
 
   private routeContext(cfg: Config): RouteContext {
@@ -538,6 +567,8 @@ export class Engine {
 
     const t0 = Date.now();
     let worktree: { path: string; branch: string; root: string } | undefined;
+    // only a failure while the provider is being called is the provider's; a broken checkout or a full disk is ours
+    let calling = false;
     try {
       const edit = job.task.type === 'code';
       let cwd: string | undefined;
@@ -552,6 +583,7 @@ export class Engine {
         }
       }
       const prompt = buildPrompt(job.task, account, cwd);
+      calling = true;
       const result = await runDriver(
         {
           account,
@@ -593,11 +625,12 @@ export class Engine {
       attempt.ok = false;
       attempt.error = redact(e.message).slice(0, 600);
       attempt.errorKind = e.kind;
-      if (e.kind !== 'bad_request' && e.kind !== 'cancelled') {
+      if (calling && e.kind !== 'bad_request' && e.kind !== 'cancelled') {
         recordUsage({ ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: 0, outputTokens: 0, ok: false, status: e.status, errorKind: e.kind, latencyMs: Date.now() - t0 });
         this.usageCache = undefined;
       }
       this.applyFailure(account, e, cand.model);
+      this.tripBreaker(account, e);
       if (e.kind === 'model_gone') {
         try {
           dropModel(account.id, cand.model);
@@ -668,6 +701,19 @@ export class Engine {
       default:
         break;
     }
+  }
+
+  /** Runs after every failure, including those applyFailure handles per model and returns early from. */
+  private tripBreaker(account: Account, e: DriverError): void {
+    if (!BREAKER_KINDS.has(e.kind)) return;
+    const now = Date.now();
+    // the ledger already holds this failure, and it is shared by every omnitrix process
+    const recent = (this.records().get(account.id) ?? []).filter((r) => r.ts >= now - BREAKER_WINDOW_MS).sort((a, b) => a.ts - b.ts).slice(-BREAKER_FAILS);
+    if (recent.length < BREAKER_FAILS || !recent.every((r) => !r.ok && BREAKER_KINDS.has(r.errorKind ?? 'unknown'))) return;
+    // Server errors and timeouts already pause the one model; only when they span several models is the account at fault.
+    const perModel = recent.every((r) => r.errorKind === 'server' || r.errorKind === 'timeout');
+    if (perModel && account.models.length > 1 && new Set(recent.map((r) => r.model)).size < 2) return;
+    this.setHealth(account.id, { state: 'offline', until: now + BREAKER_REST_MS, reason: `failed ${BREAKER_FAILS} times in a row; resting for 10 minutes`, measured: this.health[account.id]?.measured });
   }
 }
 

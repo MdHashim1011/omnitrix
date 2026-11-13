@@ -149,7 +149,7 @@ export function buildServer(engine: Engine): McpServer {
     },
     async () => {
       // Wait briefly for fresh quota; a slow Codex keeps reading in the background and the saved numbers are used meanwhile.
-      await refreshQuotas(engine.config().accounts, 60_000, 5_000);
+      await Promise.all([refreshQuotas(engine.config().accounts, 60_000, 5_000), engine.checkLocal()]);
       const pool = engine.pool();
       if (!pool.length) return text('No accounts yet. The user can add some with: omnitrix add <provider> (run "omnitrix providers" for the list).', { ready: 0, total: 0, accounts: [] });
       const ready = pool.filter((a) => a.state === 'ready' || a.state === 'busy').length;

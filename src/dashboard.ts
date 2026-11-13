@@ -38,6 +38,7 @@ export function startDashboard(port: number): string {
     }
     if (req.url === '/api/status') {
       void refreshQuotas(engine.config().accounts);
+      engine.checkLocal().catch(() => {});
       const body = JSON.stringify({ version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine) });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body);
       return;

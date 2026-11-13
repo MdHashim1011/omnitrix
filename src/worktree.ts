@@ -66,6 +66,19 @@ export function discardWorktree(repoRoot: string, dir: string, branch: string): 
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+/** True when everything on the branch is already in the repo's current HEAD. */
+export function branchMerged(repo: string, branch: string): boolean {
+  return spawnSync('git', ['merge-base', '--is-ancestor', `refs/heads/${branch}`, 'HEAD'], { cwd: repo, windowsHide: true }).status === 0;
+}
+
+export function branchExists(repo: string, branch: string): boolean {
+  return spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: repo, windowsHide: true }).status === 0;
+}
+
+export function deleteBranch(repo: string, branch: string): boolean {
+  return spawnSync('git', ['branch', '-D', branch], { cwd: repo, windowsHide: true }).status === 0;
+}
+
 /** Remove a finished job's checkout but keep its branch, so accepted work can still be merged later. */
 export function pruneWorktree(dir: string): boolean {
   if (!fs.existsSync(dir)) return false;
