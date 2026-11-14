@@ -75,7 +75,9 @@ export class LedgerTail {
     try {
       const st = fs.statSync(live, { bigint: true });
       size = Number(st.size);
-      fileId = `${st.dev}:${st.ino}`;
+      // Linux hands a new file the inode number of the one just deleted, so the first bytes count too:
+      // a rebuild always starts differently, because it drops the oldest records
+      fileId = `${st.dev}:${st.ino}:${firstBytes(live)}`;
     } catch {
       // no ledger yet
     }
@@ -121,6 +123,16 @@ export class LedgerTail {
  * process owns: their new lines start a fresh ledger, and the kept lines are appended to it rather than
  * written over it. Line order changes, which nothing depends on.
  */
+function firstBytes(file: string): string {
+  const buf = Buffer.alloc(256);
+  const fd = fs.openSync(file, 'r');
+  try {
+    return buf.subarray(0, fs.readSync(fd, buf, 0, buf.length, 0)).toString('base64');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 // Records are appended in time order, so the first one shows whether anything is old enough to drop.
 function oldestIsOld(live: string): boolean {
   const buf = Buffer.alloc(4096);
