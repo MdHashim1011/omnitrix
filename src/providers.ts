@@ -30,7 +30,7 @@ export const PROVIDERS: ProviderSpec[] = [
   { id: 'codex', name: 'ChatGPT / Codex CLI', driver: 'cli', cli: 'codex', signup: 'https://chatgpt.com', note: 'Uses your ChatGPT plan through the official Codex CLI.' },
   { id: 'claude-code', name: 'Claude Code CLI', driver: 'cli', cli: 'claude', signup: 'https://claude.com', note: 'Only use your own subscription. Anthropic does not allow account sharing.' },
   { id: 'qwen-code', name: 'Qwen Code CLI', driver: 'cli', cli: 'qwen', signup: 'https://github.com/QwenLM/qwen-code' },
-  { id: 'gemini-cli', name: 'Gemini CLI (API key)', driver: 'cli', cli: 'gemini', keyEnv: 'GEMINI_API_KEY', signup: 'https://aistudio.google.com/apikey', note: 'Since June 2026 Gemini CLI needs an API key; consumer Google sign-in moved to Antigravity.' },
+  { id: 'gemini-cli', name: 'Gemini CLI (API key)', driver: 'cli', cli: 'gemini', keyEnv: 'GEMINI_API_KEY', trainsOnData: true, signup: 'https://aistudio.google.com/apikey', note: 'Since June 2026 Gemini CLI needs an API key; consumer Google sign-in moved to Antigravity.' },
   { id: 'antigravity', name: 'Google Antigravity CLI (experimental)', driver: 'cli', cli: 'agy', signup: 'https://antigravity.google', note: 'Experimental. Google has suspended accounts used through outside tools; use at your own risk.' },
   { id: 'opencode', name: 'OpenCode CLI', driver: 'cli', cli: 'opencode', signup: 'https://opencode.ai' },
 

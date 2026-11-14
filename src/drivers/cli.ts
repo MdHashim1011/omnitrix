@@ -244,8 +244,24 @@ export function profileEnv(tool: CliTool, dir: string): Record<string, string> {
   return { [tool.profileEnv]: dir };
 }
 
-/** Keys that would make an agent CLI use the parent's credentials instead of the account's own login. */
-export const PARENT_CREDENTIALS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY', 'GEMINI_API_KEY', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'];
+// Names that hold a secret: an agent CLI runs what a prompt tells it to, so it must never see them.
+const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSW|CREDENTIAL|_AUTH|AUTH_|COOKIE|SESSION_ID)/i;
+// Settings that would point a CLI at the parent's provider or session instead of the account's own login.
+const PARENT_SETTING = /^(.*_BASE_URL|CLAUDECODE|CLAUDE_CODE_.*|GOOGLE_GENAI_USE_VERTEXAI|GOOGLE_CLOUD_PROJECT|GOOGLE_CLOUD_LOCATION|CODEX_HOME|GEMINI_CLI_.*)$/i;
+
+/**
+ * The environment for an agent CLI: the parent's, without anything that looks like a credential or a
+ * provider setting, then the tool's own variables (its profile folder, or the account's own key).
+ */
+export function childEnv(parent: Record<string, string | undefined>, toolEnv: Record<string, string | undefined>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(parent)) {
+    if (v === undefined || SECRET_NAME.test(k) || PARENT_SETTING.test(k)) continue;
+    env[k] = v;
+  }
+  for (const [k, v] of Object.entries(toolEnv)) if (v !== undefined) env[k] = v;
+  return env;
+}
 
 export function killTree(pid: number | undefined): void {
   if (!pid) return;
@@ -257,11 +273,15 @@ export function killTree(pid: number | undefined): void {
   }
 }
 
-function classifyCliError(text: string): ErrorKind {
+export function classifyCliError(text: string): ErrorKind {
   const t = text.toLowerCase();
+  // a prompt that is too long is the task's problem, wherever it ran
+  if (/(context length|context window|too many tokens|prompt is too long|maximum.{0,20}tokens)/.test(t)) return 'bad_request';
+  // "rate limit exceeded" is a short wait, not a used-up plan, so it is checked first
+  if (/(rate limit|rate-limit|too many requests|\b429\b)/.test(t)) return 'rate_limit';
+  // "insufficient permissions" is a login problem, not a used-up plan
+  if (/(not logged in|login|unauthori[sz]ed|\b401\b|\b403\b|authenticat|api key|permission)/.test(t)) return 'auth';
   if (/(usage limit|quota|exceeded|out of credits|insufficient|limit reached|hit your limit)/.test(t)) return 'quota';
-  if (/(rate limit|too many requests|429)/.test(t)) return 'rate_limit';
-  if (/(not logged in|login|unauthori[sz]ed|401|403|authenticat|api key)/.test(t)) return 'auth';
   return 'unknown';
 }
 
@@ -283,11 +303,8 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
   // only used when we had to fall back to cmd.exe; quote anything with spaces
   const args = resolved.shell ? rawArgs.map((a) => (/\s/.test(a) ? `"${a.replace(/"/g, '')}"` : a)) : rawArgs;
 
-  const env: Record<string, string | undefined> = { ...process.env };
-  // never let the parent's keys leak into an account that should use its own login
-  for (const k of PARENT_CREDENTIALS) delete env[k];
-  if (account.profileDir) Object.assign(env, profileEnv(tool, account.profileDir));
-  for (const [k, v] of Object.entries(tool.env?.(account) ?? {})) if (v !== undefined) env[k] = v;
+  // never let the parent's keys leak into a worker, which may run whatever a prompt asks
+  const env = childEnv(process.env, { ...(account.profileDir ? profileEnv(tool, account.profileDir) : {}), ...(tool.env?.(account) ?? {}) });
 
   const fullPrompt = req.system ? `${req.system}\n\n${req.prompt}` : req.prompt;
 
@@ -340,7 +357,8 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
       finish(() => {
         // an agent that edited files may finish without a closing message; the diff is the result then
         const editedQuietly = edit && code === 0 && !parsed.error;
-        if ((parsed.text && !parsed.error) || editedQuietly) {
+        // text from a tool that then crashed may be cut off, so only a clean exit counts
+        if ((parsed.text && !parsed.error && code === 0) || editedQuietly) {
           resolve({ text: parsed.text || '(no summary from the agent; see the diff)', inputTokens: parsed.inputTokens, outputTokens: parsed.outputTokens, costUsd: parsed.costUsd });
           return;
         }
@@ -366,7 +384,7 @@ export function loginCli(account: Account): number {
   if (!tool) throw new Error(`unknown CLI tool for provider ${account.provider}`);
   const resolved = resolveCommand(tool.command);
   if (!resolved) throw new Error(`"${tool.command}" is not installed or not on PATH`);
-  const env = { ...process.env, ...(account.profileDir ? profileEnv(tool, account.profileDir) : {}) };
+  const env = childEnv(process.env, account.profileDir ? profileEnv(tool, account.profileDir) : {});
   const r = spawnSync(resolved.file, [...resolved.prefix, ...tool.loginArgs], { stdio: 'inherit', env, shell: resolved.shell });
   return r.status ?? 1;
 }

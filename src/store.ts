@@ -24,6 +24,32 @@ export const files = {
   owners: () => path.join(homeDir(), 'owners'),
 };
 
+/** What job ids look like (see newId in engine.ts). Anything else could name a file outside the jobs folder. */
+export const JOB_ID = /^j[0-9a-z]{4,40}$/;
+
+/** A path with links followed as far as it exists; the missing rest is added back unchanged. */
+function realish(p: string): string {
+  const full = path.resolve(p);
+  try {
+    return fs.realpathSync.native(full);
+  } catch {
+    const up = path.dirname(full);
+    return up === full ? full : path.join(realish(up), path.basename(full));
+  }
+}
+
+/** True when `child` is `parent` or inside it, after following links as far as each path exists. */
+export function inside(child: string, parent: string): boolean {
+  try {
+    const c = realish(child);
+    const p = realish(parent);
+    const rel = path.relative(p, c);
+    return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+  } catch {
+    return false;
+  }
+}
+
 export function processAlive(pid: number | undefined): boolean {
   if (!pid || !Number.isFinite(pid)) return false;
   if (pid === process.pid) return true;
@@ -47,8 +73,11 @@ export const defaultSettings: Settings = {
 
 export function ensureHome(): void {
   for (const dir of [homeDir(), files.jobs(), files.outputs(), files.profiles(), files.worktrees()]) {
-    fs.mkdirSync(dir, { recursive: true });
+    // keys, prompts and results live here; on macOS and Linux only the owner may read them
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
+  // a folder made by an older version keeps its old permissions unless they are tightened
+  if (process.platform !== 'win32') fs.chmodSync(homeDir(), 0o700);
 }
 
 const pause = new Int32Array(new SharedArrayBuffer(4));
@@ -137,9 +166,16 @@ export function deleteSecret(accountId: string): void {
 export function resolveKey(account: Account): string | undefined {
   const ref = account.apiKey;
   if (!ref) return undefined;
-  if (ref.startsWith('env:')) return process.env[ref.slice(4)] || undefined;
-  if (ref === 'secret') return readJson<Secrets>(files.secrets(), {})[account.id];
+  if (ref.startsWith('env:')) return known(process.env[ref.slice(4)] || undefined);
+  if (ref === 'secret') return known(readJson<Secrets>(files.secrets(), {})[account.id]);
   return undefined;
+}
+
+// Every key omnitrix has handed to a driver, so redact() can hide it even when it has no familiar prefix.
+const knownKeys = new Set<string>();
+function known(key: string | undefined): string | undefined {
+  if (key && key.length >= 12) knownKeys.add(key);
+  return key;
 }
 
 export function loadHealth(): Record<string, AccountHealth> {
@@ -174,13 +210,17 @@ export function uniqueAccountId(cfg: Config, base: string): string {
 
 /** Hide anything that looks like a secret before it is shown or saved. */
 export function redact(text: string): string {
-  return text
+  let out = text;
+  for (const key of knownKeys) out = out.split(key).join('***');
+  return out
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '-----PRIVATE KEY***-----')
     .replace(/\b(ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{20,}/g, '$1_***')
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, 'AKIA***')
     .replace(/\b(xox[abprs])-[A-Za-z0-9-]{10,}/g, '$1-***')
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, 'jwt-***')
-    .replace(/(sk|pk|rk|gsk|xai|nvapi|hf)[-_][A-Za-z0-9_\-]{12,}/g, '$1-***')
+    .replace(/\bAIza[0-9A-Za-z_-]{30,}/g, 'AIza***')
+    .replace(/\bfw_[A-Za-z0-9]{16,}/g, 'fw_***')
+    .replace(/\b(sk|pk|rk|gsk|xai|nvapi|hf)[-_][A-Za-z0-9_\-]{12,}/g, '$1-***')
     .replace(/(Bearer\s+)[A-Za-z0-9._\-]{12,}/gi, '$1***')
     .replace(/("?(api[_-]?key|authorization|x-api-key|token)"?\s*[:=]\s*"?)[^"\s,}]{8,}/gi, '$1***');
 }

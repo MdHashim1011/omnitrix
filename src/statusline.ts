@@ -1,6 +1,7 @@
 import { loadQuotas } from './quota.js';
 import { loadConfig, loadHealth } from './store.js';
-import { readLedger, summarize } from './usage.js';
+import { headroom, readLedger, summarize } from './usage.js';
+import type { UsageRecord } from './types.js';
 
 /**
  * Claude Code runs this often, so it must be fast and must never throw.
@@ -14,14 +15,22 @@ export function renderStatusLine(stdinJson: string, now = Date.now()): string {
     const records = readLedger(now - 32 * 24 * 3600_000);
     const quotas = loadQuotas();
     const accounts = cfg.accounts.filter((a) => a.enabled);
+    // grouped once, so each account reads only its own records
+    const byAccount = new Map<string, UsageRecord[]>();
+    for (const r of records) {
+      const list = byAccount.get(r.accountId);
+      if (list) list.push(r);
+      else byAccount.set(r.accountId, [r]);
+    }
     if (accounts.length) {
       let ready = 0;
       const shown: string[] = [];
       for (const a of accounts) {
         const h = health[a.id];
         const blocked = h && (h.state === 'auth_error' || ((h.state === 'cooling' || h.state === 'exhausted' || h.state === 'offline') && (h.until ?? 0) > now));
-        const s = summarize(a, records, h, now, quotas[a.id]);
-        const full = s.percentUsed === 100;
+        const s = summarize(a, byAccount.get(a.id) ?? [], h, now, quotas[a.id]);
+        // the router's own test, so the line never calls ready an account the router skips
+        const full = headroom(s) <= 0;
         if (!blocked && !full) ready++;
         let tag: string;
         if (blocked) tag = h!.state === 'auth_error' ? 'login?' : h!.state === 'offline' ? 'off' : 'wait';

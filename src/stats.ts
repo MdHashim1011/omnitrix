@@ -27,10 +27,15 @@ export function loadStats(): Stats {
   return readJson<Stats>(files.stats(), {});
 }
 
-export function recordVerdict(model: string, type: TaskType, accepted: boolean, now = Date.now()): void {
+/** Count a verdict. With `changed`, the job's earlier opposite verdict is taken back first. */
+export function recordVerdict(model: string, type: TaskType, accepted: boolean, now = Date.now(), changed = false): void {
   const all = loadStats();
   const k = key(model, type);
   const cell = decay(all[k] ?? { ok: 0, bad: 0, at: now }, now);
+  if (changed) {
+    if (accepted) cell.bad = Math.max(0, cell.bad - 1);
+    else cell.ok = Math.max(0, cell.ok - 1);
+  }
   if (accepted) cell.ok += 1;
   else cell.bad += 1;
   all[k] = cell;

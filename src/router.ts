@@ -41,6 +41,16 @@ export interface RouteContext {
   blocked?: Record<string, string>;
 }
 
+/** True when the address is this computer, so a "local" account really keeps prompts here. */
+export function loopback(baseUrl: string | undefined): boolean {
+  try {
+    const host = new URL(baseUrl ?? '').hostname.replace(/^\[|\]$/g, '');
+    return host === 'localhost' || host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(host);
+  } catch {
+    return false;
+  }
+}
+
 export function fit(skills: Skills, type: TaskType): number {
   let total = 0;
   for (const [skill, w] of Object.entries(WEIGHTS[type])) total += (skills[skill as keyof Skills] ?? 0) * (w ?? 0);
@@ -118,7 +128,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
     }
 
     if (task.type === 'code' && account.driver !== 'cli') { reject('code tasks need an agent CLI that can edit files'); continue; }
-    if (privacy === 'secret' && !account.local) { reject('secret task: local models only'); continue; }
+    if (privacy === 'secret' && !(account.local && loopback(account.baseUrl))) { reject('secret task: local models only'); continue; }
     if (privacy === 'private' && settings.protectPrivate && account.trainsOnData) { reject('private task: this provider may train on prompts'); continue; }
 
     const usage = ctx.usage[account.id];
@@ -137,6 +147,8 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
         reject(`paused until ${new Date(paused.until!).toLocaleTimeString()} (${paused.reason ?? 'not answering'})`, model.id);
         continue;
       }
+      // Ollama's "-cloud" models run on Ollama's servers, even through a local Ollama
+      if (privacy === 'secret' && /[-:]cloud$/i.test(model.id)) { reject('secret task: this model runs in the cloud', model.id); continue; }
       if (task.type === 'vision' && model.skills.vision < 5) { reject('model cannot read images', model.id); continue; }
       const why: string[] = [];
       const f = fit(model.skills, task.type);

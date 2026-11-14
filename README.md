@@ -59,7 +59,7 @@ Every task that Claude sends has a type, such as code, review or bulk work, and 
 
 - disabled, signed out or banned in settings
 - cooling down after a rate limit, offline, or out of quota for the current window
-- not permitted to receive the task: private work never goes to an account that may train on prompts while private protection is on, and secret work goes only to local models
+- not permitted to receive the task: private work never goes to an account that may train on prompts while private protection is on, and secret work goes only to local models at an address on this computer (`localhost`, `127.x.x.x` or `::1`), never to a model whose name ends in `-cloud` or `:cloud`
 - unable to do the task, such as a model that cannot read images
 
 A model that is resting after errors is skipped, while the account's other models remain available. An account that fails three times in a row within ten minutes, through network errors, server errors, timeouts or unknown errors, rests for ten minutes. Rate limits, exhausted quota and sign-in problems are handled separately and do not count towards this. When `pool_status` or the dashboard shows the pool, omnitrix also asks each local model server, such as Ollama, for its model list at most once every 30 seconds, and shows a server that does not answer as offline. The router then skips that server until it answers again. Server errors and timeouts that all come from one model only pause that model, so they do not rest an account that has other models.
@@ -74,13 +74,13 @@ Three further adjustments multiply that score. Each adjustment that applies is l
 
 Together these adjustments can raise a score by about 44% or lower it by 25%, so they can change the order of models whose fit for the task is similar. A pin adds a large fixed amount, so in practice pinned accounts rank above all others, but the adjustments can change the order among pinned accounts.
 
-Code tasks go only to agent CLIs that can edit files. Each task runs on a new branch in its own git worktree, so two workers never share a checkout.
+Code tasks go only to agent CLIs that can edit files. Each task runs on a new branch in its own git worktree, so two workers never share a checkout. Other tasks that name a repository and go to an agent CLI run in a temporary copy of the repository that is removed afterwards, so a reviewing worker does not work in your checkout. The copy is taken at the last commit, and the files that the task lists are copied into the prompt from your working tree, including changes that are not committed.
 
 An account's concurrency limit applies to all omnitrix processes on the same computer, such as the MCP server, the dashboard and the command line. A job waits in the queue until the account has a free slot. The limit does not apply across different computers.
 
-A request to an API model may take up to 2 minutes for a small task, 5 minutes for a medium one and 10 minutes for a large one, and never longer than the job limit set with `omnitrix settings --timeout`. Agent CLIs such as Codex may use the whole job limit, because they work in many steps. When a model times out or returns a server error, only that model is paused for 5 minutes, and the job continues on other accounts or models.
+A request to an API model may take up to 2 minutes for a small task, 5 minutes for a medium one and 10 minutes for a large one, and never longer than the job limit set with `omnitrix settings --timeout`. Agent CLIs such as Codex may use the whole job limit, because they work in many steps. When a model times out, returns a server error or returns an empty answer, that model is paused for 5 minutes, and the job continues on other accounts or models. An agent CLI that exits with an error code has failed, even if it printed an answer first.
 
-Skill scores begin as an estimate based on the model's name. You can set them yourself, and omnitrix also adjusts its ranking over time: when Claude accepts or rejects a result, the model's record for that type of task is updated.
+Skill scores begin as an estimate based on the model's name. You can set them yourself, and omnitrix also adjusts its ranking over time: when Claude accepts or rejects a result, the model's record for that type of task is updated. A later verdict on the same job replaces the earlier one instead of counting twice.
 
 ```bash
 omnitrix models deepseek
@@ -111,7 +111,7 @@ omnitrix also estimates when a window will run out if use continues at its curre
 
 ## Privacy
 
-Tasks are `private` by default, which keeps them away from accounts flagged as possibly training on prompts. omnitrix flags Mistral and the Gemini API by default, and you can flag any other account with `omnitrix set <id> --trains-on-data`. A task marked `secret` runs only on local providers such as Ollama. omnitrix sends data only to the providers you connect, and it collects no telemetry.
+Tasks are `private` by default, which keeps them away from accounts flagged as possibly training on prompts. omnitrix flags Mistral, the Gemini API and Gemini CLI by default, and you can flag any other account with `omnitrix set <id> --trains-on-data`. A Gemini CLI account added before version 0.1.18 keeps its old setting until you flag it this way. A task marked `secret` runs only on local providers such as Ollama, at an address on this computer, and never on Ollama's cloud models. omnitrix sends data only to the providers you connect, and it collects no telemetry.
 
 ## Connecting accounts
 
@@ -125,7 +125,7 @@ Tasks are `private` by default, which keeps them away from accounts flagged as p
 | A local model | `omnitrix add ollama` (LM Studio, llama.cpp and vLLM are also supported) |
 | Any other service | `omnitrix add custom-openai --base-url https://host/v1 --key-env MY_KEY --model my-model` |
 
-Run `omnitrix providers` for the full list. Each CLI account has its own profile folder, so two Codex logins never mix. Keys are stored in `~/.omnitrix/secrets.json`. If you use `--key-env`, omnitrix does not store the key at all.
+Run `omnitrix providers` for the full list. Each CLI account has its own profile folder, so two Codex logins never mix. Keys are stored in `~/.omnitrix/secrets.json`, which on macOS and Linux only your user account can read. If you use `--key-env`, omnitrix does not store the key at all.
 
 To track a limit, specify it when you add the account or later with `omnitrix set`:
 
@@ -201,7 +201,7 @@ A task can set `effort` to `low`, `medium` or `high` to ask a reasoning model to
 
 A task can set `check` to `true` together with an `acceptance` line. When the result is ready, omnitrix sends a short review task to a different account. That task contains the instructions, the acceptance line and the result, with secrets removed and the result marked as data rather than instructions, and asks for PASS or FAIL with a one-sentence reason. Checks run only on models without tools, never on an agent CLI that can read files or run commands. `get_results` waits for this verdict and shows it next to the result. The check follows the privacy level of the task, so private work is checked only by an account that may receive private work. If no other suitable account is available, the check is reported as unavailable. The check uses the checking account's quota, and it reads the worker's report, not the changed files. It is advice for Claude's own review and does not replace it.
 
-When Claude rejects a result, it can call `rate_result` with `retry` set to `true` and a note that explains what was wrong. omnitrix then sends the same task to a model that has not been rejected for it, with the note added to the instructions. The new worker sees the note but not the rejected answer.
+When Claude rejects a result, it can call `rate_result` with `retry` set to `true` and a note that explains what was wrong. omnitrix then sends the same task to a model that has not been rejected for it, with the note added to the instructions. The new worker sees the note but not the rejected answer. A job is retried only once; to try again, rate the new job. A check job cannot be retried.
 
 By default, previews are limited to 1,500 characters to keep Claude's token usage low; `omnitrix settings --preview-chars` changes the limit. Full outputs remain on disk.
 
@@ -244,7 +244,7 @@ omnitrix is an independent project. It is not affiliated with OpenAI, Google, An
 
 ## Current limitations
 
-Remaining quota is measured for ChatGPT plans. For other subscriptions it is an estimate, because those providers do not offer an API for it. The Codex and Claude Code drivers depend on the current flags of those tools and may need updating when the flags change. The other agent CLIs have been tested less thoroughly than Codex.
+Remaining quota is measured for ChatGPT plans and for providers that send rate-limit headers. For other subscriptions it is an estimate, because those providers do not offer an API for it. The Codex and Claude Code drivers depend on the current flags of those tools and may need updating when the flags change. The other agent CLIs have been tested less thoroughly than Codex.
 
 ## Roadmap
 

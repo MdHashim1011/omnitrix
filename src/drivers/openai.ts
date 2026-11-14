@@ -4,7 +4,7 @@ import { getJson, joinUrl, postJson, readRateHeaders } from './http.js';
 
 function authHeaders(account: Account): Record<string, string> {
   const key = resolveKey(account);
-  if (!key && !account.local) throw new DriverError(`no API key for ${account.id} (${account.apiKey ?? 'not set'})`, 'auth');
+  if (!key && !account.local) throw new DriverError(`no API key for ${account.id} (${account.apiKey?.startsWith('env:') ? `set ${account.apiKey.slice(4)}` : account.apiKey === 'secret' ? 'no saved key' : 'not set'})`, 'auth');
   const h: Record<string, string> = key ? { authorization: `Bearer ${key}` } : {};
   if (account.provider === 'openrouter') {
     h['x-title'] = 'omnitrix';

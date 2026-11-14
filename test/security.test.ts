@@ -98,12 +98,12 @@ describe('dashboard', () => {
     return port;
   }
 
-  function get(port: number, host: string, urlPath: string, extra: Record<string, string> = {}): Promise<{ status: number; body: string }> {
+  function get(port: number, host: string, urlPath: string, extra: Record<string, string> = {}): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
     return new Promise((resolve, reject) => {
       const req = http.request({ host: '127.0.0.1', port, path: urlPath, method: 'GET', headers: { Host: host, ...extra } }, (res) => {
         let body = '';
         res.on('data', (d) => (body += d));
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body, headers: res.headers }));
       });
       req.on('error', reject);
       req.end();
@@ -133,6 +133,11 @@ describe('dashboard', () => {
     const ok = await get(port, `127.0.0.1:${port}`, '/api/status');
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toHaveProperty('accounts');
+    expect(ok.headers['x-content-type-options']).toBe('nosniff');
+    // no other page may show the dashboard inside a frame
+    const page = await get(port, `127.0.0.1:${port}`, '/');
+    expect(page.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    expect(page.headers['x-frame-options']).toBe('DENY');
 
     for (const bad of ['evil.example.com', `evil.example.com:${port}`, '192.168.1.5', '[::1]']) {
       const r = await get(port, bad, '/api/status');

@@ -8,6 +8,10 @@ import { refreshQuotas } from './quota.js';
 import { EFFORTS, TASK_TYPES, type Job, type TaskSpec } from './types.js';
 import { formatTokens, roughSpan, type WindowUse } from './usage.js';
 import { VERSION } from './version.js';
+import { JOB_ID } from './store.js';
+
+// a job id from Claude becomes a file name, so nothing else is accepted
+const JOB_ID_ARG = z.string().regex(JOB_ID, 'not a job id');
 
 // Sent to Claude when it connects. It is the whole playbook for using the pool well.
 export const INSTRUCTIONS = `omnitrix gives you a team of other AI models (ChatGPT/Codex, DeepSeek, Kimi, GLM, Qwen, Groq, OpenRouter, local Ollama models and more) that run on the user's own accounts. You are the lead: you plan, they do the heavy work, you check it.
@@ -238,7 +242,7 @@ export function buildServer(engine: Engine): McpServer {
       title: 'Get results',
       description: 'Wait for jobs and return their status and a short preview of each result. Waits up to wait_seconds (default 45) for unfinished jobs.',
       inputSchema: z.object({
-        job_ids: z.array(z.string()).min(1).max(50),
+        job_ids: z.array(JOB_ID_ARG).min(1).max(50),
         // Claude Code moves tool calls that run past two minutes into the background
         wait_seconds: z.number().int().min(0).max(110).optional(),
         full: z.boolean().optional().describe('return complete outputs instead of previews (uses more context)'),
@@ -262,7 +266,7 @@ export function buildServer(engine: Engine): McpServer {
     {
       title: 'Read full output',
       description: 'Read the full output of a finished job, in pages.',
-      inputSchema: z.object({ job_id: z.string(), offset: z.number().int().min(0).optional(), length: z.number().int().min(100).max(40000).optional() }),
+      inputSchema: z.object({ job_id: JOB_ID_ARG, offset: z.number().int().min(0).optional(), length: z.number().int().min(100).max(40000).optional() }),
       annotations: { readOnlyHint: true },
     },
     async ({ job_id, offset, length }) => {
@@ -282,7 +286,7 @@ export function buildServer(engine: Engine): McpServer {
       title: 'Rate a result',
       description: 'Tell omnitrix whether a finished job was good enough. The router uses this to choose better models next time. With accepted false and retry true, the task is sent again to a model not yet rejected for it, with your note attached; collect the new job with get_results. The retry may go to any account that the privacy level of the task allows (a forced "use" is not kept), and a task with check true is checked again.',
       inputSchema: z.object({
-        job_id: z.string(),
+        job_id: JOB_ID_ARG,
         accepted: z.boolean(),
         note: z.string().max(500).optional().describe('what was good or wrong; required for a retry, because the next worker reads it'),
         retry: z.boolean().optional().describe('with accepted false: send the task again to another model'),
@@ -294,7 +298,10 @@ export function buildServer(engine: Engine): McpServer {
       const job = retry ? engine.getJob(job_id) : engine.verdict(job_id, accepted, note);
       if (!job || job.status !== 'done' || !job.model) return fail(`job ${job_id} is not a finished job`);
       if (!retry) return text(`recorded: ${job.model} ${accepted ? 'accepted' : 'rejected'} for ${job.task.type}`);
-      const again = engine.retry(job_id, note!.trim())!;
+      if (job.checkOf) return fail(`job ${job_id} is a check of another job; retry that job instead`);
+      if (job.retriedAs) return fail(`job ${job_id} was already retried as ${job.retriedAs}; rate that job instead`);
+      const again = engine.retry(job_id, note!.trim());
+      if (!again) return fail(`job ${job_id} could not be retried`);
       const where = again.status === 'failed' ? `failed: ${again.error}` : again.accountId ? `${again.accountId}/${again.model}` : 'queued';
       return text(`recorded: ${job.model} rejected for ${job.task.type}\nretry: ${again.id} -> ${where}\n\nCall get_results with ${again.id}.`);
     },
@@ -305,7 +312,7 @@ export function buildServer(engine: Engine): McpServer {
     {
       title: 'Cancel a job',
       description: 'Stop a queued or running job.',
-      inputSchema: z.object({ job_id: z.string() }),
+      inputSchema: z.object({ job_id: JOB_ID_ARG }),
     },
     async ({ job_id }) => (engine.cancel(job_id) ? text(`cancelling ${job_id}`) : fail(`job ${job_id} is not running`)),
   );

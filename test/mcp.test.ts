@@ -79,8 +79,8 @@ describe('MCP server (real stdio process)', () => {
   });
 
   it('reports unknown and pending job ids as data', async () => {
-    const res: any = await client.callTool({ name: 'get_results', arguments: { job_ids: ['nope'], wait_seconds: 0 } });
-    expect(res.structuredContent).toEqual({ jobs: [], pending: 0, unknown: ['nope'] });
+    const res: any = await client.callTool({ name: 'get_results', arguments: { job_ids: ['jnope0000'], wait_seconds: 0 } });
+    expect(res.structuredContent).toEqual({ jobs: [], pending: 0, unknown: ['jnope0000'] });
   });
 
   it('keeps the note given with a verdict', async () => {

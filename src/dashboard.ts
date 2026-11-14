@@ -40,11 +40,11 @@ export function startDashboard(port: number): string {
       void refreshQuotas(engine.config().accounts);
       engine.checkLocal().catch(() => {});
       const body = JSON.stringify({ version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine) });
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body);
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(body);
       return;
     }
     if (req.url === '/' || req.url === '/index.html') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" }).end(PAGE);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'", 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY' }).end(PAGE);
       return;
     }
     res.writeHead(404).end('not found');

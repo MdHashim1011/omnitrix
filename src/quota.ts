@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import { createInterface } from 'node:readline';
-import { killTree, PARENT_CREDENTIALS, resolveCommand } from './drivers/cli.js';
+import { childEnv, killTree, resolveCommand } from './drivers/cli.js';
 import { files, readJson, writeJson } from './store.js';
 import type { Account } from './types.js';
 import { VERSION } from './version.js';
@@ -57,8 +57,23 @@ export function parseCodexRateLimits(result: unknown, now = Date.now()): Account
   }
 }
 
+function validWindow(w: unknown): w is QuotaWindow {
+  return isRecord(w) && typeof w.name === 'string' && w.name.length <= 80 && typeof w.usedPercent === 'number' && Number.isFinite(w.usedPercent)
+    && (w.minutes === undefined || (typeof w.minutes === 'number' && Number.isFinite(w.minutes)))
+    && (w.resetsAt === undefined || (typeof w.resetsAt === 'number' && Number.isFinite(w.resetsAt)));
+}
+
+/** Saved readings; an entry that is not a well-formed reading counts as no reading. */
 export function loadQuotas(): Record<string, AccountQuota> {
-  return readJson<Record<string, AccountQuota>>(files.quota(), {});
+  const raw = readJson<unknown>(files.quota(), {});
+  const out: Record<string, AccountQuota> = {};
+  if (!isRecord(raw)) return out;
+  for (const [id, q] of Object.entries(raw)) {
+    if (!isRecord(q) || typeof q.at !== 'number' || !Array.isArray(q.windows) || !q.windows.every(validWindow)) continue;
+    if (q.plan !== undefined && typeof q.plan !== 'string') continue;
+    out[id] = q as unknown as AccountQuota;
+  }
+  return out;
 }
 
 const reading = new Map<string, Promise<void>>();
@@ -109,9 +124,8 @@ export async function readCodexQuota(profileDir: string, timeoutMs = 20000): Pro
     const resolved = resolveCommand('codex');
     if (!resolved) return undefined;
     return await new Promise<AccountQuota | undefined>((resolve) => {
-      const env: Record<string, string | undefined> = { ...process.env, CODEX_HOME: profileDir };
       // An exported API key would make Codex report that key's limits instead of this account's plan.
-      for (const k of PARENT_CREDENTIALS) delete env[k];
+      const env = childEnv(process.env, { CODEX_HOME: profileDir });
       const child = spawn(resolved.file, [...resolved.prefix, 'app-server'], {
         env: env as NodeJS.ProcessEnv,
         // A neutral folder, so a project's own Codex settings can't change what the app server does.

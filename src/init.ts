@@ -29,7 +29,7 @@ const NOT_AUTOMATIC: Record<string, string> = {
 /** A local server counts when its OpenAI-style model list answers within a moment. */
 export async function reachable(baseUrl: string): Promise<boolean> {
   try {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/models`, { signal: AbortSignal.timeout(1500) });
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/models`, { signal: AbortSignal.timeout(1500), redirect: 'error' });
     return res.ok;
   } catch {
     return false;

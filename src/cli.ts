@@ -15,7 +15,7 @@ import { describeAccount } from './mcp.js';
 import { isChatModel, makeModel } from './models.js';
 import { PROVIDERS, getProvider } from './providers.js';
 import { renderStatusLine } from './statusline.js';
-import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
+import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
 import { branchExists, branchMerged, deleteBranch, pruneWorktree } from './worktree.js';
 import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, type Limits, type TaskType, type UsageRecord } from './types.js';
 import { refreshQuotas } from './quota.js';
@@ -768,12 +768,16 @@ program
         continue;
       }
       const job = readJson<Job | null>(file, null);
-      if (!job || job.updatedAt > cutoff || job.status === 'queued' || job.status === 'running') continue;
+      // a record that is not omnitrix's own for this file name could point anywhere, so it is left alone
+      if (!job || `${job.id}.json` !== name || !JOB_ID.test(job.id)) continue;
+      if (job.updatedAt > cutoff || job.status === 'queued' || job.status === 'running') continue;
       jobs++;
+      // only a worktree inside omnitrix's own folder is ever deleted
+      const tree = job.worktree && path.resolve(job.worktree.path) !== path.resolve(files.worktrees()) && inside(job.worktree.path, files.worktrees()) ? job.worktree.path : undefined;
       if (o.dryRun) {
-        if (job.worktree && fs.existsSync(job.worktree.path)) trees++;
+        if (tree) trees++;
       } else {
-        if (job.worktree && pruneWorktree(job.worktree.path)) trees++;
+        if (tree && pruneWorktree(tree)) trees++;
       }
       const repo = job.task.repo;
       // only the branch omnitrix made for this job, in a repository given by absolute path, is ever touched
@@ -795,8 +799,15 @@ program
       }
       // a kept branch keeps its record, so a later clean can still decide about it once it is merged or rejected
       if (o.dryRun || keepRecord) continue;
-      if (job.outputFile) fs.rmSync(job.outputFile, { force: true });
+      fs.rmSync(path.join(files.outputs(), `${job.id}.md`), { force: true });
       fs.rmSync(file, { force: true });
+    }
+    // read-only copies are not on any job record; one left by a process that died is removed once it is old
+    for (const name of fs.existsSync(files.worktrees()) ? fs.readdirSync(files.worktrees()) : []) {
+      const dir = path.join(files.worktrees(), name);
+      if (!/^j[0-9a-z]{4,40}-ro(-[0-9a-z]+)?$/.test(name) || fs.statSync(dir).mtimeMs >= cutoff) continue;
+      trees++;
+      if (!o.dryRun) pruneWorktree(dir);
     }
     const verb = o.dryRun ? 'would remove' : 'removed';
     console.log(`${verb} ${jobs} old jobs and ${trees} worktrees`);

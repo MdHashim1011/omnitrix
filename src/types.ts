@@ -202,6 +202,8 @@ export interface Job {
   verdictNote?: string;
   /** the rejected job this one retries */
   retryOf?: string;
+  /** the job that retried this one, after Claude rejected it */
+  retriedAs?: string;
   check?: JobCheck;
   /** the job whose result this job checks */
   checkOf?: string;

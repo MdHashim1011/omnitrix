@@ -55,6 +55,8 @@ export class LedgerTail {
   private offset = 0;
   private records: UsageRecord[] = [];
   private prunedAt = 0;
+  // which file the offset belongs to: a ledger rebuilt by another process can have the same size
+  private fileId = '';
 
   read(sinceMs: number): UsageRecord[] {
     const live = files.ledger();
@@ -69,12 +71,16 @@ export class LedgerTail {
       return [];
     }
     let size = 0;
+    let fileId = '';
     try {
-      size = fs.statSync(live).size;
+      const st = fs.statSync(live, { bigint: true });
+      size = Number(st.size);
+      fileId = `${st.dev}:${st.ino}`;
     } catch {
       // no ledger yet
     }
-    if (size < this.offset) {
+    if (size < this.offset || fileId !== this.fileId) {
+      this.fileId = fileId;
       this.offset = 0;
       this.records = [];
     }
@@ -115,6 +121,21 @@ export class LedgerTail {
  * process owns: their new lines start a fresh ledger, and the kept lines are appended to it rather than
  * written over it. Line order changes, which nothing depends on.
  */
+// Records are appended in time order, so the first one shows whether anything is old enough to drop.
+function oldestIsOld(live: string): boolean {
+  const buf = Buffer.alloc(4096);
+  const fd = fs.openSync(live, 'r');
+  try {
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    const first = buf.subarray(0, n).toString('utf8').split('\n')[0];
+    return (JSON.parse(first ?? '') as UsageRecord).ts < Date.now() - 35 * DAY;
+  } catch {
+    return true;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export function compactLedger(maxBytes = 5_000_000): void {
   const live = files.ledger();
   const mine = `${live}.compacting.${process.pid}`;
@@ -130,7 +151,7 @@ export function compactLedger(maxBytes = 5_000_000): void {
     if (stranded && path.join(dir, stranded) !== mine) fs.renameSync(path.join(dir, stranded), mine);
     else if (stranded) {
       // already ours to finish
-    } else if (fs.statSync(live).size >= maxBytes) fs.renameSync(live, mine);
+    } else if (fs.statSync(live).size >= maxBytes && oldestIsOld(live)) fs.renameSync(live, mine);
     else return;
   } catch {
     return;

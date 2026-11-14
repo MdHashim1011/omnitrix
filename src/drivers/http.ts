@@ -10,20 +10,58 @@ export function classifyStatus(status: number, body: string): ErrorKind {
   if (status === 429) {
     // "limit: 0" means the plan includes no allowance for this model at all (Gemini's free tier and Pro
     // models, for example). That is the model's problem, not a sign that the whole account is used up.
-    if (/limit: 0\b/.test(text)) return 'model_gone';
+    if (/limit: 0(?![\d.])/.test(text)) return 'model_gone';
     // some providers use 429 for "you are out of credits" as well as "slow down"
     return /(quota|insufficient|exceeded your current|billing|credit|balance)/.test(text) ? 'quota' : 'rate_limit';
   }
   if (status === 408) return 'timeout';
   if (status >= 500) return 'server';
-  // Providers retire models but keep listing them; this is the model's fault, not the task's.
-  if ((status === 404 || status === 400) && /model/.test(text) && /(no longer available|not found|does not exist|is not supported|deprecated|retired)/.test(text)) return 'model_gone';
+  // Providers retire models but keep listing them; this is the model's fault, not the task's. The text must
+  // name the model itself: "parameter X is not supported with this model" is about the request instead.
+  if ((status === 404 || status === 400) && retiredModel(text)) return 'model_gone';
   if (status >= 400) return 'bad_request';
   return 'unknown';
 }
 
-/** Parse Retry-After (seconds or HTTP date) and the common reset headers. */
+function retiredModel(text: string): boolean {
+  if (/(parameter|\bparam\b|argument|max_tokens|max_completion_tokens|reasoning_effort|temperature)/.test(text)) return false;
+  const names = /(model_not_found|invalid_model|models\/|the model|model `|model ')/.test(text);
+  return names && /(no longer available|not found|does not exist|is not supported|deprecated|retired)/.test(text);
+}
+
+// Largest answers read from a provider; anything bigger is a broken or hostile server.
+const MAX_ANSWER = 32 * 1024 * 1024;
+const MAX_LIST = 4 * 1024 * 1024;
+
+/** Read a response body, stopping once it passes `limit` bytes. */
+export async function readCapped(res: Response, limit: number): Promise<string> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel().catch(() => undefined);
+      throw new DriverError(`the answer is too large (over ${Math.round(limit / 1024 / 1024)} MB)`, 'server', res.status);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+// A provider asking for a longer wait than this is wrong or hostile; the account is looked at again after a day.
+const MAX_WAIT = 24 * 3600_000;
+
+/** Parse Retry-After (seconds or HTTP date) and the common reset headers, at most a day. */
 export function retryAfterMs(headers: Headers, now = Date.now()): number | undefined {
+  const ms = waitFromHeaders(headers, now);
+  return ms === undefined ? undefined : Math.min(ms, MAX_WAIT);
+}
+
+function waitFromHeaders(headers: Headers, now: number): number | undefined {
   const ra = headers.get('retry-after');
   if (ra) {
     const secs = Number(ra);
@@ -87,8 +125,10 @@ export async function postJson(url: string, headers: Record<string, string>, bod
       headers: { 'content-type': 'application/json', ...headers },
       body: JSON.stringify(body),
       signal: ctrl.signal,
+      // a redirect would carry the key and the prompt to another server
+      redirect: 'error',
     });
-    const text = await res.text();
+    const text = await readCapped(res, MAX_ANSWER);
     if (!res.ok) {
       const kind = classifyStatus(res.status, text);
       throw new DriverError(`HTTP ${res.status}: ${redact(text.slice(0, 400))}`, kind, res.status, retryAfterMs(res.headers));
@@ -113,8 +153,8 @@ export async function postJson(url: string, headers: Record<string, string>, bod
 }
 
 export async function getJson(url: string, headers: Record<string, string>, timeoutMs = 15_000) {
-  const res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
-  const text = await res.text();
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
+  const text = await readCapped(res, MAX_LIST);
   if (!res.ok) throw new DriverError(`HTTP ${res.status}: ${redact(text.slice(0, 300))}`, classifyStatus(res.status, text), res.status);
   return JSON.parse(text);
 }

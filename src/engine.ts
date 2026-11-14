@@ -2,6 +2,7 @@
 // Job records are kept on disk so the dashboard and other omnitrix processes can see them.
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { runDriver } from './drivers/index.js';
 import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
@@ -11,10 +12,10 @@ import { loadQuotas, refreshQuotas } from './quota.js';
 import { route, effectivePrivacy, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
-import { dropModel, ensureHome, files, findAccount, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
+import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
 import { DriverError, type Account, type AccountHealth, type Config, type Job, type JobCheck, type TaskSpec, type UsageRecord } from './types.js';
-import { compactLedger, LedgerTail, recordUsage, summarize, type UsageSummary } from './usage.js';
-import { createWorktree, discardWorktree, finishWorktree, isGitRepo } from './worktree.js';
+import { compactLedger, headroom, LedgerTail, recordUsage, summarize, type UsageSummary } from './usage.js';
+import { createScratch, createWorktree, discardWorktree, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
 
 const MAX_ATTEMPTS = 3;
 // A model the provider no longer serves (or gives this plan no allowance for) is dropped from the account,
@@ -98,6 +99,7 @@ export class Engine {
   private ledger = new LedgerTail();
   private listeners = new Set<() => void>();
   private unsaved = new Set<string>();
+  private compactedAt = Date.now();
 
   constructor() {
     ensureHome();
@@ -267,8 +269,18 @@ export class Engine {
         const expired = (h.state === 'cooling' || h.state === 'exhausted' || h.state === 'offline') && (h.until ?? 0) <= now;
         if (!expired) state = h.state;
       }
+      // the same tests the router makes, so the pool never shows as ready an account the router skips
+      let note: string | undefined;
+      if (state === 'ready' && !a.models.length) {
+        state = 'offline';
+        note = 'no models are set up for this account';
+      }
+      if (state === 'ready' && a.team && ctx.blocked?.[a.id]) {
+        state = 'exhausted';
+        note = ctx.blocked[a.id];
+      }
+      if (state === 'ready' && headroom(ctx.usage[a.id]!) <= 0) state = 'exhausted';
       if (state === 'ready' && (this.running[a.id] ?? 0) > 0) state = 'busy';
-      if (state === 'ready' && ctx.usage[a.id]!.percentUsed === 100) state = 'exhausted';
       // every model paused means the account cannot take work either, so say so until the first one is back
       let pausedUntil: number | undefined;
       const ends = a.models.map((m) => this.health[modelHealthKey(a.id, m.id)]).map((mh) => (mh?.state === 'cooling' && (mh.until ?? 0) > now ? mh.until! : 0));
@@ -288,7 +300,7 @@ export class Engine {
         enabled: a.enabled,
         state,
         until: pausedUntil ?? (h?.until && h.until > now ? h.until : undefined),
-        reason: pausedUntil ? 'every model is paused after errors' : state === 'ready' || state === 'busy' ? undefined : h?.reason,
+        reason: note ?? (pausedUntil ? 'every model is paused after errors' : state === 'ready' || state === 'busy' ? undefined : h?.reason),
         running: this.running[a.id] ?? 0,
         models: a.models.map((m) => m.id),
         usage: ctx.usage[a.id]!,
@@ -324,10 +336,14 @@ export class Engine {
   }
 
   getJob(id: string): Job | undefined {
+    // ids reach here from Claude and from files; only a real job id may become a path
+    if (typeof id !== 'string' || !JOB_ID.test(id)) return undefined;
     const mine = this.jobs.get(id);
     if (mine && isMine(mine)) return mine;
     // Our copy of another process's job is a snapshot from startup; its file has the current state.
-    return readJson<Job | null>(path.join(files.jobs(), `${id}.json`), null) ?? mine;
+    const disk = readJson<Job | null>(path.join(files.jobs(), `${id}.json`), null);
+    // a file whose id does not match its name was not written by omnitrix for this job
+    return (disk && disk.id === id ? disk : undefined) ?? mine;
   }
 
   /** Newest first. Other processes' jobs come from disk, since our copies are startup snapshots and miss new ones. */
@@ -416,6 +432,9 @@ export class Engine {
   retry(id: string, note: string): Job | undefined {
     const job = this.getJob(id);
     if (!job || !job.accountId || !job.model || job.status !== 'done') return undefined;
+    this.mergeDisk(job);
+    // a check is advice about another job, and a job is retried once; the retry can be retried in turn
+    if (job.checkOf || job.retriedAs) return undefined;
     if (job.verdict !== 'rejected') this.verdict(id, false, note);
     if (job.check?.status === 'pending') this.cancel(job.id);
     const { use: _forced, ...task } = job.task;
@@ -424,16 +443,26 @@ export class Engine {
       avoid: [...(task.avoid ?? []), `${job.accountId}/${job.model}`],
       prompt: `${task.prompt}\n\n## An earlier attempt was rejected\n${note}`,
     }], { retryOf: job.id });
+    if (again) {
+      const latest = this.getJob(job.id) ?? job;
+      latest.retriedAs = again.id;
+      latest.updatedAt = Date.now();
+      this.jobs.set(latest.id, latest);
+      this.saveJob(latest);
+    }
     return again;
   }
 
   verdict(id: string, accepted: boolean, note?: string): Job | undefined {
     const job = this.getJob(id);
     if (!job || !job.model || job.status !== 'done') return undefined;
+    this.mergeDisk(job);
+    const before = job.verdict === undefined ? undefined : job.verdict === 'accepted';
     job.verdict = accepted ? 'accepted' : 'rejected';
     job.verdictNote = note;
     try {
-      recordVerdict(job.model, job.task.type, accepted);
+      // a repeated verdict counts once, and a changed one moves its count to the other side
+      if (before !== accepted) recordVerdict(job.model, job.task.type, accepted, Date.now(), before !== undefined);
     } catch (err) {
       // the verdict is still saved on the job; only the router's tally misses this one
       process.stderr.write(`omnitrix: could not save routing stats: ${err instanceof Error ? err.message : err}\n`);
@@ -448,7 +477,8 @@ export class Engine {
     const job = this.getJob(id);
     if (!job?.outputFile) return undefined;
     try {
-      return fs.readFileSync(job.outputFile, 'utf8');
+      // always the job's own file in the outputs folder, whatever the job record names
+      return fs.readFileSync(path.join(files.outputs(), `${job.id}.md`), 'utf8');
     } catch {
       return undefined;
     }
@@ -461,6 +491,15 @@ export class Engine {
   /** Every second: retry saves that failed, and act on cancel notes left by other processes. */
   private tick(): void {
     beat();
+    // a server that runs for weeks would otherwise keep a growing ledger, which the status line reads whole
+    if (Date.now() - this.compactedAt > 3600_000) {
+      this.compactedAt = Date.now();
+      try {
+        compactLedger();
+      } catch {
+        // tried again in an hour
+      }
+    }
     // A server can run for weeks; finished jobs older than a day leave memory and are read from disk when needed.
     const dayAgo = Date.now() - 24 * 3600_000;
     for (const [id, job] of this.jobs) {
@@ -550,13 +589,20 @@ export class Engine {
     }
   }
 
-  /** Writes only the check, over the latest copy on disk, so a verdict saved by another process survives. */
-  private setCheck(job: Job, check: JobCheck): void {
+  /** Takes Claude's verdict and a retry that another process saved for this job, which this copy may lack. */
+  private mergeDisk(job: Job): void {
     const disk = readJson<Job | null>(path.join(files.jobs(), `${job.id}.json`), null);
-    if (disk?.verdict && !job.verdict) {
+    if (!disk || disk.id !== job.id) return;
+    if (disk.verdict && !job.verdict) {
       job.verdict = disk.verdict;
       job.verdictNote = disk.verdictNote;
     }
+    if (disk.retriedAs && !job.retriedAs) job.retriedAs = disk.retriedAs;
+  }
+
+  /** Writes only the check, over the latest copy on disk, so a verdict saved by another process survives. */
+  private setCheck(job: Job, check: JobCheck): void {
+    this.mergeDisk(job);
     job.check = check;
     job.updatedAt = Date.now();
     this.jobs.set(job.id, job);
@@ -643,9 +689,12 @@ export class Engine {
     }
 
     const t0 = Date.now();
-    let worktree: { path: string; branch: string; root: string } | undefined;
+    let worktree: { path: string; branch: string; root: string; gitDir?: string } | undefined;
+    let scratch: { path: string; root: string } | undefined;
     // only a failure while the provider is being called is the provider's; a broken checkout or a full disk is ours
     let calling = false;
+    let answered = false;
+    let recorded = false;
     try {
       const edit = job.task.type === 'code';
       let cwd: string | undefined;
@@ -655,11 +704,18 @@ export class Engine {
           worktree = createWorktree(job.task.repo, job.id);
           cwd = worktree.path;
           job.worktree = { path: worktree.path, branch: worktree.branch };
+          // saved at once, so `omnitrix clean` finds the worktree even if this process dies during the task
+          this.saveJob(job);
+        } else if (account.driver === 'cli') {
+          // an agent CLI acts in its folder, so a read-only task gets a stripped copy it may scribble on
+          scratch = createScratch(job.task.repo, job.id);
+          cwd = scratch.path;
         } else {
           cwd = job.task.repo;
         }
       }
-      const prompt = buildPrompt(job.task, account, cwd);
+      // files come from the real repo, so a read-only task sees uncommitted work too
+      const prompt = buildPrompt(job.task, account, cwd, scratch ? job.task.repo : cwd);
       calling = true;
       const result = await runDriver(
         {
@@ -675,16 +731,32 @@ export class Engine {
         },
         edit,
       );
+      // a blank answer is the model's failure, so another account gets the task
+      if (!edit && !result.text.trim()) {
+        // the provider charged for it all the same
+        this.record(account, { ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ok: false, errorKind: 'server', latencyMs: Date.now() - t0, costUsd: result.costUsd }, cfg);
+        recorded = true;
+        throw new DriverError('the model returned an empty answer', 'server');
+      }
+      // from here on the provider has answered and been paid; anything that goes wrong is ours
+      calling = false;
+      answered = true;
 
       // the provider's own figure when it gives one, otherwise the model's price per million tokens
       const costUsd = result.costUsd ?? estimateCost(account.models.find((m) => m.id === cand.model), result.inputTokens, result.outputTokens);
       this.record(account, { ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ok: true, latencyMs: Date.now() - t0, costUsd }, cfg);
       const measured = result.rate ? { ...result.rate, at: Date.now(), source: 'response headers' } : this.health[account.id]?.measured;
-      this.setHealth(account.id, { state: 'ready', measured });
+      // a pause set by another request after this one started is newer news than this success
+      // another process may have paused the account meanwhile; its file is the latest word
+      const mine = this.health[account.id];
+      const theirs = loadHealth()[account.id];
+      const prev = (theirs?.at ?? 0) > (mine?.at ?? 0) ? theirs : mine;
+      const newerPause = prev && prev.state !== 'ready' && (prev.at ?? 0) > t0 && (prev.until ?? Infinity) > Date.now();
+      if (!newerPause) this.setHealth(account.id, { state: 'ready', measured });
 
       let text = result.text;
       if (worktree) {
-        const fin = finishWorktree(worktree.path, `${job.task.title}\n\nomnitrix job ${job.id}`);
+        const fin = finishWorktree(worktree.path, `${job.task.title}\n\nomnitrix job ${job.id}`, worktree.gitDir);
         job.worktree = { path: worktree.path, branch: worktree.branch, diffStat: fin.diffStat };
         text += `\n\n---\nbranch: ${worktree.branch}\n${fin.diffStat}`;
       }
@@ -703,11 +775,13 @@ export class Engine {
       attempt.ok = false;
       attempt.error = redact(e.message).slice(0, 600);
       attempt.errorKind = e.kind;
-      if (calling && e.kind !== 'bad_request' && e.kind !== 'cancelled') {
+      if (calling && !recorded && e.kind !== 'bad_request' && e.kind !== 'cancelled') {
         this.record(account, { ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: 0, outputTokens: 0, ok: false, status: e.status, errorKind: e.kind, latencyMs: Date.now() - t0 }, cfg);
       }
-      this.applyFailure(account, e, cand.model);
-      this.tripBreaker(account, e);
+      if (!answered) {
+        this.applyFailure(account, e, cand.model);
+        this.tripBreaker(account, e);
+      }
       if (e.kind === 'model_gone') {
         try {
           dropModel(account.id, cand.model);
@@ -716,7 +790,11 @@ export class Engine {
         }
       }
 
-      if (ctrl.signal.aborted || e.kind === 'cancelled') {
+      if (answered) {
+        // asking another account would pay for the same answer twice; the worktree keeps what was done
+        job.status = 'failed';
+        job.error = `the answer arrived but could not be saved: ${attempt.error}`;
+      } else if (ctrl.signal.aborted || e.kind === 'cancelled') {
         job.status = 'cancelled';
         job.error = 'cancelled';
       } else if (job.attempts.filter((a) => a.errorKind !== 'model_gone').length < MAX_ATTEMPTS && job.attempts.length < MAX_TRIES && e.kind !== 'bad_request') {
@@ -735,6 +813,13 @@ export class Engine {
         }
       }
     } finally {
+      if (scratch) {
+        try {
+          removeScratch(scratch.root, scratch.path);
+        } catch {
+          // `omnitrix clean` removes what is left in the worktrees folder
+        }
+      }
       attempt.endedAt = Date.now();
       this.running[account.id] = Math.max(0, (this.running[account.id] ?? 1) - 1);
       freeSeat(seat);
@@ -807,20 +892,49 @@ function ended(job: Job): boolean {
   return job.status === 'done' || job.status === 'failed' || job.status === 'cancelled';
 }
 
-function buildPrompt(task: TaskSpec, account: Account, cwd: string | undefined): string {
+// Folders whose files must never be sent to a provider, whatever a task asks for.
+function protectedDirs(): string[] {
+  const h = os.homedir();
+  const home = ['.ssh', '.aws', '.gnupg', '.azure', '.kube', '.docker', path.join('.config', 'gh'), path.join('.config', 'gcloud')].map((d) => path.join(h, d));
+  // Windows keeps the GitHub CLI and gcloud logins under AppData instead
+  const appData = process.env.APPDATA ? ['GitHub CLI', 'gcloud'].map((d) => path.join(process.env.APPDATA!, d)) : [];
+  return [homeDir(), ...home, ...appData];
+}
+
+// Files that hold passwords or tokens wherever they are.
+const CREDENTIAL_FILE = /^(\.netrc|_netrc|\.git-credentials|\.npmrc|\.pypirc|\.pgpass|\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)|credentials(\.json)?)$/i;
+
+/** A file a task may attach: inside the repository when there is one, never a credential file, never in a protected folder. */
+function attachable(full: string, repo: string | undefined): boolean {
+  if (repo && !inside(full, repo)) return false;
+  if (CREDENTIAL_FILE.test(path.basename(full))) return false;
+  return !protectedDirs().some((d) => inside(full, d));
+}
+
+/**
+ * The worker's prompt. `inlineFrom` names the folder whose files are copied in; a CLI working in `cwd`
+ * reads them itself. Task files are untrusted input (Claude may have been talked into naming them), so
+ * they stay inside the repository and out of key folders.
+ */
+export function buildPrompt(task: TaskSpec, account: Account, cwd: string | undefined, inlineFrom = cwd): string {
   const parts: string[] = [`# Task: ${task.title}`, '', task.prompt.trim()];
   if (task.acceptance) parts.push('', '## Done means', task.acceptance.trim());
   if (task.files?.length) {
-    if (account.driver === 'cli' && cwd) {
+    if (account.driver === 'cli' && cwd && inlineFrom === cwd) {
       parts.push('', '## Files to look at', ...task.files.map((f) => `- ${f}`));
     } else {
       let budget = MAX_FILE_BYTES;
       parts.push('', '## Files');
       for (const f of task.files) {
-        const full = cwd && !path.isAbsolute(f) ? path.join(cwd, f) : f;
+        const full = inlineFrom && !path.isAbsolute(f) ? path.join(inlineFrom, f) : f;
+        if (!attachable(full, task.repo)) {
+          parts.push(`### ${f}`, '(not allowed: outside the repository or in a protected folder)');
+          continue;
+        }
         let body: string;
         try {
-          body = fs.readFileSync(full, 'utf8');
+          // a key pasted into an ordinary file is still a key
+          body = redact(fs.readFileSync(full, 'utf8'));
         } catch {
           parts.push(`### ${f}`, '(could not read this file)');
           continue;
