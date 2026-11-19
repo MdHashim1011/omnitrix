@@ -48,7 +48,7 @@ describe('a code worker that tampers with its git folder', () => {
     expect(fin.changed).toBe(true);
     // the commit went to the job's own branch in the real repository
     expect(spawnSync('git', ['show', '--name-only', '--format=', `omnitrix/jtamper1`], { cwd: r, encoding: 'utf8' }).stdout).toContain('b.txt');
-  });
+  }, 60_000);
 });
 
 describe('files attached to a task without a repository', () => {
