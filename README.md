@@ -9,7 +9,7 @@ Claude plans the work, and your other AI accounts carry it out.
 
 I built omnitrix because I repeatedly ran out of Claude credits while the ChatGPT Plus and Gemini subscriptions that my friends and I pay for remained largely unused.
 
-omnitrix is built for the frontier-model subscriptions and API keys you already pay for, and it runs inside your existing Claude Code session. Claude remains in charge: it divides the job into tasks and reviews the results. omnitrix sends each task to an account that suits the work and still has quota available. For example, it can use Codex on your ChatGPT plan for code edits, Gemini for reading very large logs, DeepSeek or Kimi for reasoning and review, or a local model for private work. It also supports any service that implements the OpenAI or Anthropic API.
+omnitrix is built for the frontier-model subscriptions and API keys you already pay for, and it runs inside your existing Claude Code session. Claude remains in charge: it divides the job into tasks and reviews the results. omnitrix sends each task to an account that suits the work and still has quota available. For example, it can use Codex on your ChatGPT plan for code edits, Gemini for reading very large logs, DeepSeek or Kimi for reasoning and review, or a local model for private work. It also supports any service that implements the OpenAI Chat Completions format or the Anthropic Messages format, through `custom-openai` and `custom-anthropic`.
 
 You can monitor the pool without leaving Claude Code. The status line shows up to four accounts with their remaining quota or status, and omnitrix instructs Claude to check the same data before it assigns work. Claude reads short results instead of performing every step itself, which uses less of your Claude usage limit.
 
@@ -71,9 +71,9 @@ Every task that Claude sends has a type, such as code, review or bulk work, and 
 - not permitted to receive the task: private work never goes to an account that may train on prompts while private protection is on, and secret work goes only to local models at an address on this computer (`localhost`, `127.x.x.x` or `::1`), never to a model whose name ends in `-cloud` or `:cloud`
 - unable to do the task, such as a model that cannot read images
 
-A model that is resting after errors is skipped, while the account's other models remain available. An account that fails three times in a row within ten minutes, through network errors, server errors, timeouts or unknown errors, rests for ten minutes. Rate limits, exhausted quota and sign-in problems are handled separately and do not count towards this. When `pool_status` or the dashboard shows the pool, omnitrix also asks each local model server, such as Ollama, for its model list at most once every 30 seconds, and shows a server that does not answer as offline. The router then skips that server until it answers again. Server errors and timeouts that all come from one model only pause that model, so they do not rest an account that has other models.
+A model that is resting after errors is skipped, while the account's other models remain available. An account that fails three times in a row within ten minutes, through network errors, server errors, timeouts or unknown errors, rests for ten minutes. Rate limits, exhausted quota and sign-in problems are handled separately and do not count towards this. When `pool_status` or the dashboard shows the pool, omnitrix also asks each local model server, such as Ollama, for its model list at most once every 30 seconds, and shows a server that does not answer as offline for 60 seconds, during which the router skips it. Other failures rest the whole account for a short time: 60 seconds after a network error (30 seconds for a local server), 30 seconds after a server error on an account with only one model, and 60 seconds after a rate limit unless the provider names a time. Server errors and timeouts that all come from one model only pause that model, so they do not rest an account that has other models.
 
-Each remaining model receives a score based on how well it fits the task, how much quota the account has left, what the model costs, and how often its past work was accepted. An account that is already running as many jobs as its concurrency limit allows has its score halved. The highest-scoring model receives the task. If that call fails, omnitrix ranks the accounts again, skips those it has already tried, and passes the task on without any action from Claude. A job makes at most three attempts. A model that the provider no longer serves, or for which the plan has no allowance, is removed from the account and rests for 24 hours, and trying it does not count as an attempt.
+Each remaining model receives a score based on how well it fits the task, how much quota the account has left, what the model costs, and how often its past work was accepted. An account that is already running as many jobs as its concurrency limit allows has its score halved. The highest-scoring model receives the task. If that call fails, omnitrix ranks the accounts again, skips those it has already tried, and passes the task on without any action from Claude. After a timeout or a server error, the same account stays eligible with another of its models. A job makes at most three attempts, and at most twelve tries in total when retired models are included. A request that the provider rejects as invalid, including an `effort` value that the model does not accept, fails the job without another attempt, and so does an answer that arrived but could not be saved. A model that the provider no longer serves, or for which the plan has no allowance, is removed from the account and rests for 24 hours, and trying it does not count as an attempt.
 
 Three further adjustments multiply that score. Each adjustment that applies is listed in the reasons shown by `omnitrix route`, which lists the top eight candidates, and by `route_preview`, which lists the top three:
 
@@ -85,15 +85,15 @@ Together these adjustments can raise a score by about 44% or lower it by 25%, so
 
 Code tasks go only to agent CLIs that can edit files. Each task runs on a new branch in its own git worktree, so two workers never share a checkout. Other tasks that name a repository and go to an agent CLI run in a temporary copy of the repository that is removed afterwards, so a reviewing worker does not work in your checkout. The copy is taken at the last commit, and the files that the task lists are copied into the prompt from your working tree, including changes that are not committed.
 
-After a code task, omnitrix checks the branch itself rather than relying on the worker's report. It lists the files that the worker changed and, when the task named its files, the changed files that the task did not name. When the task gives a `test` command, such as `["npm", "test"]`, omnitrix runs it in the job's worktree after the worker finishes and reports whether it passed, its exit code and the end of its output. `get_results` waits for the test, and the dashboard shows the result on each job as "Checked by omnitrix". The test runs the worker's code on your computer, without keys in its environment, with an empty home folder of its own and within the job time limit; `cancel_job` stops it. omnitrix never merges anything: Claude still reviews the work, and you decide what to keep.
+After a code task, omnitrix checks the branch itself rather than relying on the worker's report. It lists the files that the worker changed and, when the task named its files, the changed files that the task did not name. When the task gives a `test` command, such as `["npm", "test"]`, omnitrix runs it in the job's worktree after the worker finishes and reports whether it passed, its exit code and the end of its output. `get_results` waits for the test, and the dashboard shows the result on each job as "Checked by omnitrix". The test runs the worker's code on your computer, without keys in its environment, with an empty home folder of its own and with its own time limit, equal to the job limit but at most one hour; `cancel_job` stops it when it runs in the same omnitrix process. omnitrix never merges anything: Claude still reviews the work, and you decide what to keep.
 
-An account's concurrency limit applies to all omnitrix processes on the same computer, such as the MCP server, the dashboard and the command line. A job waits in the queue until the account has a free slot. The limit does not apply across different computers.
+An account's concurrency limit applies to all omnitrix processes that share the same data folder, such as the MCP server, the dashboard and the command line. It is 1 by default for agent CLIs and local models and 2 for APIs, and `omnitrix set <id> --concurrency` changes it. When the best account is full, the job goes to the next eligible account that has a free slot, and it waits in the queue only when every eligible account is full. The limit does not apply across different computers, and `omnitrix test` does not count towards it.
 
-A request to an API model may take up to 2 minutes for a small task, 5 minutes for a medium one and 10 minutes for a large one, and never longer than the job limit set with `omnitrix settings --timeout`. Agent CLIs such as Codex may use the whole job limit, because they work in many steps. When a model times out, returns a server error or returns an empty answer, that model is paused for 5 minutes, and the job continues on other accounts or models. An agent CLI that exits with an error code has failed, even if it printed an answer first.
+A request to an API model may take up to 2 minutes for a small task, 5 minutes for a medium one and 10 minutes for a large one, and never longer than the job limit, which is 900 seconds unless you change it with `omnitrix settings --timeout`. A task's `size` is medium unless Claude sets it, and it also caps the answer of an API model at 4,000, 16,000 or 32,000 tokens. Agent CLIs such as Codex may use the whole job limit, because they work in many steps. When a model times out, returns a server error or returns an empty answer, that model is paused for 5 minutes, and the job continues on other accounts or models. An agent CLI that exits with an error code has failed, even if it printed an answer first.
 
-Skill scores are starting points, not measurements, and `omnitrix models <id>` shows where each set comes from: `untested` when omnitrix knows nothing about the model, `estimated` when the scores are guessed from the model's name or from what the server reports, and `manual` when you set them yourself. For a local model, only the size and a specialty such as "coder" in its name count, because a local name can be anything; Ollama models are scored from the size and capabilities that Ollama reports and from a specialty in the name; a model that Ollama does not list receives the plain local scores. A hosted model is treated as reading images when its name suggests it or when you set a vision score; a local model is treated as reading images only when the server reports it or when you set its scores yourself. A `vision` task sends the pictures among its files (PNG, JPEG, GIF or WebP, up to four files of at most 3.75 MB each, which is about 5 MB after encoding; larger or additional pictures are not sent) with the request, so it goes only to API and local models, never to agent CLIs.
+Skill scores are starting points, not measurements, and `omnitrix models <id>` shows where each set comes from: `untested` when omnitrix knows nothing about the model, `estimated` when the scores are guessed from the model's name or from what the server reports, and `manual` when you set them yourself. For a local model, only the size and a specialty such as "coder" in its name count, because a local name can be anything; Ollama models are scored from the size and capabilities that Ollama reports and from a specialty in the name; a model that Ollama does not list receives the plain local scores. Text files that a task lists are copied into the prompt up to 400,000 characters in total, from at most 50 files. A hosted model is treated as reading images when its name suggests it or when you set a vision score of 5 or more; a local model is treated as reading images only when the server reports it or when you set its scores yourself. A `vision` task sends the pictures among its files (PNG, JPEG, GIF or WebP, up to four files of at most 3.75 MB each, which is about 5 MB after encoding; larger or additional pictures are not sent) with the request, so it goes only to API and local models, never to agent CLIs.
 
-omnitrix also adjusts its ranking over time: when Claude accepts or rejects a result, the model's record for that type of task is updated, and `omnitrix models` shows how many rated jobs each model has had and how many of them were accepted; older verdicts count for less over 30 days, and the figures are rounded. A later verdict on the same job replaces the earlier one instead of counting twice. For Ollama models that report a version digest, the record belongs to that exact version, so after `omnitrix models <id> --refresh` a new model pulled under the same name starts without the old record. Models that the router picks more often collect verdicts sooner, so an acceptance rate based on a few jobs says little.
+omnitrix also adjusts its ranking over time: when Claude accepts or rejects a result, the model's record for that type of task is updated, and `omnitrix models` shows how many rated jobs each model has had and how many of them were accepted; the weight of a verdict halves every 30 days, the figures are rounded, and the past-results factor in the router's reasons ranges from 0.6 to 1.4. A later verdict on the same job replaces the earlier one instead of counting twice. For Ollama models that report a version digest, the record belongs to that exact version, so after `omnitrix models <id> --refresh` a new model pulled under the same name starts without the old record. Models that the router picks more often collect verdicts sooner, so an acceptance rate based on a few jobs says little.
 
 ```bash
 omnitrix models deepseek
@@ -105,7 +105,7 @@ omnitrix route --type review "check this diff for auth bugs"
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-4k-dark.png">
-  <img alt="The omnitrix dashboard with example data: six accounts, with quota meters where limits are known, one resting after a rate limit and one that needs sign-in, and the latest jobs with their results." src="assets/dashboard-4k-light.png" width="100%">
+  <img alt="The omnitrix dashboard with example data: six accounts, with quota meters where limits are known, one resting after a rate limit and one that needs sign-in, and the latest jobs with their results, including omnitrix's own check of a code job." src="assets/dashboard-4k-light.png" width="100%">
 </picture>
 
 <sub>The dashboard, shown with example data. Run `omnitrix dashboard` to open your own.</sub>
@@ -120,13 +120,13 @@ omnitrix 5/6 ready · codex-main 38% · deepseek 788 left · kimi wait · groq-f
 
 Account percentages show the share remaining, and the Claude figures show the share used.
 
-Most subscriptions neither publish exact limits nor provide a way to query the remaining allowance, so omnitrix states the source of each figure. For a ChatGPT plan, it queries Codex directly and shows the percentage remaining in each window that Codex reports, usually 5 hours and 7 days, along with the time each window resets. This query ignores any API key exported in your environment, so the figures always belong to the account's own plan. When a provider sends rate-limit headers, omnitrix reports the remaining requests in the status line and in `pool_status`. In all other cases, it counts the requests and tokens it has sent against the limits you configured. A `429` or `402` response from the provider pauses the account, whatever the count shows.
+Most subscriptions neither publish exact limits nor provide a way to query the remaining allowance, so omnitrix states the source of each figure. For a ChatGPT plan, it queries Codex directly and shows the percentage remaining in each window that Codex reports, usually 5 hours and 7 days, along with the time each window resets. This query ignores any API key exported in your environment, so the figures always belong to the account's own plan. When a provider sends rate-limit headers, omnitrix reports the remaining requests in the status line and in `pool_status`. In all other cases, it counts the requests and tokens it has sent against the limits you configured. A `402` response, or a `429` response that mentions quota or billing, marks the account as out of quota until the provider's reset time, or for one hour when the provider gives no time. Any other `429` pauses the account until the time in `Retry-After`, or for 60 seconds, and a `429` that reports `limit: 0` pauses only that model, for 24 hours. These waits never exceed 24 hours, whatever the count shows.
 
 omnitrix also estimates when a window will run out if use continues at its current pace. For the windows that Codex reports for a ChatGPT plan, the pace is the share used between the opening of the window and the latest reading, and an estimate is possible once the window has been open for at least 15 minutes. For the 5-hour and 24-hour limits that omnitrix counts itself, the pace is the number of requests, or tokens, sent in the last hour, and an estimate is possible once at least three requests were sent in that hour. Weekly, monthly and one-minute limits are not estimated, because a single hour says little about them. An estimate is shown only when it falls before the window resets or, for a rolling window, within the length of the window. The estimate is a straight-line projection that does not account for older use leaving a rolling window, so it is a warning rather than a prediction. In `pool_status` it reads, for example, "runs out in about 1 h 7 min at this pace", and the dashboard shows "At this pace it runs out in about 1 h 7 min", followed by the time.
 
 ## Privacy
 
-Tasks are `private` by default, which keeps them away from accounts flagged as possibly training on prompts. omnitrix flags Mistral, the Gemini API and Gemini CLI by default, and you can flag any other account with `omnitrix set <id> --trains-on-data`. A Gemini CLI account added before version 0.1.18 keeps its old setting until you flag it this way. A task marked `secret` runs only on local providers such as Ollama, at an address on this computer, and never on Ollama's cloud models. omnitrix sends data only to the providers you connect, and it collects no telemetry.
+Tasks are `private` by default, which keeps them away from accounts flagged as possibly training on prompts. omnitrix flags Mistral, the Gemini API and Gemini CLI by default, and you can flag any other account with `omnitrix set <id> --trains-on-data`. A Gemini CLI account added before version 0.1.18 keeps its old setting until you flag it this way. A task marked `secret` runs only on local providers such as Ollama, at an address on this computer, and never on Ollama's cloud models. omnitrix sends prompts only to the providers you connect, and in team mode it also writes usage records, without prompts or results, to the shared `auditDir`. omnitrix itself collects no telemetry, but the agent CLIs it starts follow their own telemetry settings. The training flags are fixed defaults that are not checked against each provider's current terms; OpenRouter, NVIDIA and custom providers are not flagged, so flag them yourself when their terms allow training.
 
 ## Connecting accounts
 
@@ -140,7 +140,7 @@ Tasks are `private` by default, which keeps them away from accounts flagged as p
 | A local model | `omnitrix add ollama` (LM Studio, llama.cpp and vLLM are also supported) |
 | Any other service | `omnitrix add custom-openai --base-url https://host/v1 --key-env MY_KEY --model my-model` |
 
-Run `omnitrix providers` for the full list. Each CLI account has its own profile folder, so two Codex logins never mix. Keys are stored in `~/.omnitrix/secrets.json`, which on macOS and Linux only your user account can read. If you use `--key-env`, omnitrix does not store the key at all.
+Run `omnitrix providers` for the full list. Each CLI account has its own profile folder, so two Codex logins never mix. Keys are stored as plain text in `~/.omnitrix/secrets.json`, not in the operating system's keychain; on macOS and Linux only your user account can read the file, and on Windows omnitrix leaves its permissions as Windows sets them. Set `OMNITRIX_HOME` to keep omnitrix's data in another folder. If you use `--key-env`, omnitrix does not store the key at all, and when you give neither `--key` nor `--key-env`, `omnitrix add` uses the provider's usual environment variable if it is set. Avoid `--key <value>`, because the key then appears in your shell history.
 
 To track a limit, specify it when you add the account or later with `omnitrix set`:
 
@@ -150,7 +150,7 @@ omnitrix set groq-free --rpm 30 --rpd 1000
 omnitrix set deepseek --tpd 4000000      # tokens per day
 ```
 
-The available options are `--rpm` (requests per minute), `--r5h` (requests per 5 hours), `--rpd` (requests per day), `--rpw` (requests per week), `--tpd` (tokens per day) and `--tpm` (tokens per month).
+The available options are `--rpm` (requests per minute), `--r5h` (requests per 5 hours), `--rpd` (requests per day), `--rpw` (requests per week), `--tpd` (tokens per day) and `--tpm` (tokens per month). Minutes, hours, days and weeks are rolling windows, and the month is the calendar month in local time. Only requests that omnitrix sends are counted, and a request counts once it has finished, so parallel jobs can go somewhat past a limit.
 
 ## Team mode
 
@@ -203,47 +203,53 @@ omnitrix runs as an MCP server and gives Claude the following tools:
 | `pool_status` | Lists every account with its state, owner, models and remaining quota |
 | `route_preview` | Shows which account would receive each task, and why, without running anything |
 | `dispatch` | Sends up to 30 tasks at once and runs independent tasks in parallel |
-| `get_results` | Waits for jobs and returns a short preview of each result |
-| `read_output` | Reads a full result in pages when the preview is not sufficient |
+| `get_results` | Waits for up to 50 jobs, 45 seconds by default and at most 110, and returns a short preview of each result, or the full results with `full` |
+| `read_output` | Reads a full result in pages of 12,000 characters by default and at most 40,000 |
 | `rate_result` | Accepts or rejects a result so that the router can learn from it, and can send a rejected task to another model |
-| `cancel_job`, `list_jobs` | Cancels a job or lists recent jobs |
+| `cancel_job`, `list_jobs` | Cancels a job, its pending check or its running test, or lists the 20 most recent jobs (at most 100) |
+
+Each task has a `title` of at most 200 characters, a `type`, a `prompt` and optionally an `acceptance` line, a `privacy` level, `files`, a `repo`, a `size` (`small`, `medium` or `large`), `use` to force an account or model, `effort`, `check` and, for code tasks, `test`. `route_preview` accepts up to 30 tasks.
 
 The `pool_status`, `dispatch` and `get_results` tools declare output schemas, and their structured data contains everything their text shows. `list_jobs` also lists jobs that other omnitrix processes started, and `cancel_job` can cancel them.
 
-A task can set `effort` to `low`, `medium` or `high` to ask a reasoning model to think less or more. omnitrix passes it to Codex and to OpenAI-compatible APIs such as Gemini; without it, each provider uses its own default. From the command line, use `omnitrix run --effort high`.
+A task can set `effort` to `low`, `medium` or `high` to ask a reasoning model to think less or more. omnitrix passes it to Codex and to OpenAI-compatible APIs such as Gemini, but not to Anthropic-format APIs or to other agent CLIs; without it, each provider uses its own default. From the command line, use `omnitrix run --effort high`.
 
 ### Checking and retrying results
 
-A task can set `check` to `true` together with an `acceptance` line. When the result is ready, omnitrix sends a short review task to a different account. That task contains the instructions, the acceptance line and the result, with secrets removed and the result marked as data rather than instructions, and asks for PASS or FAIL with a one-sentence reason. Checks run only on models without tools, never on an agent CLI that can read files or run commands. `get_results` waits for this verdict and shows it next to the result. The check follows the privacy level of the task, so private work is checked only by an account that may receive private work. If no other suitable account is available, the check is reported as unavailable. The check uses the checking account's quota, and it reads the worker's report, not the changed files. It is advice for Claude's own review and does not replace it.
+A task can set `check` to `true` together with an `acceptance` line. When the result is ready, omnitrix sends a short review task to a different account. That task contains the instructions, the acceptance line and the result, with secrets removed and the result marked as data rather than instructions, and asks for PASS or FAIL with a one-sentence reason. Checks run only on models without tools, never on an agent CLI that can read files or run commands. `get_results` waits for this verdict and shows it next to the result. The check follows the privacy level of the task, so private work is checked only by an account that may receive private work. If no other suitable account is available, the check is reported as unavailable. The check uses the checking account's quota, and it reads the worker's report, not the changed files. It reads at most the first 4,000 characters of the instructions and 20,000 characters of the result. It is advice for Claude's own review and does not replace it.
 
-When Claude rejects a result, it can call `rate_result` with `retry` set to `true` and a note that explains what was wrong. omnitrix then sends the same task to a model that has not been rejected for it, with the note added to the instructions. The new worker sees the note but not the rejected answer. A job is retried only once; to try again, rate the new job. A check job cannot be retried.
+When Claude rejects a result, it can call `rate_result` with `retry` set to `true` and a note that explains what was wrong. omnitrix then sends the same task to a model that has not been rejected for it, with the note added to the instructions. The new worker sees the note but not the rejected answer. A job is retried only once; to try again, rate the new job. A check job cannot be retried. A retry does not keep a forced `use`, and a task with `check` is checked again. The note can be up to 500 characters.
 
 By default, previews are limited to 1,500 characters to keep Claude's token usage low; `omnitrix settings --preview-chars` changes the limit. Full outputs remain on disk.
 
 ## Commands
 
 ```
-omnitrix init                   list what can be connected on this computer (--apply connects it)
+omnitrix init                   list what can be connected on this computer (--apply connects it, --no-open skips the dashboard)
 omnitrix providers              list the providers you can connect
-omnitrix add <provider>         connect an account
+omnitrix add <provider>         connect an account (--label, --owner, --id, --key-env, --base-url, --model, --concurrency, limits)
 omnitrix login <id>             sign in a CLI account in its own profile
-omnitrix list                   show accounts, usage and remaining quota
-omnitrix test <id>              send a small request to check an account
-omnitrix set <id>               change limits, owner, key or concurrency
+omnitrix list                   show accounts, usage and remaining quota (also "status"; --json for machine-readable output)
+omnitrix test <id>              send a small request to check an account (--model picks one)
+omnitrix set <id>               change limits, label, owner, key, base URL, priority, concurrency or --trains-on-data
 omnitrix enable|disable <id>    enable or disable an account
 omnitrix remove <id>            remove an account (--purge also deletes its login)
-omnitrix models <id>            show model scores (--refresh queries the provider again)
+omnitrix models <id>            show model scores and rated jobs (--refresh queries the provider again)
 omnitrix model <id> <model>     set scores or prices, or --add or --remove a model
-omnitrix route <prompt>         show which model would receive a task
-omnitrix run <prompt>           run one task and print the answer
-omnitrix settings               set the mode, privacy, and pinned or banned providers
-omnitrix dashboard              open the live dashboard on 127.0.0.1, which runs in the background (--stop stops it)
-omnitrix setup-claude           register with Claude Code
-omnitrix team                   join, review or leave a team file, and show your spending
-omnitrix usage                  requests, tokens and cost by person, account or model for the last 30 days (--team reads the shared folder)
-omnitrix clean                  delete finished jobs and worktrees older than 14 days (--branches also deletes branches no longer needed)
+omnitrix route <prompt>         show which model would receive a task (--type, --privacy)
+omnitrix run <prompt>           run one task and print the answer (--type, --privacy, --use, --repo, --effort)
+omnitrix settings               set the mode, private protection, pins, bans, the job time limit and the preview length
+omnitrix dashboard              open the live dashboard on 127.0.0.1:4590, which runs in the background (--stop, --port, --no-open, --serve)
+omnitrix setup-claude           register with Claude Code (--scope user|project|local, --no-statusline, --dry-run)
+omnitrix team                   join, review or leave a team file, and show your spending (join --as, --yes; leave; status)
+omnitrix usage                  requests, tokens and cost for the last 30 days (--by person|account|model, --days, --team)
+omnitrix clean                  delete finished jobs and worktrees older than 14 days (--days, --dry-run, --branches)
 omnitrix doctor                 check the setup
+omnitrix mcp                    run the MCP server (Claude Code starts this itself)
+omnitrix statusline             print the status line (Claude Code runs this itself)
 ```
+
+Run `omnitrix <command> --help` for every option of a command. `omnitrix run` takes no `check`, `test`, `files` or `size`; those are set by Claude through `dispatch`.
 
 `omnitrix clean --branches` also deletes the git branch of each old job that was rejected, failed or cancelled, and the branch of any other old job once its work is already in the repository's current branch. A branch with work that has not been merged is kept, together with its job record, so that a later `clean --branches` can still remove it once it is merged or rejected. Only branches that omnitrix created for its jobs are deleted. Add `--dry-run` to see what would be deleted first; it changes nothing.
 
@@ -275,7 +281,7 @@ npm run build
 npm test
 ```
 
-The tests use fake providers and a fake agent CLI, so they require neither API keys nor network access.
+The tests use fake providers and fake agent CLIs on this computer, so they require neither API keys nor internet access.
 
 ## License
 

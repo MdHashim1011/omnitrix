@@ -12,7 +12,7 @@ npm test
 
 ## Adding a provider
 
-Most providers require only an entry in `src/providers.ts`: an ID, a name, the driver (`openai`, `anthropic` or `cli`), the base URL and the environment variable that typically holds the key. Please link to the provider's documentation or terms in your pull request. If its free tier may train on prompts, set `trainsOnData: true`.
+Most providers require only an entry in `src/providers.ts`: an ID, a name, the driver (`openai`, `anthropic` or `cli`), the base URL and the environment variable that typically holds the key. Please link to the provider's documentation or terms in your pull request. If its free tier may train on prompts, set `trainsOnData: true`. Optional fields cover a second endpoint in the Anthropic Messages format (`anthropicUrl`), a model server on this computer (`local: true`), models to register when the provider has no model list (`models`) and default limits (`limits`). An agent CLI provider also names its entry in `CLI_TOOLS` with `cli`.
 
 A new agent CLI belongs in `CLI_TOOLS` in `src/drivers/cli.ts`. The entry must define how to run the tool without a terminal, how to point it at a profile folder and how to read its output. Please include a test that uses a fake script, following the example in `test/engine.test.ts`.
 
