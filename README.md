@@ -270,13 +270,13 @@ omnitrix starts each agent CLI with flags taken from that tool's own documentati
 | CLI | How it was checked | Not yet confirmed |
 |---|---|---|
 | Codex | Every flag confirmed with the `--help` of codex-cli 0.167.1 on Windows, and used in real jobs and quota readings | |
-| Claude Code | Flags confirmed in the official documentation; `--permission-prompts` needs Claude Code 2.1.259 or later | the exact names of the token counts in its JSON output |
+| Claude Code | Every flag confirmed with the `--help` of Claude Code 2.1.325; `--permission-prompts` needs 2.1.259 or later | the exact names of the token counts in its JSON output |
 | Gemini CLI | Flags confirmed in the official documentation | Google now offers it mainly with Code Assist licences |
 | Qwen Code | Flags and its list-of-messages answer confirmed in the official documentation | |
 | OpenCode | `opencode run --model` confirmed in the official documentation | reading the task from standard input, and an answer printed as plain text |
-| Antigravity CLI | Experimental, and not added by `omnitrix init` | its permission and input options |
+| Antigravity CLI | Experimental, and not added by `omnitrix init`; `--mode accept-edits` for code tasks and `--model` follow the official documentation | reading the task from standard input |
 
-The tests check every driver's flags and how it reads the documented answer format, and they run the Codex driver against a fake CLI. Only Codex has also been run against the real tool, so treat the others as less tested, and report a CLI that fails with the output of `omnitrix test <id>`.
+The tests check every driver's flags and how it reads the documented answer format, and they run the Codex driver against a fake CLI. Only Codex has also been run in real jobs, so treat the others as less tested, and report a CLI that fails with the output of `omnitrix test <id>`.
 
 ## Current limitations
 

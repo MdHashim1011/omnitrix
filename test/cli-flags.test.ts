@@ -20,6 +20,11 @@ describe('flags passed to each agent CLI, as their documentation describes them'
     expect(a).toEqual(expect.arrayContaining(['--permission-prompts', 'none', '--permission-mode', 'dontAsk']));
   });
 
+  it('Antigravity CLI accepts edits for code tasks with its documented --mode, and the documented --model', () => {
+    expect(args('agy', true)).toEqual(expect.arrayContaining(['--mode', 'accept-edits', '--model', 'some-model']));
+    expect(args('agy', false)).not.toContain('--mode');
+  });
+
   it('OpenCode takes the documented --model flag', () => {
     expect(args('opencode', false)).toEqual(['run', '--model', 'some-model']);
   });

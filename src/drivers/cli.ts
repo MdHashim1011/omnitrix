@@ -175,7 +175,13 @@ export const CLI_TOOLS: Record<string, CliTool> = {
     id: 'agy',
     command: 'agy',
     profileEnv: 'HOME',
-    args: ({ model }) => ['-p', 'Follow the instructions given on standard input.', '--output-format', 'json', ...(model && model !== 'default' ? ['--model', model] : [])],
+    // Antigravity has no --approval-mode; its documented --mode accept-edits lets a code task change files
+    args: ({ model, edit }) => [
+      '-p', 'Follow the instructions given on standard input.',
+      '--output-format', 'json',
+      ...(edit ? ['--mode', 'accept-edits'] : []),
+      ...(model && model !== 'default' ? ['--model', model] : []),
+    ],
     parse: parseGeminiStyle,
     loginArgs: [],
   },
