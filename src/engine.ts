@@ -16,7 +16,8 @@ import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loa
 import { DriverError, type Account, type AccountHealth, type Config, type Job, type JobCheck, type TaskSpec, type UsageRecord } from './types.js';
 import { statsKey } from './models.js';
 import { compactLedger, headroom, LedgerTail, recordUsage, summarize, type UsageSummary } from './usage.js';
-import { createScratch, createWorktree, discardWorktree, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
+import { outsideFiles, runTest } from './verify.js';
+import { changedFiles, createScratch, createWorktree, discardWorktree, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
 
 const MAX_ATTEMPTS = 3;
 // A model the provider no longer serves (or gives this plan no allowance for) is dropped from the account,
@@ -100,6 +101,8 @@ export class Engine {
   private ledger = new LedgerTail();
   private listeners = new Set<() => void>();
   private unsaved = new Set<string>();
+  /** tests that run after a code job, so cancel_job can stop them */
+  private testControllers = new Map<string, AbortController>();
   private compactedAt = Date.now();
 
   constructor() {
@@ -323,6 +326,9 @@ export class Engine {
       // without a repo the agent would edit a temp folder that is deleted afterwards
       if (t.type === 'code' && !t.repo) throw new Error(`task "${t.title}": code tasks need "repo", the absolute path of a git repository`);
       if (t.check && !t.acceptance?.trim()) throw new Error(`task "${t.title}": a check needs "acceptance", the line the result is checked against`);
+      if (t.test !== undefined && (t.type !== 'code' || !Array.isArray(t.test) || !t.test.length || t.test.length > 30 || t.test.some((a) => typeof a !== 'string' || !a || a.length > 500 || a.includes('\0')))) {
+        throw new Error(`task "${t.title}": "test" is a test command for a code task, given as the program and its arguments, such as ["npm", "test"]`);
+      }
     }
     const now = Date.now();
     const created = tasks.map((task) => {
@@ -373,8 +379,9 @@ export class Engine {
     const deadline = Date.now() + Math.max(0, waitSec) * 1000;
     const done = () => ids.every((id) => {
       this.resolveCheck(id);
+      this.resolveVerify(id);
       const j = this.getJob(id);
-      return !j || (ended(j) && j.check?.status !== 'pending');
+      return !j || (ended(j) && j.check?.status !== 'pending' && j.verify?.test?.status !== 'running');
     });
     while (!done() && Date.now() < deadline) {
       await new Promise<void>((resolve) => {
@@ -392,6 +399,11 @@ export class Engine {
 
   cancel(id: string): boolean {
     const job = this.getJob(id);
+    const test = job && this.testControllers.get(job.id);
+    if (test) {
+      test.abort();
+      return true;
+    }
     if (job && ended(job) && job.check?.status === 'pending') {
       if (job.check.jobId && this.cancel(job.check.jobId)) return true;
       this.setCheck(job, { status: 'unavailable', jobId: job.check.jobId, note: 'cancelled' });
@@ -763,6 +775,10 @@ export class Engine {
         const fin = finishWorktree(worktree.path, `${job.task.title}\n\nomnitrix job ${job.id}`, worktree.gitDir);
         job.worktree = { path: worktree.path, branch: worktree.branch, diffStat: fin.diffStat };
         text += `\n\n---\nbranch: ${worktree.branch}\n${fin.diffStat}`;
+        // facts for Claude's review, found by omnitrix itself rather than reported by the worker
+        const changed = fin.changed ? changedFiles(worktree.path, worktree.gitDir) : [];
+        job.verify = { files: changed, outside: outsideFiles(changed, job.task, worktree.root) };
+        if (job.task.test?.length) job.verify.test = { command: job.task.test.join(' '), status: 'running' };
       }
       const outFile = path.join(files.outputs(), `${job.id}.md`);
       fs.writeFileSync(outFile, text);
@@ -834,6 +850,33 @@ export class Engine {
       this.notify();
       this.pump();
     }
+    // The test runs after the account's slot is free, so a slow test never holds up other jobs; the job
+    // counts as finished for get_results only once the test result is in.
+    if (job.status === 'done' && job.verify?.test?.status === 'running' && worktree && job.task.test) {
+      const limit = Math.min(cfg.settings.jobTimeoutSec, 3600) * 1000;
+      const stop = new AbortController();
+      this.testControllers.set(job.id, stop);
+      try {
+        job.verify.test = await runTest(job.task.test, worktree.path, limit, stop.signal);
+      } catch (err) {
+        job.verify.test = { ...job.verify.test, status: 'error', output: `the test could not run: ${err instanceof Error ? err.message : err}` };
+      } finally {
+        this.testControllers.delete(job.id);
+      }
+      this.mergeDisk(job);
+      job.updatedAt = Date.now();
+      this.saveJob(job);
+      this.notify();
+    }
+  }
+
+  /** A test whose process died never reports; it is marked interrupted so nobody waits for it. */
+  private resolveVerify(id: string): void {
+    const j = this.getJob(id);
+    if (j?.verify?.test?.status !== 'running' || isMine(j) || ownerAlive(j.owner, j.pid)) return;
+    j.verify.test = { ...j.verify.test, status: 'interrupted' };
+    j.updatedAt = Date.now();
+    this.saveJob(j);
   }
 
   private applyFailure(account: Account, e: DriverError, model: string): void {

@@ -258,3 +258,12 @@ describe('MCP job ids', () => {
 
 // keep the mock helper import used (other suites rely on it for fake providers)
 void mockProvider;
+
+describe('environment of agent CLIs, after review', () => {
+  it('drops settings whose value carries a password inside an address', () => {
+    const env = childEnv({ PATH: '/bin', ACME_DB_URL: 'postgres://u:pw@h/db', HTTPS_PROXY: 'http://user:secret@proxy:8080', PLAIN_URL: 'https://example.com/x' }, {});
+    expect(env.ACME_DB_URL).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.PLAIN_URL).toBe('https://example.com/x');
+  });
+});

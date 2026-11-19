@@ -256,7 +256,8 @@ const PARENT_SETTING = /^(.*_BASE_URL|CLAUDECODE|CLAUDE_CODE_.*|GOOGLE_GENAI_USE
 export function childEnv(parent: Record<string, string | undefined>, toolEnv: Record<string, string | undefined>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(parent)) {
-    if (v === undefined || SECRET_NAME.test(k) || PARENT_SETTING.test(k)) continue;
+    // a database address or proxy setting can carry a password inside it, such as postgres://user:pw@host
+    if (v === undefined || SECRET_NAME.test(k) || PARENT_SETTING.test(k) || /:\/\/[^/\s:@]*:[^/\s@]+@/.test(v)) continue;
     env[k] = v;
   }
   for (const [k, v] of Object.entries(toolEnv)) if (v !== undefined) env[k] = v;

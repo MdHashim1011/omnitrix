@@ -147,6 +147,8 @@ export interface TaskSpec {
   files?: string[];
   /** git repo to work in (for 'code' tasks); a separate worktree is created */
   repo?: string;
+  /** for code tasks: a test command (program and arguments) that omnitrix runs in the job's worktree afterwards */
+  test?: string[];
   /** what "done" means; added to the prompt and used by the reviewer */
   acceptance?: string;
   /** force a model: "accountId" or "accountId/modelId" */
@@ -170,6 +172,22 @@ export interface JobCheck {
   by?: string;
   /** the checker's one-sentence reason, or why no check could run */
   note?: string;
+}
+
+/** What omnitrix itself found in a finished code job, for Claude's review. */
+export interface JobVerify {
+  /** files the worker changed, relative to the repository */
+  files: string[];
+  /** changed files that the task did not name; unset when the task named no files */
+  outside?: string[];
+  test?: {
+    command: string;
+    status: 'running' | 'passed' | 'failed' | 'error' | 'interrupted';
+    exitCode?: number;
+    /** the end of what the test printed, with keys hidden */
+    output?: string;
+    durationMs?: number;
+  };
 }
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -199,6 +217,8 @@ export interface Job {
   model?: string;
   /** the model with its version, under which Claude's verdict on this job is counted */
   modelKey?: string;
+  /** omnitrix's own check of a code job */
+  verify?: JobVerify;
   outputFile?: string;
   outputChars?: number;
   preview?: string;

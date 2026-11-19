@@ -7,9 +7,10 @@ import { Engine } from './engine.js';
 import { refreshQuotas } from './quota.js';
 import { ensureHome, homeDir, writeJson } from './store.js';
 import type { Job } from './types.js';
+import { verifySummary } from './verify.js';
 import { VERSION } from './version.js';
 
-function recentJobs(engine: Engine, limit = 30): Partial<Job>[] {
+function recentJobs(engine: Engine, limit = 30): Record<string, unknown>[] {
   return engine.listJobs(limit).map((j) => ({
     id: j.id,
     status: j.status,
@@ -21,6 +22,8 @@ function recentJobs(engine: Engine, limit = 30): Partial<Job>[] {
     error: j.error?.slice(0, 200),
     usage: j.usage,
     task: { title: j.task.title, type: j.task.type } as Job['task'],
+    // omnitrix's own check of a code job, as one line; a failed test or files outside the task stand out
+    verify: j.verify ? { summary: verifySummary(j.verify), warn: !!j.verify.outside?.length || (!!j.verify.test && j.verify.test.status !== 'passed' && j.verify.test.status !== 'running') } : undefined,
   }));
 }
 
@@ -280,12 +283,14 @@ summary:active{color:var(--ink)}
 .job .r{font-size:13px;color:var(--ink-3);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .job details{grid-column:2/4;margin-top:4px}
 .job .err{color:var(--bad);font:12.5px/1.5 var(--mono);margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere}
+.job .vf{grid-column:2/4;color:var(--ink-2);font-size:12.5px;line-height:1.5;overflow-wrap:anywhere}
+.job .vf.warn{color:var(--warn)}
 .empty{background:var(--surface);border:1px dashed var(--line-strong);border-radius:var(--r);padding:22px;color:var(--ink-2)}
 .empty h3{margin:0 0 6px;font-size:16px;color:var(--ink)}
 .empty ol{margin:10px 0 0;padding-left:20px;line-height:2}
 footer{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);margin-top:28px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-@media (max-width:720px){.wrap{padding:6px 16px 40px}header{margin:0 -16px 16px;padding:12px 16px}html{scroll-padding-top:112px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi b{font-size:22px}.job{grid-template-columns:auto minmax(0,1fr)}.job .r{grid-column:2;text-align:left}.job details{grid-column:1/3}}
+@media (max-width:720px){.wrap{padding:6px 16px 40px}header{margin:0 -16px 16px;padding:12px 16px}html{scroll-padding-top:112px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi b{font-size:22px}.job{grid-template-columns:auto minmax(0,1fr)}.job .r{grid-column:2;text-align:left}.job details{grid-column:1/3}.job .vf{grid-column:2/3}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media (max-height:500px){header{position:static}html{scroll-padding-top:0}}
 @media (prefers-reduced-transparency:reduce),(prefers-contrast:more){header{background:var(--bg);-webkit-backdrop-filter:none;backdrop-filter:none;border-bottom:1px solid var(--line)}}
@@ -375,7 +380,8 @@ function jobHtml(j,open){
   var err=j.error&&j.status!=='done'?'<details data-key="e-'+esc(j.id)+'"'+(open['e-'+j.id]?' open':'')+'><summary>Why it '+(j.status==='failed'?'failed':'stopped')+'</summary><div class="err">'+esc(j.error)+'</div></details>':'';
   return '<li class="job"><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span>'
     +'<div><div class="t">'+esc(j.task.title)+'</div><div class="m">'+esc(j.task.type)+(j.accountId?' · '+esc(j.accountId)+(j.model?' / '+esc(j.model):''):'')+'</div></div>'
-    +'<div class="r">'+[tokens,ago(j.createdAt)].filter(Boolean).join(' · ')+(verdict?'<div>'+verdict+'</div>':'')+'</div>'+err+'</li>';
+    +'<div class="r">'+[tokens,ago(j.createdAt)].filter(Boolean).join(' · ')+(verdict?'<div>'+verdict+'</div>':'')+'</div>'+err
+    +(j.verify?'<div class="vf'+(j.verify.warn?' warn':'')+'">Checked by omnitrix: '+esc(j.verify.summary)+'</div>':'')+'</li>';
 }
 var last=0, wasStale=null, lastRaw='', drawnMinute=-1, started=Date.now(), connected=false, savedAt=0, down=false;
 function tick(){

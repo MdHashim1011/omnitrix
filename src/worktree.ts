@@ -101,6 +101,14 @@ export function finishWorktree(dir: string, message: string, gitDir?: string): {
   return { diffStat: stat, changed: true };
 }
 
+/** The files changed by the last commit on the worker's branch, read with the recorded git folder. */
+export function changedFiles(dir: string, gitDir?: string): string[] {
+  // without rename detection a moved file shows both its old and its new path, so a move cannot hide a
+  // change to a file the task did not name; -z keeps unusual names exactly as they are
+  const out = spawnSync('git', [...workerGit(dir, gitDir), 'diff', '--name-only', '--no-renames', '-z', 'HEAD~1', 'HEAD'], { cwd: dir, encoding: 'utf8', windowsHide: true });
+  return out.status === 0 ? out.stdout.split('\0').filter(Boolean) : [];
+}
+
 export function removeWorktree(repoRoot: string, dir: string): void {
   spawnSync('git', ['worktree', 'remove', '--force', dir], { cwd: repoRoot, windowsHide: true });
 }

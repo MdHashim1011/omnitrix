@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { account, chatReply, mockProvider, tempHome, writeConfig } from './helpers.js';
+import { files, writeJson } from '../src/store.js';
 
 const cli = path.resolve(__dirname, '..', 'dist', 'cli.js');
 
@@ -23,6 +24,24 @@ describe('MCP server (real stdio process)', () => {
   afterAll(async () => {
     await client?.close();
     await provider?.close();
+  });
+
+  it("gives Claude omnitrix's own check of a code job", async () => {
+    const id = 'jverifymcp1';
+    fs.mkdirSync(files.jobs(), { recursive: true });
+    writeJson(path.join(files.jobs(), `${id}.json`), {
+      id, status: 'done', createdAt: Date.now(), updatedAt: Date.now(), attempts: [], accountId: 'worker', model: 'test-model', preview: 'done',
+      task: { title: 'edit', type: 'code', prompt: 'p', repo: '/r', files: ['a.ts'] },
+      verify: { files: ['a.ts', 'b.ts'], outside: ['b.ts'], test: { command: 'npm test', status: 'failed', exitCode: 1, output: 'boom', durationMs: 2000 } },
+    });
+    const res: any = await client.callTool({ name: 'get_results', arguments: { job_ids: [id], wait_seconds: 0 } });
+    expect(res.isError).toBeFalsy();
+    expect(res.structuredContent.jobs[0].verify).toEqual({
+      summary: 'changed 2 files; 1 not named in the task: b.ts; tests failed (exit code 1, npm test, 2 s)',
+      files: ['a.ts', 'b.ts'],
+      outside: ['b.ts'],
+      test: { command: 'npm test', status: 'failed', exit_code: 1, output: 'boom', seconds: 2 },
+    });
   });
 
   it('lists the tools and gives instructions', async () => {
