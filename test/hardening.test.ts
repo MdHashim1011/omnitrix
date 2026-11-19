@@ -125,3 +125,27 @@ describe('a process that dies while holding the lock', () => {
     expect(Date.now() - t0).toBeLessThan(1000);
   }, 30_000);
 });
+
+describe('output of agent CLIs', () => {
+  it.runIf(process.platform === 'win32')('keeps a character whole when the CLI prints it in two pieces', async () => {
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-utf8-'));
+    const script = path.join(bin, 'fake-codex.js');
+    // the CLI fails and prints "café" to stderr, with the two bytes of "é" in separate writes
+    fs.writeFileSync(script, [
+      'process.stdin.resume();',
+      "process.stdin.on('end', () => {",
+      "  process.stderr.write(Buffer.from([0x63, 0x61, 0x66, 0xc3]));",
+      '  setTimeout(() => { process.stderr.write(Buffer.from([0xa9, 0x0a])); process.exit(1); }, 200);',
+      '});',
+    ].join('\n'));
+    fs.writeFileSync(path.join(bin, 'codex.cmd'), `@ECHO off\r\nnode "${script}" %*\r\n`);
+    const oldPath = process.env.PATH;
+    process.env.PATH = bin + path.delimiter + oldPath;
+    cleanups.push(() => {
+      process.env.PATH = oldPath;
+    });
+    const acc = account({ id: 'cx', provider: 'codex', driver: 'cli', models: [makeModel('default')], profileDir: path.join(home, 'profiles', 'cx') });
+    const err = await runCli({ account: acc, model: 'default', prompt: 'p', timeoutMs: 20_000 }, false).catch((e: Error) => e);
+    expect(String(err)).toContain('café');
+  }, 30_000);
+});

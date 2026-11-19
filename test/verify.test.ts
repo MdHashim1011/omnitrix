@@ -190,6 +190,13 @@ describe('the check omnitrix makes of a code job', () => {
     expect(() => engine.dispatch([{ title: 'nul', type: 'code', prompt: 'p', repo: repo(), test: ['npm', 'a\u0000b'] }])).toThrow(/test/);
   }, 40_000);
 
+  it('keeps a character whole when the test prints it in two pieces', async () => {
+    const { runTest } = await import('../src/verify.js');
+    // "é" is two bytes in UTF-8; the test prints them with a pause in between
+    const r = await runTest(node("process.stdout.write(Buffer.from([0xc3])); setTimeout(() => process.stdout.write(Buffer.from([0xa9, 0x0a])), 200)"), os.tmpdir(), 10_000);
+    expect(r.output).toContain('é');
+  });
+
   it('says when a test was stopped by a signal', () => {
     expect(verifySummary({ files: [], test: { command: 'npm test', status: 'failed', durationMs: 400 } })).toMatch(/stopped by a signal/);
     // the seconds shown and the seconds reported agree

@@ -97,9 +97,12 @@ export function runTest(command: string[], cwd: string, timeoutMs: number, signa
     }
     if (signal?.aborted) onAbort();
     signal?.addEventListener('abort', onAbort, { once: true });
-    const keep = (d: Buffer) => {
-      out = (out + d.toString('utf8')).slice(-MAX_OUTPUT * 4);
+    const keep = (d: string) => {
+      out = (out + d).slice(-MAX_OUTPUT * 4);
     };
+    // decoded as one stream, so a character split across two chunks stays whole
+    child.stdout!.setEncoding('utf8');
+    child.stderr!.setEncoding('utf8');
     child.stdout!.on('data', keep);
     child.stderr!.on('data', keep);
     child.on('error', (err) => finish({ command: shown, status: 'error', output: `cannot start ${command[0]}: ${err.message}` }));

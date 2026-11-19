@@ -372,11 +372,14 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
     };
     req.signal?.addEventListener('abort', onAbort, { once: true });
 
-    child.stdout.on('data', (d: Buffer) => {
-      if (stdout.length < MAX_OUTPUT) stdout += d.toString('utf8');
+    // decoded as one stream, so a character split across two chunks stays whole
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d: string) => {
+      if (stdout.length < MAX_OUTPUT) stdout += d;
     });
-    child.stderr.on('data', (d: Buffer) => {
-      if (stderr.length < 200_000) stderr += d.toString('utf8');
+    child.stderr.on('data', (d: string) => {
+      if (stderr.length < 200_000) stderr += d;
     });
     child.on('error', (err) => finish(() => reject(new DriverError(`cannot start ${tool.command}: ${err.message}`, 'network'))));
     child.on('close', (code) => {
