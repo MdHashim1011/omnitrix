@@ -196,11 +196,14 @@ describe('the check omnitrix makes of a code job', () => {
     expect(verifySummary({ files: [], test: { command: 'npm test', status: 'passed', durationMs: 400 } })).toMatch(/npm test, 1 s/);
   });
 
-  it.runIf(process.platform === 'win32')('refuses a .cmd program whose own path contains a percent sign', async () => {
+  it.runIf(process.platform === 'win32')('runs a .cmd program whose own path contains a percent sign, without expanding it', async () => {
     const { runTest } = await import('../src/verify.js');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix %TEMP% '));
     const bat = path.join(dir, 'x.cmd');
-    fs.writeFileSync(bat, '@echo off\r\nexit /b 0\r\n');
-    expect((await runTest([bat], dir, 10_000)).status).toBe('error');
+    fs.writeFileSync(bat, '@echo off\r\necho ran from %~dp0\r\nexit /b 0\r\n');
+    const r = await runTest([bat], dir, 10_000);
+    expect(r.status).toBe('passed');
+    // the folder name reached cmd.exe as text, so "%TEMP%" stayed as it is
+    expect(r.output).toContain('omnitrix %TEMP% ');
   });
 });

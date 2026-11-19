@@ -1,4 +1,4 @@
-import { files, readJson, writeJson } from './store.js';
+import { files, readJson, withLock, writeJson } from './store.js';
 import type { TaskType } from './types.js';
 
 /**
@@ -29,6 +29,10 @@ export function loadStats(): Stats {
 
 /** Count a verdict. With `changed`, the job's earlier opposite verdict is taken back first. */
 export function recordVerdict(model: string, type: TaskType, accepted: boolean, now = Date.now(), changed = false): void {
+  withLock(files.stats(), () => countVerdict(model, type, accepted, now, changed));
+}
+
+function countVerdict(model: string, type: TaskType, accepted: boolean, now: number, changed: boolean): void {
   const all = loadStats();
   const k = key(model, type);
   const cell = decay(all[k] ?? { ok: 0, bad: 0, at: now }, now);

@@ -239,6 +239,36 @@ export function resolveCommand(command: string): Resolved | undefined {
   return { file: cmd, prefix: [], shell: true };
 }
 
+export interface Launch {
+  file: string;
+  args: string[];
+  /** pass the arguments to Windows exactly as given (they are quoted already) */
+  verbatim: boolean;
+  /** variables the program needs on top of its own environment */
+  env: Record<string, string>;
+  /** set when the program cannot be started safely with these arguments */
+  error?: string;
+}
+
+/**
+ * How to start a resolved program. A .cmd program needs cmd.exe: omnitrix starts cmd.exe itself, from an
+ * absolute path, with a fixed command text in which the program path arrives in a variable and every
+ * argument is quoted, so spaces and & | < > stay text. Inside quotes cmd.exe still reads " and %, so an
+ * argument with either, or with a line break, is refused rather than run; /v:off keeps ! as text.
+ */
+export function launch(resolved: Resolved, args: string[]): Launch {
+  const all = [...resolved.prefix, ...args];
+  // Windows looks for programs in the current folder first, which may be a worker's folder
+  const base: Record<string, string> = process.platform === 'win32' ? { NoDefaultCurrentDirectoryInExePath: '1' } : {};
+  if (!resolved.shell) return { file: resolved.file, args: all, verbatim: false, env: base };
+  if (all.some((a) => /["%\r\n]/.test(a))) {
+    return { file: '', args: [], verbatim: true, env: {}, error: 'an argument contains a quotation mark, a percent sign or a line break, which cmd.exe could read as part of a command' };
+  }
+  const line = ['%OMNITRIX_PROGRAM%', ...all].map((a) => `"${a}"`).join(' ');
+  const comspec = process.env.ComSpec && path.isAbsolute(process.env.ComSpec) ? process.env.ComSpec : path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'cmd.exe');
+  return { file: comspec, args: ['/d', '/v:off', '/s', '/c', `"${line}"`], verbatim: true, env: { ...base, OMNITRIX_PROGRAM: resolved.file } };
+}
+
 export function profileEnv(tool: CliTool, dir: string): Record<string, string> {
   if (tool.profileEnv === 'HOME') return { HOME: dir, USERPROFILE: dir };
   return { [tool.profileEnv]: dir };
@@ -300,20 +330,22 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
   const tempCwd = req.cwd ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-'));
   const cwd = req.cwd ?? tempCwd!;
   const outFile = path.join(os.tmpdir(), `omnitrix-out-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
-  const rawArgs = [...resolved.prefix, ...tool.args({ model: req.model, edit, cwd, outFile, effort: req.effort })];
-  // only used when we had to fall back to cmd.exe; quote anything with spaces
-  const args = resolved.shell ? rawArgs.map((a) => (/\s/.test(a) ? `"${a.replace(/"/g, '')}"` : a)) : rawArgs;
+  const start = launch(resolved, tool.args({ model: req.model, edit, cwd, outFile, effort: req.effort }));
+  if (start.error) {
+    if (tempCwd) fs.rmSync(tempCwd, { recursive: true, force: true });
+    throw new DriverError(`cannot start ${tool.command} safely: ${start.error}`, 'bad_request');
+  }
 
   // never let the parent's keys leak into a worker, which may run whatever a prompt asks
-  const env = childEnv(process.env, { ...(account.profileDir ? profileEnv(tool, account.profileDir) : {}), ...(tool.env?.(account) ?? {}) });
+  const env = childEnv(process.env, { ...(account.profileDir ? profileEnv(tool, account.profileDir) : {}), ...(tool.env?.(account) ?? {}), ...start.env });
 
   const fullPrompt = req.system ? `${req.system}\n\n${req.prompt}` : req.prompt;
 
   return await new Promise<DriverResult>((resolve, reject) => {
-    const child = spawn(resolved.file, args, {
+    const child = spawn(start.file, start.args, {
       cwd,
       env: env as NodeJS.ProcessEnv,
-      shell: resolved.shell,
+      windowsVerbatimArguments: start.verbatim,
       windowsHide: true,
       detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -385,7 +417,9 @@ export function loginCli(account: Account): number {
   if (!tool) throw new Error(`unknown CLI tool for provider ${account.provider}`);
   const resolved = resolveCommand(tool.command);
   if (!resolved) throw new Error(`"${tool.command}" is not installed or not on PATH`);
-  const env = childEnv(process.env, account.profileDir ? profileEnv(tool, account.profileDir) : {});
-  const r = spawnSync(resolved.file, [...resolved.prefix, ...tool.loginArgs], { stdio: 'inherit', env, shell: resolved.shell });
+  const start = launch(resolved, tool.loginArgs);
+  if (start.error) throw new Error(`cannot start ${tool.command} safely: ${start.error}`);
+  const env = childEnv(process.env, { ...(account.profileDir ? profileEnv(tool, account.profileDir) : {}), ...start.env });
+  const r = spawnSync(start.file, start.args, { stdio: 'inherit', env, windowsVerbatimArguments: start.verbatim });
   return r.status ?? 1;
 }

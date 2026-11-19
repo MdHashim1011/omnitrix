@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { childEnv, killTree, resolveCommand, type Resolved } from './drivers/cli.js';
+import { childEnv, killTree, launch, resolveCommand, type Resolved } from './drivers/cli.js';
 import { redact } from './store.js';
 import type { JobVerify, TaskSpec } from './types.js';
 
@@ -39,9 +39,9 @@ function findProgram(name: string): Resolved | undefined {
  * that looks for logins under the home folder finds none. This is not a sandbox; the code can still open
  * any file by its full path.
  */
-function testEnv(home: string, program?: string): Record<string, string> {
+function testEnv(home: string, extra: Record<string, string>): Record<string, string> {
   return childEnv(process.env, {
-    ...(program ? { OMNITRIX_TEST_PROGRAM: program } : {}),
+    ...extra,
     HOME: home,
     USERPROFILE: home,
     APPDATA: path.join(home, 'AppData', 'Roaming'),
@@ -60,18 +60,9 @@ export function runTest(command: string[], cwd: string, timeoutMs: number, signa
   const refuse = (output: string): Promise<TestResult> => Promise.resolve({ command: shown, status: 'error', output, durationMs: 0 });
   const resolved = findProgram(command[0]!);
   if (!resolved) return refuse(`"${command[0]}" is not a program name or path that omnitrix can start`);
-  const rest = [...resolved.prefix, ...command.slice(1)];
-  // A .cmd program (such as npm.cmd) needs cmd.exe. omnitrix starts cmd.exe itself, with the program path
-  // and every argument in quotes, so spaces and & | < > stay text. Inside quotes cmd.exe still reads " and
-  // %, so a program path or argument with either is refused rather than run; /v:off keeps ! as text.
-  if (resolved.shell && [resolved.file, ...rest].some((a) => /["%\r\n]/.test(a))) {
-    return refuse('the program path or an argument contains a quotation mark, a percent sign or a line break, which cmd.exe could read as part of a command');
-  }
-  // The program's path reaches cmd.exe in a variable, so the command text itself is fixed and the path is
-  // never parsed as part of it; cmd.exe itself comes from an absolute path, not from the worker's folder.
-  const line = ['%OMNITRIX_TEST_PROGRAM%', ...rest].map((a) => `"${a}"`).join(' ');
-  const comspec = process.env.ComSpec && path.isAbsolute(process.env.ComSpec) ? process.env.ComSpec : path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'cmd.exe');
-  const [file, args, verbatim] = resolved.shell ? [comspec, ['/d', '/v:off', '/s', '/c', `"${line}"`], true] : [resolved.file, rest, false];
+  // a .cmd program such as npm.cmd goes through cmd.exe, safely (see launch)
+  const start = launch(resolved, command.slice(1));
+  if (start.error) return refuse(start.error);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-test-home-'));
   return new Promise((resolve) => {
     let out = '';
@@ -99,7 +90,7 @@ export function runTest(command: string[], cwd: string, timeoutMs: number, signa
     };
     let child: ReturnType<typeof spawn> | undefined;
     try {
-      child = spawn(file, args, { cwd, env: testEnv(home, resolved.shell ? resolved.file : undefined), windowsVerbatimArguments: verbatim, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(start.file, start.args, { cwd, env: testEnv(home, start.env), windowsVerbatimArguments: start.verbatim, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
       finish({ command: shown, status: 'error', output: `cannot start ${command[0]}: ${err instanceof Error ? err.message : err}` });
       return;

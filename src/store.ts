@@ -82,6 +82,67 @@ export function ensureHome(): void {
 
 const pause = new Int32Array(new SharedArrayBuffer(4));
 
+// A lock that names no readable process and is older than this was left half-written by a crash.
+const STALE_LOCK_MS = 10_000;
+// After this long, the change goes ahead without the lock rather than hang the caller.
+const LOCK_WAIT_MS = 5_000;
+
+/** True when a lock was left by a process that is gone, so it can be taken over at once. */
+function abandoned(lock: string): boolean {
+  let text: string;
+  try {
+    text = fs.readFileSync(lock, 'utf8');
+  } catch {
+    return false; // gone already, or being replaced
+  }
+  const pid = Number(text.split(' ')[0]);
+  if (Number.isInteger(pid) && pid > 0) return !processAlive(pid);
+  try {
+    return Date.now() - fs.statSync(lock).mtimeMs > STALE_LOCK_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Run `fn` while holding a lock file beside `file`. Several omnitrix processes change the same files
+ * (verdicts, account health, quota readings, keys) by reading, changing and writing them; without the
+ * lock, one process's write silently replaces another's.
+ */
+export function withLock<T>(file: string, fn: () => T): T {
+  const lock = `${file}.lock`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  let fd: number | undefined;
+  // the lock names its holder, so a lock left by a crashed process is recognised at once
+  const mine = `${process.pid} ${Math.random().toString(36).slice(2)}`;
+  while (fd === undefined) {
+    try {
+      fd = fs.openSync(lock, 'wx');
+      fs.writeSync(fd, mine);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // Windows answers EPERM while another process is deleting the lock
+      if (code !== 'EEXIST' && code !== 'EPERM') throw err;
+      // Read again right before deleting: a lock just taken by a live process names that process and stays.
+      if (abandoned(lock) && abandoned(lock)) fs.rmSync(lock, { force: true });
+      if (Date.now() > deadline) {
+        process.stderr.write(`omnitrix: ${path.basename(file)} stayed locked for ${LOCK_WAIT_MS / 1000} s; changing it without the lock\n`);
+        break;
+      }
+      Atomics.wait(pause, 0, 0, 5);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (fd !== undefined) {
+      fs.closeSync(fd);
+      fs.rmSync(lock, { force: true });
+    }
+  }
+}
+
 /** Write to a temp file then rename, so no reader ever sees half a file. */
 export function writeJson(file: string, data: unknown, mode?: number): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -149,17 +210,21 @@ type Secrets = Record<string, string>;
 
 export function setSecret(accountId: string, value: string): void {
   ensureHome();
-  const all = readJson<Secrets>(files.secrets(), {});
-  all[accountId] = value;
-  writeJson(files.secrets(), all, 0o600);
+  withLock(files.secrets(), () => {
+    const all = readJson<Secrets>(files.secrets(), {});
+    all[accountId] = value;
+    writeJson(files.secrets(), all, 0o600);
+  });
 }
 
 export function deleteSecret(accountId: string): void {
-  const all = readJson<Secrets>(files.secrets(), {});
-  if (accountId in all) {
-    delete all[accountId];
-    writeJson(files.secrets(), all, 0o600);
-  }
+  withLock(files.secrets(), () => {
+    const all = readJson<Secrets>(files.secrets(), {});
+    if (accountId in all) {
+      delete all[accountId];
+      writeJson(files.secrets(), all, 0o600);
+    }
+  });
 }
 
 /** Resolve the API key of an account. Never log the return value. */
@@ -184,12 +249,14 @@ export function loadHealth(): Record<string, AccountHealth> {
 
 /** Stamps each entry with the time it was written, so readers can tell which process saw the account last. */
 export function saveHealth(update: Record<string, AccountHealth>): void {
-  const now = Date.now();
-  const merged = loadHealth();
-  for (const [id, h] of Object.entries(update)) merged[id] = { ...h, at: h.at ?? now };
-  // model pauses (keys "account/model") that have run out carry no information, so they are dropped
-  for (const [id, h] of Object.entries(merged)) if (id.includes('/') && h.state === 'cooling' && (h.until ?? 0) <= now) delete merged[id];
-  writeJson(files.health(), merged);
+  withLock(files.health(), () => {
+    const now = Date.now();
+    const merged = loadHealth();
+    for (const [id, h] of Object.entries(update)) merged[id] = { ...h, at: h.at ?? now };
+    // model pauses (keys "account/model") that have run out carry no information, so they are dropped
+    for (const [id, h] of Object.entries(merged)) if (id.includes('/') && h.state === 'cooling' && (h.until ?? 0) <= now) delete merged[id];
+    writeJson(files.health(), merged);
+  });
 }
 
 export function slug(text: string): string {

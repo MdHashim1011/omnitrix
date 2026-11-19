@@ -2,8 +2,8 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import { createInterface } from 'node:readline';
-import { childEnv, killTree, resolveCommand } from './drivers/cli.js';
-import { files, readJson, writeJson } from './store.js';
+import { childEnv, killTree, launch, resolveCommand } from './drivers/cli.js';
+import { files, readJson, withLock, writeJson } from './store.js';
 import type { Account } from './types.js';
 import { VERSION } from './version.js';
 
@@ -89,15 +89,17 @@ const lastTried = new Map<string, number>();
  * and say how old it is; the failure time throttles the other omnitrix processes too.
  */
 export function saveQuotaFailure(accountId: string, now = Date.now()): void {
-  const all = loadQuotas();
-  all[accountId] = { ...(all[accountId] ?? { at: 0, windows: [] }), failedAt: now };
-  writeJson(files.quota(), all);
+  withLock(files.quota(), () => {
+    const all = loadQuotas();
+    all[accountId] = { ...(all[accountId] ?? { at: 0, windows: [] }), failedAt: now };
+    writeJson(files.quota(), all);
+  });
 }
 
 async function refreshOne(account: Account, profileDir: string): Promise<void> {
   try {
     const quota = await readCodexQuota(profileDir);
-    if (quota) writeJson(files.quota(), { ...loadQuotas(), [account.id]: quota });
+    if (quota) withLock(files.quota(), () => writeJson(files.quota(), { ...loadQuotas(), [account.id]: quota }));
     else saveQuotaFailure(account.id);
   } catch {
     // Quota is a nice-to-have; a failed read must never fail the caller.
@@ -138,13 +140,14 @@ export async function readCodexQuota(profileDir: string, timeoutMs = 20000): Pro
     if (!resolved) return undefined;
     return await new Promise<AccountQuota | undefined>((resolve) => {
       // An exported API key would make Codex report that key's limits instead of this account's plan.
-      const env = childEnv(process.env, { CODEX_HOME: profileDir });
-      const child = spawn(resolved.file, [...resolved.prefix, 'app-server'], {
+      const start = launch(resolved, ['app-server']);
+      const env = childEnv(process.env, { CODEX_HOME: profileDir, ...start.env });
+      const child = spawn(start.file, start.args, {
         env: env as NodeJS.ProcessEnv,
         // A neutral folder, so a project's own Codex settings can't change what the app server does.
         cwd: os.tmpdir(),
         windowsHide: true,
-        shell: resolved.shell,
+        windowsVerbatimArguments: start.verbatim,
         detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
       });

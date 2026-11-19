@@ -21,6 +21,15 @@ omnitrix requires Node.js 20 or later.
 npm install -g https://github.com/MdHashim1011/omnitrix/releases/latest/download/omnitrix.tgz
 ```
 
+Each release from version 0.1.21 onward also includes `omnitrix.tgz.sha256`, the SHA-256 checksum of the package. To check a download before installing it, download both files from the release page and compare the checksum with the one that your computer calculates:
+
+```bash
+certutil -hashfile omnitrix.tgz SHA256
+shasum -a 256 omnitrix.tgz
+```
+
+The first command is for Windows and the second for macOS and Linux. The value it prints must match the one in `omnitrix.tgz.sha256`. Then install the file you checked with `npm install -g ./omnitrix.tgz`.
+
 ## Quick start
 
 ```bash

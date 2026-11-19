@@ -20,13 +20,17 @@ Agent CLIs start without the environment variables whose names suggest a key, to
 
 Job ids that Claude passes to omnitrix must match the format that omnitrix uses for them, so an id can never name a file outside omnitrix's own folders. `omnitrix clean` deletes only files and worktrees inside those folders.
 
-A code task may name a test command, which omnitrix runs in the job's worktree after the worker finishes. That command runs the worker's code on your computer, so it starts without the environment variables that suggest keys, tokens or passwords or that carry a password inside an address, with an empty home folder of its own, and it stops at the job time limit or when the job is cancelled. The program must be a plain program name found on PATH or an existing full path. The list of changed files includes both names of a moved file. On Windows, a `.cmd` program is started through `cmd.exe` with every part quoted, and an argument containing a quotation mark, a percent sign or a line break is refused. omnitrix does not sandbox the test, so name a test command only for repositories whose tests you would run yourself.
+A code task may name a test command, which omnitrix runs in the job's worktree after the worker finishes. That command runs the worker's code on your computer, so it starts without the environment variables that suggest keys, tokens or passwords or that carry a password inside an address, with an empty home folder of its own, and it stops at the job time limit or when the job is cancelled. The program must be a plain program name found on PATH or an existing full path. The list of changed files includes both names of a moved file. On Windows, a `.cmd` program, whether a test command or an agent CLI, is started through `cmd.exe` with a fixed command text: the program's path arrives in a variable and every argument is quoted, and an argument containing a quotation mark, a percent sign or a line break is refused. omnitrix does not sandbox the test, so name a test command only for repositories whose tests you would run yourself.
 
 Prompts reach agent CLIs through standard input and never appear on the command line. Model names must match a strict pattern before they are passed on.
 
 The dashboard listens only on 127.0.0.1 and rejects requests addressed to any host name other than 127.0.0.1 or localhost. It also rejects requests that a browser marks as coming from another website, and it does not allow other pages to show it in a frame. Its responses also forbid content-type sniffing. Programs running on the same computer, including those of other user accounts, can still read the dashboard, so it shows account names, models, job titles and the start of error messages but never keys, prompts or results. It accepts at most 16 live page connections at a time.
 
 On Windows, omnitrix does not run an agent program, such as `codex`, that is located in the current folder, so a cloned repository cannot substitute its own program.
+
+Several omnitrix processes, such as the MCP server, the dashboard and the command line, change the same files for verdicts, account health, quota readings and keys. Each change is made under a short lock file, so one process never silently replaces another's change. A lock left by a process that stopped is taken over after 10 seconds.
+
+Each release includes `omnitrix.tgz.sha256`, the SHA-256 checksum of the package, so a download can be checked before it is installed; the README shows how.
 
 ## Supported versions
 
