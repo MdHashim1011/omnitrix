@@ -8,6 +8,7 @@ import { refreshQuotas } from './quota.js';
 import { EFFORTS, TASK_TYPES, type Job, type TaskSpec } from './types.js';
 import { formatTokens, roughSpan, type WindowUse } from './usage.js';
 import { VERSION } from './version.js';
+import { runningDashboard } from './dashboard-launch.js';
 import { JOB_ID } from './store.js';
 
 // a job id from Claude becomes a file name, so nothing else is accepted
@@ -61,12 +62,20 @@ const accountOut = z.object({
   modelCount: z.number(),
   windows: z.array(z.object({ name: z.string(), unit: z.enum(['requests', 'tokens', 'percent']), used: z.number(), limit: z.number(), remaining: z.number(), resetsAt: z.number().nullable(), runsOutAt: z.number().nullable() })).describe('the same windows as quota, as numbers; resetsAt is epoch ms; runsOutAt (epoch ms) is set when the current pace uses the window up before it resets'),
   pausedModels: z.array(z.string()).describe('models resting after errors; the router skips them until their break ends'),
+  stale: z.boolean().describe("true when the provider's numbers could not be read again lately and may be out of date"),
 });
 const teamOut = z.object({
   name: z.string(), user: z.string(), spentToday: z.number(), spentMonth: z.number(),
   dayBudget: z.number().optional(), monthBudget: z.number().optional(), error: z.string().optional(), warning: z.string().optional(),
 }).describe('the team this developer joined: their spending on team accounts in US dollars and their budget; team accounts are skipped once a budget is used up');
-const poolOut = z.object({ ready: z.number(), total: z.number(), accounts: z.array(accountOut), team: teamOut.optional() });
+const poolOut = z.object({
+  ready: z.number(),
+  total: z.number(),
+  accounts: z.array(accountOut),
+  team: teamOut.optional(),
+  dashboard: z.string().nullable().describe('address of the live dashboard when it runs; a client with a browser can open it for the user'),
+});
+
 
 function describeTeam(t: z.infer<typeof teamOut>): string {
   if (t.error) return `team: not loaded (${t.error})`;
@@ -166,7 +175,8 @@ export function buildServer(engine: Engine): McpServer {
       await Promise.all([refreshQuotas(engine.config().accounts, 60_000, 5_000), engine.checkLocal()]);
       const pool = engine.pool();
       const team = engine.teamSummary();
-      if (!pool.length) return text('No accounts yet. The user can add some with: omnitrix add <provider> (run "omnitrix providers" for the list).', { ready: 0, total: 0, accounts: [] });
+      const dashboard = await runningDashboard();
+      if (!pool.length) return text('No accounts yet. The user can add some with: omnitrix init --apply, or omnitrix add <provider> (run "omnitrix providers" for the list).', { ready: 0, total: 0, accounts: [], dashboard });
       const ready = pool.filter((a) => a.state === 'ready' || a.state === 'busy').length;
       const lines = [`${ready}/${pool.length} accounts available`, ...(team ? [describeTeam(team)] : []), ...pool.map(describeAccount)];
       const accounts = pool.map((a) => ({
@@ -190,8 +200,10 @@ export function buildServer(engine: Engine): McpServer {
         modelCount: a.models.length,
         windows: a.usage.windows.map((w) => ({ name: w.name, unit: w.unit, used: w.used, limit: w.limit, remaining: w.remaining, resetsAt: w.resetsAt ?? null, runsOutAt: w.runsOutAt ?? null })),
         pausedModels: a.pausedModels,
+        stale: !!a.usage.stale,
       }));
-      return text(lines.join('\n'), { ready, total: pool.length, accounts, ...(team ? { team } : {}) });
+      if (dashboard) lines.push(`live dashboard: ${dashboard}`);
+      return text(lines.join('\n'), { ready, total: pool.length, accounts, ...(team ? { team } : {}), dashboard });
     },
   );
 

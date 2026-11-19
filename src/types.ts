@@ -37,6 +37,12 @@ export interface ModelInfo {
   outputPrice?: number;
   /** true when the user set the scores by hand */
   pinned?: boolean;
+  /** where the scores come from: no information, a guess from the name or the server's report, or set by hand */
+  basis?: 'untested' | 'estimated' | 'manual';
+  /** true when the server itself reported whether the model reads images */
+  visionChecked?: boolean;
+  /** the exact version the server reported (Ollama), so feedback on an old version is not carried over */
+  digest?: string;
 }
 
 export interface Limits {
@@ -191,6 +197,8 @@ export interface Job {
   owner?: string;
   accountId?: string;
   model?: string;
+  /** the model with its version, under which Claude's verdict on this job is counted */
+  modelKey?: string;
   outputFile?: string;
   outputChars?: number;
   preview?: string;
@@ -220,6 +228,8 @@ export interface DriverRequest {
   maxOutputTokens?: number;
   /** how hard a reasoning model should think; unset leaves the provider's default */
   effort?: Effort;
+  /** pictures sent with the prompt, for drivers that can send them */
+  images?: { mime: string; data: string }[];
 }
 
 export interface DriverResult {

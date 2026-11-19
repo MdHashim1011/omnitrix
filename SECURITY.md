@@ -22,7 +22,7 @@ Job ids that Claude passes to omnitrix must match the format that omnitrix uses 
 
 Prompts reach agent CLIs through standard input and never appear on the command line. Model names must match a strict pattern before they are passed on.
 
-The dashboard listens only on 127.0.0.1 and rejects requests addressed to any other host name. It also rejects requests that a browser marks as coming from another website, and it does not allow other pages to show it in a frame. Its responses also forbid content-type sniffing.
+The dashboard listens only on 127.0.0.1 and rejects requests addressed to any host name other than 127.0.0.1 or localhost. It also rejects requests that a browser marks as coming from another website, and it does not allow other pages to show it in a frame. Its responses also forbid content-type sniffing. Programs running on the same computer, including those of other user accounts, can still read the dashboard, so it shows account names, models, job titles and the start of error messages but never keys, prompts or results. It accepts at most 16 live page connections at a time.
 
 On Windows, omnitrix does not run an agent program, such as `codex`, that is located in the current folder, so a cloned repository cannot substitute its own program.
 

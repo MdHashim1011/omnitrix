@@ -29,7 +29,7 @@ omnitrix init --apply
 omnitrix setup-claude
 ```
 
-`omnitrix init` lists the agent CLIs that omnitrix supports and finds on your PATH, the API keys set in the environment variables that `omnitrix providers` names (for example `DEEPSEEK_API_KEY`), and the local model servers that answer at their default addresses. It also shows which of them are already connected. Without `--apply`, it does not create or change anything. With `--apply`, it connects each new one in the same way as `omnitrix add <provider>` with no other options. It shows only the names of environment variables, never their values. For API keys, it stores a reference to the environment variable rather than the key itself, so the variable must also be set where Claude Code starts omnitrix.
+`omnitrix init` lists the agent CLIs that omnitrix supports and finds on your PATH, the API keys set in the environment variables that `omnitrix providers` names (for example `DEEPSEEK_API_KEY`), and the local model servers that answer at their default addresses. It also shows which of them are already connected. Without `--apply`, it does not create or change anything. With `--apply`, it connects each new one in the same way as `omnitrix add <provider>` with no other options. It shows only the names of environment variables, never their values. For API keys, it stores a reference to the environment variable rather than the key itself, so the variable must also be set where Claude Code starts omnitrix. When it finishes, it opens the dashboard in your default browser, even if nothing is connected yet; use `--no-open` to skip this. It does not open a second tab when one is already open, and it does not start the dashboard when `CI` or `OMNITRIX_NO_BROWSER=1` is set.
 
 It lists some tools without adding them: Claude Code, because Claude Code leads the work and would spend the same Claude quota as a worker; Google Antigravity, because Google has suspended accounts used through outside tools; and the Gemini CLI while `GEMINI_API_KEY` is not set, because it cannot run without a key. After `--apply`, CLI accounts that do not use an API key, such as Codex, OpenCode and Qwen Code, need `omnitrix login <id>` once before they can run jobs.
 
@@ -80,7 +80,9 @@ An account's concurrency limit applies to all omnitrix processes on the same com
 
 A request to an API model may take up to 2 minutes for a small task, 5 minutes for a medium one and 10 minutes for a large one, and never longer than the job limit set with `omnitrix settings --timeout`. Agent CLIs such as Codex may use the whole job limit, because they work in many steps. When a model times out, returns a server error or returns an empty answer, that model is paused for 5 minutes, and the job continues on other accounts or models. An agent CLI that exits with an error code has failed, even if it printed an answer first.
 
-Skill scores begin as an estimate based on the model's name. You can set them yourself, and omnitrix also adjusts its ranking over time: when Claude accepts or rejects a result, the model's record for that type of task is updated. A later verdict on the same job replaces the earlier one instead of counting twice.
+Skill scores are starting points, not measurements, and `omnitrix models <id>` shows where each set comes from: `untested` when omnitrix knows nothing about the model, `estimated` when the scores are guessed from the model's name or from what the server reports, and `manual` when you set them yourself. For a local model, only the size and a specialty such as "coder" in its name count, because a local name can be anything; Ollama models are scored from the size and capabilities that Ollama reports and from a specialty in the name; a model that Ollama does not list receives the plain local scores. A hosted model is treated as reading images when its name suggests it or when you set a vision score; a local model is treated as reading images only when the server reports it or when you set its scores yourself. A `vision` task sends the pictures among its files (PNG, JPEG, GIF or WebP, up to four files of at most 3.75 MB each, which is about 5 MB after encoding; larger or additional pictures are not sent) with the request, so it goes only to API and local models, never to agent CLIs.
+
+omnitrix also adjusts its ranking over time: when Claude accepts or rejects a result, the model's record for that type of task is updated, and `omnitrix models` shows how many rated jobs each model has had and how many of them were accepted; older verdicts count for less over 30 days, and the figures are rounded. A later verdict on the same job replaces the earlier one instead of counting twice. For Ollama models that report a version digest, the record belongs to that exact version, so after `omnitrix models <id> --refresh` a new model pulled under the same name starts without the old record. Models that the router picks more often collect verdicts sooner, so an acceptance rate based on a few jobs says little.
 
 ```bash
 omnitrix models deepseek
@@ -97,7 +99,9 @@ omnitrix route --type review "check this diff for auth bugs"
 
 <sub>The dashboard, shown with example data. Run `omnitrix dashboard` to open your own.</sub>
 
-The dashboard shows each account's name, owner, usage in the last 24 hours and the quota remaining in each tracked window. In Claude Code, the status line gives a compact summary of up to four accounts. The Claude figures at the end appear when Claude Code provides them, which it does on Pro and Max plans:
+`omnitrix dashboard` starts the dashboard in the background, or finds the one already running, and opens it in your default browser unless a dashboard tab is already open. The page updates by itself when accounts or models are added or removed, when jobs change state and when usage or quota changes. If the connection drops or the dashboard restarts, the page reconnects on its own and shows the time of the last update until it is live again. `omnitrix dashboard --stop` stops it. In the Claude desktop app, Claude can open the same address in its own browser pane, because `pool_status` reports the dashboard address while it is running.
+
+The dashboard shows each account's name, owner, usage in the last 24 hours and the quota remaining in each tracked window. When the provider's own numbers cannot be read again, it keeps the last ones, shows when they were read, and marks them as possibly out of date. In Claude Code, the status line gives a compact summary of up to four accounts. The Claude figures at the end appear when Claude Code provides them, which it does on Pro and Max plans:
 
 ```
 omnitrix 5/6 ready · codex-main 38% · deepseek 788 left · kimi wait · groq-free 36% +2 │ Claude 5h 34% 7d 12%
@@ -222,7 +226,7 @@ omnitrix model <id> <model>     set scores or prices, or --add or --remove a mod
 omnitrix route <prompt>         show which model would receive a task
 omnitrix run <prompt>           run one task and print the answer
 omnitrix settings               set the mode, privacy, and pinned or banned providers
-omnitrix dashboard              open a live web dashboard on 127.0.0.1
+omnitrix dashboard              open the live dashboard on 127.0.0.1, which runs in the background (--stop stops it)
 omnitrix setup-claude           register with Claude Code
 omnitrix team                   join, review or leave a team file, and show your spending
 omnitrix usage                  requests, tokens and cost by person, account or model for the last 30 days (--team reads the shared folder)

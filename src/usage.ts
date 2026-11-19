@@ -206,6 +206,10 @@ export interface UsageSummary {
   measured?: AccountHealth['measured'];
   /** subscription plan, when the provider reports one */
   plan?: string;
+  /** when the provider's own numbers were last read successfully */
+  updatedAt?: number;
+  /** true when those numbers could not be read again lately, so they may be out of date */
+  stale?: boolean;
 }
 
 /** Start of the current calendar month in local time. */
@@ -313,6 +317,8 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
     source,
     measured: fresh ? m : undefined,
     plan: quota?.plan,
+    updatedAt: quota?.at || undefined,
+    stale: quota ? (quota.failedAt ?? 0) > quota.at || (quota.at > 0 && now - quota.at > 10 * MIN) : undefined,
   };
 }
 

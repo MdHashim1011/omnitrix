@@ -121,7 +121,7 @@ describe('dashboard', () => {
       return s;
     }) as typeof http.createServer);
     const port = await freePort();
-    const url = startDashboard(port);
+    const url = startDashboard(port).url;
     cleanups.push(() => new Promise<void>((r) => {
       created.forEach((s) => s.closeAllConnections?.());
       created.forEach((s) => s.close());

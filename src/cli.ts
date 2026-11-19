@@ -7,17 +7,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startDashboard } from './dashboard.js';
+import { serveDashboard } from './dashboard.js';
+import { DEFAULT_PORT, ensureDashboard, stopDashboard } from './dashboard-launch.js';
 import { discoverModels, runDriver } from './drivers/index.js';
 import { CLI_TOOLS, loginCli, providerTool, resolveCommand } from './drivers/cli.js';
 import { Engine } from './engine.js';
 import { describeAccount } from './mcp.js';
-import { isChatModel, makeModel } from './models.js';
+import { localModels } from './drivers/ollama.js';
+import { basisOf, isChatModel, makeModel, statsKey } from './models.js';
+import { loadStats } from './stats.js';
 import { PROVIDERS, getProvider } from './providers.js';
 import { renderStatusLine } from './statusline.js';
 import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
 import { branchExists, branchMerged, deleteBranch, pruneWorktree } from './worktree.js';
-import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, type Limits, type TaskType, type UsageRecord } from './types.js';
+import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, type Limits, type ModelInfo, type TaskType, type UsageRecord } from './types.js';
 import { refreshQuotas } from './quota.js';
 import { formatTokens, readLedger, recordUsage } from './usage.js';
 import { detect } from './init.js';
@@ -174,7 +177,7 @@ async function addAccount(providerId: string, o: Record<string, any>): Promise<v
   } else {
     try {
       const found = (await discoverModels(account)).filter(isChatModel);
-      account.models = found.slice(0, 200).map((m) => makeModel(m));
+      account.models = await modelsFor(account, found.slice(0, 200));
       console.log(`found ${found.length} models`);
     } catch (err) {
       console.log(`could not list models (${err instanceof Error ? redact(err.message) : err})`);
@@ -297,6 +300,12 @@ program
     console.log(`removed ${id}${acc.profileDir && !o.purge ? ` (profile kept at ${acc.profileDir})` : ''}`);
   });
 
+/** Model entries for an account: local servers describe their own models, others are scored from the name. */
+async function modelsFor(account: Account, ids: string[]): Promise<ModelInfo[]> {
+  if (account.provider === 'ollama' && account.baseUrl) return localModels(account.baseUrl, ids);
+  return ids.map((m) => makeModel(m, {}, { local: account.local }));
+}
+
 program
   .command('models <id>')
   .description('show an account\'s models and their skill scores')
@@ -308,15 +317,32 @@ program
       const found = (await discoverModels(acc)).filter(isChatModel);
       if (!found.length) die('the provider returned no models');
       const old = new Map(acc.models.map((m) => [m.id, m]));
-      acc.models = found.map((m) => old.get(m) ?? makeModel(m));
+      // scores set by hand stay; guesses are made again, with what the server now reports
+      acc.models = (await modelsFor(acc, found)).map((m) => {
+        const before = old.get(m.id);
+        if (before?.pinned) return { ...before, digest: m.digest ?? before.digest };
+        return { ...m, inputPrice: before?.inputPrice, outputPrice: before?.outputPrice };
+      });
       saveConfig(cfg);
       console.log(`now ${acc.models.length} models`);
     }
-    console.log('model'.padEnd(44) + 'code reas writ long vis  speed');
+    const stats = loadStats();
+    console.log('model'.padEnd(44) + 'code reas writ long vis  speed  scores     Claude accepted');
     for (const m of acc.models) {
       const s = m.skills;
-      console.log(`${(m.id + (m.pinned ? ' *' : '')).padEnd(44)}${[s.coding, s.reasoning, s.writing, s.longContext, s.vision, s.speed].map((n) => String(n).padEnd(5)).join('')}`);
+      // verdicts fade over 30 days, so the counts are rounded
+      let ok = 0;
+      let all = 0;
+      for (const [k, c] of Object.entries(stats)) {
+        if (!k.startsWith(`${statsKey(m)}|`)) continue;
+        ok += c.ok;
+        all += c.ok + c.bad;
+      }
+      const rated = Math.round(all) ? `${Math.round(ok)} of ${Math.round(all)} rated jobs` : 'no rated jobs';
+      console.log(`${m.id.padEnd(44)}${[s.coding, s.reasoning, s.writing, s.longContext, s.vision, s.speed].map((n) => String(n).padEnd(5)).join('')}  ${basisOf(m).padEnd(11)}${rated}`);
     }
+    console.log('\nScores: "untested" means no information, "estimated" a guess from the name or from what the server reports, "manual" set with "omnitrix model".');
+    console.log('They are starting points; the router also follows how often Claude accepted each model\'s work.');
   });
 
 program
@@ -343,7 +369,8 @@ program
     let m = acc.models.find((x) => x.id === modelId);
     if (!m) {
       if (!o.add) die(`${id} has no model "${modelId}" (use --add)`);
-      m = makeModel(modelId);
+      // a model added by hand to a local account follows the local rules: its name proves nothing
+      m = makeModel(modelId, {}, { local: acc.local });
       acc.models.push(m);
     }
     const clamp = (n: number) => Math.max(0, Math.min(10, n));
@@ -355,7 +382,12 @@ program
         touched = true;
       }
     }
-    if (touched) m.pinned = true;
+    if (touched) {
+      m.pinned = true;
+      m.basis = 'manual';
+    }
+    // a person who sets a vision score vouches for it, on any server
+    if (o.vision !== undefined) m.visionChecked = true;
     if (o.inputPrice !== undefined) m.inputPrice = o.inputPrice;
     if (o.outputPrice !== undefined) m.outputPrice = o.outputPrice;
     saveConfig(cfg);
@@ -497,17 +529,26 @@ program
 
 program
   .command('dashboard')
-  .description('open a live web dashboard of all accounts')
-  .option('--port <n>', 'port', int, 4590)
-  .option('--no-open', 'do not open the browser')
-  .action((o) => {
-    const url = startDashboard(o.port);
-    console.log(`dashboard: ${url}  (Ctrl+C to stop)`);
-    if (o.open) {
-      const opener = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
-      spawnSync(opener[0] as string, opener[1] as string[], { stdio: 'ignore' });
-    }
+  .description('open the live dashboard; it keeps running in the background')
+  .option('--port <n>', 'port', int, DEFAULT_PORT)
+  .option('--no-open', 'do not open a browser tab')
+  .option('--stop', 'stop the background dashboard')
+  .option('--serve', 'run the dashboard in this terminal until Ctrl+C')
+  .action(async (o) => {
+    if (o.stop) return console.log((await stopDashboard(o.port)) ? 'dashboard stopped' : 'no dashboard was running');
+    if (o.serve) return serveDashboard(o.port);
+    await showDashboard(o.port, o.open);
   });
+
+/** Start or find the background dashboard and open it, unless a tab is already open. */
+async function showDashboard(port: number, open: boolean, onlyToLook = false): Promise<void> {
+  // test runs and CI machines have no one to look at a browser
+  const quiet = !open || process.env.OMNITRIX_NO_BROWSER === '1' || !!process.env.CI;
+  // after setup the dashboard is for looking at; with nobody to look, it is not started
+  if (quiet && onlyToLook) return console.log('See everything live with "omnitrix dashboard".');
+  const d = await ensureDashboard({ port, open: quiet ? false : undefined });
+  console.log(`dashboard: ${d.url}${d.started ? ' (started in the background; stop it with "omnitrix dashboard --stop")' : ''}${d.opened ? '' : quiet ? '' : ' (already open in a browser tab)'}`);
+}
 
 program
   .command('mcp')
@@ -521,11 +562,14 @@ program
   .command('init')
   .description('find AI tools, API keys and local models on this computer and connect them')
   .option('--apply', 'connect what was found; without it, nothing is changed')
+  .option('--no-open', 'do not open the dashboard afterwards')
   .action(async (o) => {
     // looking changes nothing; addAccount creates the data folder when something is connected
     const found = await detect(loadConfig());
     if (!found.length) {
       console.log('Nothing to connect was found. Run "omnitrix providers" to see what omnitrix supports.');
+      // the dashboard shows the same first steps, and updates by itself once something is connected
+      await showDashboard(DEFAULT_PORT, o.open, true).catch((err) => console.log(`could not open the dashboard: ${err instanceof Error ? err.message : err}`));
       return;
     }
     console.log('Found on this computer:');
@@ -545,6 +589,7 @@ program
       }
     }
     console.log('\nTo use omnitrix from Claude Code, run "omnitrix setup-claude" once, then restart Claude Code.');
+    await showDashboard(DEFAULT_PORT, o.open, true).catch((err) => console.log(`could not open the dashboard: ${err instanceof Error ? err.message : err}`));
   });
 
 function money(v: number): string {

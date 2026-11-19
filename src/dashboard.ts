@@ -1,7 +1,11 @@
-// A small local web page with the same numbers as `omnitrix list`, refreshed every few seconds.
+// A small local web page with the same numbers as `omnitrix list`. One live stream sends every change to
+// every open page, so nobody has to reload it.
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import { Engine } from './engine.js';
 import { refreshQuotas } from './quota.js';
+import { ensureHome, homeDir, writeJson } from './store.js';
 import type { Job } from './types.js';
 import { VERSION } from './version.js';
 
@@ -20,8 +24,72 @@ function recentJobs(engine: Engine, limit = 30): Partial<Job>[] {
   }));
 }
 
-export function startDashboard(port: number): string {
+/** Where the dashboard on a port writes its process id, so it can be found, checked and stopped. */
+export function dashboardFile(port: number): string {
+  return path.join(homeDir(), `dashboard-${port}.json`);
+}
+
+// How often the stream looks for changes, how often slow provider checks may start, and how often an
+// unchanged page hears that the server is still there.
+const LOOK_MS = 1000;
+const SLOW_MS = 5000;
+const ALIVE_MS = 5000;
+// After a tab is opened, it takes a moment to connect; a second setup in that time must not open another.
+const OPEN_GRACE_MS = 20_000;
+// More pages than anyone keeps open; a program opening streams without end is turned away.
+const MAX_VIEWERS = 16;
+// A page that stops reading is dropped before its unsent updates pile up.
+const MAX_BUFFERED = 1024 * 1024;
+
+export function startDashboard(port: number): { url: string; server: http.Server; close: () => Promise<void> } {
   const engine = new Engine();
+  const viewers = new Set<http.ServerResponse>();
+  let latest = '';
+  let slowAt = 0;
+  let openedAt = 0;
+
+  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine) });
+  // Quota reads and local server probes run in the background and are throttled; the page never waits for them.
+  const slowChecks = () => {
+    if (Date.now() - slowAt < SLOW_MS) return;
+    slowAt = Date.now();
+    void refreshQuotas(engine.config().accounts);
+    engine.checkLocal().catch(() => {});
+  };
+  const send = (res: http.ServerResponse, text: string) => {
+    try {
+      res.write(text);
+      if (res.writableLength > MAX_BUFFERED) throw new Error('not reading');
+    } catch {
+      viewers.delete(res);
+      res.destroy();
+    }
+  };
+  // One reading for all open pages; nothing is read while no page is open.
+  const look = () => {
+    if (!viewers.size) return;
+    slowChecks();
+    let body: string;
+    try {
+      body = snapshot();
+    } catch {
+      return; // a file half-written by another process; the next look reads it whole
+    }
+    if (body === latest) return;
+    latest = body;
+    for (const res of viewers) send(res, `data: ${body}\n\n`);
+  };
+  const lookTimer = setInterval(look, LOOK_MS);
+  const aliveTimer = setInterval(() => {
+    for (const res of viewers) send(res, `event: alive\ndata: ${Date.now()}\n\n`);
+  }, ALIVE_MS);
+  lookTimer.unref();
+  aliveTimer.unref();
+
+  const json = (res: http.ServerResponse, value: unknown) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(JSON.stringify(value));
+  };
+
   const server = http.createServer((req, res) => {
     // only answer requests made to this machine by name (blocks DNS-rebinding tricks)
     const host = (req.headers.host ?? '').split(':')[0];
@@ -36,11 +104,41 @@ export function startDashboard(port: number): string {
       res.writeHead(403).end('forbidden');
       return;
     }
+    if (req.url === '/api/events') {
+      if (viewers.size >= MAX_VIEWERS) {
+        res.writeHead(503, { 'retry-after': '10' }).end('too many open pages');
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', connection: 'keep-alive' });
+      // a page that loses the stream asks again after two seconds
+      res.write('retry: 2000\n\n');
+      if (!viewers.size || !latest) {
+        try {
+          latest = snapshot();
+        } catch {
+          latest = latest || '';
+        }
+      }
+      if (latest) res.write(`data: ${latest}\n\n`);
+      viewers.add(res);
+      slowChecks();
+      res.on('close', () => viewers.delete(res));
+      return;
+    }
     if (req.url === '/api/status') {
-      void refreshQuotas(engine.config().accounts);
-      engine.checkLocal().catch(() => {});
-      const body = JSON.stringify({ version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine) });
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(body);
+      slowChecks();
+      json(res, { version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine) });
+      return;
+    }
+    if (req.url === '/api/ping') {
+      json(res, { omnitrix: true, version: VERSION, pid: process.pid, viewers: viewers.size });
+      return;
+    }
+    // asked by `omnitrix dashboard` and `omnitrix init` before they open a tab: one tab is enough
+    if (req.url === '/api/claim-open') {
+      const open = viewers.size === 0 && Date.now() - openedAt > OPEN_GRACE_MS;
+      if (open) openedAt = Date.now();
+      json(res, { open });
       return;
     }
     if (req.url === '/' || req.url === '/index.html') {
@@ -49,8 +147,47 @@ export function startDashboard(port: number): string {
     }
     res.writeHead(404).end('not found');
   });
+  // a client that never finishes sending its request is cut off; the live stream itself has no time limit
+  server.headersTimeout = 5000;
+  server.requestTimeout = 10_000;
   server.listen(port, '127.0.0.1');
-  return `http://127.0.0.1:${port}`;
+  const close = () => new Promise<void>((resolve) => {
+    clearInterval(lookTimer);
+    clearInterval(aliveTimer);
+    for (const res of viewers) res.end();
+    viewers.clear();
+    server.closeAllConnections?.();
+    server.close(() => resolve());
+  });
+  return { url: `http://127.0.0.1:${port}`, server, close };
+}
+
+/** Run the dashboard until the process is stopped, recording where it runs. */
+export function serveDashboard(port: number): void {
+  const d = startDashboard(port);
+  d.server.on('error', (err: NodeJS.ErrnoException) => {
+    process.stderr.write(err.code === 'EADDRINUSE' ? `port ${port} is already in use\n` : `dashboard: ${err.message}\n`);
+    process.exit(1);
+  });
+  d.server.on('listening', () => {
+    try {
+      ensureHome();
+      writeJson(dashboardFile(port), { pid: process.pid, port, version: VERSION, startedAt: Date.now() });
+    } catch {
+      // the dashboard works without it; `omnitrix dashboard --stop` then cannot find it
+    }
+    console.log(`dashboard: ${d.url}`);
+  });
+  const done = () => {
+    try {
+      const saved = JSON.parse(fs.readFileSync(dashboardFile(port), 'utf8'));
+      if (saved.pid === process.pid) fs.rmSync(dashboardFile(port), { force: true });
+    } catch {
+      // nothing recorded
+    }
+  };
+  process.on('exit', done);
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => process.exit(0));
 }
 
 // The page is one self-contained file: no fonts, scripts or images from other hosts, so it works offline
@@ -225,8 +362,9 @@ function cardHtml(a,open){
   return '<article class="card" aria-label="'+esc(a.label)+'">'
     +'<div class="head"><div class="title">'+icon(ico)+'<div><h3>'+esc(a.label)+'</h3><div class="sub">'+sub+'</div></div></div><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span></div>'
     +(quota?'<div>'+quota+'</div>':'')+notes
-    +'<div class="stats"><span>Last 24 h</span><span><b>'+u.requestsToday+'</b> requests</span><span><b>'+fmt(u.tokensToday)+'</b> tokens</span>'+(u.costToday?'<span><b>'+money(u.costToday)+'</b></span>':'')
-    +(u.windows.length?'<span class="prov">'+esc(SOURCES[u.source]||u.source)+'</span>':'')+'</div>'
+    +'<div class="stats"><span>Last 24 h</span><span><b>'+u.requestsToday+'</b> request'+(u.requestsToday===1?'':'s')+'</span><span><b>'+fmt(u.tokensToday)+'</b> tokens</span>'+(u.costToday?'<span><b>'+money(u.costToday)+'</b></span>':'')
+    +(u.windows.length?'<span class="prov">'+esc(SOURCES[u.source]||u.source)+(u.updatedAt&&!u.stale?', updated '+esc(ago(u.updatedAt)):'')+'</span>':'')+'</div>'
+    +(u.stale&&u.updatedAt?'<div class="note warn">omnitrix could not read these numbers again. They are from '+esc(clock(u.updatedAt))+' and may be out of date.</div>':'')
     +modelHtml+'</article>';
 }
 var JOB={done:['Done','s-ok'],running:['Running','s-busy'],queued:['Waiting','s-idle'],failed:['Failed','s-bad'],cancelled:['Cancelled','s-idle']};
@@ -239,23 +377,19 @@ function jobHtml(j,open){
     +'<div><div class="t">'+esc(j.task.title)+'</div><div class="m">'+esc(j.task.type)+(j.accountId?' · '+esc(j.accountId)+(j.model?' / '+esc(j.model):''):'')+'</div></div>'
     +'<div class="r">'+[tokens,ago(j.createdAt)].filter(Boolean).join(' · ')+(verdict?'<div>'+verdict+'</div>':'')+'</div>'+err+'</li>';
 }
-var last=0, wasStale=null, lastBody='', started=Date.now();
+var last=0, wasStale=null, lastRaw='', drawnMinute=-1, started=Date.now(), connected=false, savedAt=0, down=false;
 function tick(){
   var el=document.getElementById('fresh'), t=document.getElementById('fresh-text');
-  var stale=last?Date.now()-last>15000:Date.now()-started>8000;
+  // a stream that dropped counts as lost at once; a quiet one only after it missed its signs of life
+  var stale=connected?(down||Date.now()-last>15000):Date.now()-started>8000;
   el.className='fresh'+(stale?' stale':'');
-  t.textContent=!last?(stale?'Cannot reach omnitrix. Is the dashboard command still running?':'Connecting'):stale?'Cannot reach omnitrix. Showing data from '+new Date(last).toLocaleTimeString()+'.':'Live, updated '+ago(last);
+  t.textContent=!connected&&!last?(stale?'Cannot reach omnitrix. Trying again. If this stays, run omnitrix dashboard in a terminal.':'Connecting')
+    :!connected?(stale?'Cannot reach omnitrix. Trying again. Showing data from '+new Date(savedAt).toLocaleTimeString()+'.':'Connecting. Showing data from '+new Date(savedAt).toLocaleTimeString()+'.')
+    :stale?'Connection lost. Trying again. Showing data from '+new Date(last).toLocaleTimeString()+'.':'Live, updated '+ago(last);
   // screen readers hear only a change between live and unreachable, not every second of the clock
   if(stale!==wasStale){document.getElementById('announce').textContent=stale?'omnitrix cannot be reached':(last?'omnitrix is live':'');wasStale=stale}
 }
-async function load(){
-  var d, body;
-  try{body=await (await fetch('/api/status',{cache:'no-store'})).text();d=JSON.parse(body)}catch(e){tick();return}
-  last=Date.now();
-  // redraw only when something changed, so focus and the reading position survive the 4-second refresh
-  var key=body.replace(/"now":[0-9]+,/,'')+Math.floor(Date.now()/60000);
-  if(key===lastBody){tick();return}
-  lastBody=key;
+function draw(d){
   var focused=document.activeElement&&document.activeElement.closest?document.activeElement.closest('details[data-key]'):null;
   var focusKey=focused?focused.getAttribute('data-key'):null;
   var open={};document.querySelectorAll('details[data-key]').forEach(function(x){if(x.open)open[x.getAttribute('data-key')]=true});
@@ -268,13 +402,40 @@ async function load(){
     .map(function(k){return '<div class="kpi"><span>'+k[0]+'</span><b>'+esc(k[1])+'</b></div>'}).join('');
   document.getElementById('acc-sub').textContent=acc.length?acc.length+' connected':'';
   document.getElementById('accounts').innerHTML=acc.length?acc.map(function(a){return cardHtml(a,open)}).join('')
-    :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>';
+    :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix init --apply</code> connects the AI tools, API keys and local models it finds on this PC</li><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>';
   document.getElementById('jobs').innerHTML=d.jobs.length?'<ul class="jobs">'+d.jobs.map(function(j){return jobHtml(j,open)}).join('')+'</ul>'
     :'<div class="empty"><h3>No jobs yet</h3>Ask Claude to hand out a task, and it shows up here.</div>';
   if(focusKey){var again=document.querySelector('details[data-key="'+focusKey+'"] summary');if(again)again.focus({preventScroll:true})}
   tick();
 }
-load();setInterval(load,4000);setInterval(tick,1000);
+// Draws a new state, and the same state again once a minute so times such as "5 min ago" stay right.
+function show(raw,live){
+  var minute=Math.floor(Date.now()/60000);
+  if(live){last=Date.now();connected=true}
+  if(raw===lastRaw&&minute===drawnMinute){tick();return}
+  var d;try{d=JSON.parse(raw)}catch(e){return}
+  lastRaw=raw;drawnMinute=minute;
+  if(live){try{localStorage.setItem('omnitrix-state',raw);localStorage.setItem('omnitrix-state-at',String(Date.now()))}catch(e){}}
+  draw(d);
+}
+// The last state this browser saw is drawn at once, then the live stream takes over.
+try{var saved=localStorage.getItem('omnitrix-state');savedAt=Number(localStorage.getItem('omnitrix-state-at'))||0;if(saved)show(saved,false)}catch(e){}
+var stream=null;
+function connect(){
+  if(!window.EventSource){poll();return}
+  stream=new EventSource('/api/events');
+  stream.onopen=function(){down=false;tick()};
+  stream.onmessage=function(e){down=false;show(e.data,true)};
+  stream.addEventListener('alive',function(){down=false;last=Date.now();connected=true;if(lastRaw)show(lastRaw,false);tick()});
+  stream.onerror=function(){down=true;tick()};
+}
+async function poll(){
+  try{show(await (await fetch('/api/status',{cache:'no-store'})).text(),true)}catch(e){tick()}
+  setTimeout(poll,4000);
+}
+// The browser retries a dropped stream by itself; if it gives up, for example while the server restarts, start a new one.
+setInterval(function(){if(stream&&stream.readyState===2)connect()},3000);
+connect();setInterval(tick,1000);
 </script>
 </body>
 </html>`;

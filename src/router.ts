@@ -1,5 +1,6 @@
 // Picks the account and model for a task. Hard rules go first (privacy, health, quota, what the driver
 // can do); whatever is left gets a score, and the highest score gets the task.
+import { basisOf, statsKey } from './models.js';
 import { acceptanceFactor } from './stats.js';
 import { headroom, roughSpan, type UsageSummary } from './usage.js';
 import type { Account, AccountHealth, Config, ModelInfo, Privacy, Skills, TaskSpec, TaskType } from './types.js';
@@ -139,6 +140,8 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
     if (models.length === 0) { reject(forcedModel ? `model ${forcedModel} not on this account` : 'no models configured'); continue; }
 
     const busy = (ctx.running[account.id] ?? 0) >= account.concurrency;
+    // only the API drivers attach pictures; an agent CLI would get the file name and nothing else
+    if (task.type === 'vision' && account.driver !== 'openai' && account.driver !== 'anthropic') { reject('this account cannot send images'); continue; }
 
     for (const model of models) {
       if (task.avoid?.includes(`${account.id}/${model.id}`)) { reject('avoided for this task', model.id); continue; }
@@ -149,11 +152,13 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       }
       // Ollama's "-cloud" models run on Ollama's servers, even through a local Ollama
       if (privacy === 'secret' && /[-:]cloud$/i.test(model.id)) { reject('secret task: this model runs in the cloud', model.id); continue; }
+      if (task.type === 'vision' && account.local && !model.visionChecked && !model.pinned) { reject('the server has not reported that this model reads images', model.id); continue; }
       if (task.type === 'vision' && model.skills.vision < 5) { reject('model cannot read images', model.id); continue; }
       const why: string[] = [];
       const f = fit(model.skills, task.type);
       let score = settings.mode === 'quality' ? f * f : f;
-      why.push(`fit ${f.toFixed(2)}`);
+      const basis = basisOf(model);
+      why.push(`fit ${f.toFixed(2)}${basis === 'untested' ? ' (untested scores)' : basis === 'estimated' ? ' (estimated scores)' : ''}`);
 
       // an account with little quota left still qualifies, it just stops being the first pick
       const q = 0.4 + 0.6 * room;
@@ -175,9 +180,11 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       score *= c;
       if (c < 1) why.push(`cost x${c.toFixed(2)}`);
 
-      const acc = acceptanceFactor(ctx.stats, model.id, task.type, now);
+      // verdicts saved before versions were recorded still count until the version has its own
+      const exact = acceptanceFactor(ctx.stats, statsKey(model), task.type, now);
+      const acc = exact.samples || !model.digest ? exact : acceptanceFactor(ctx.stats, model.id, task.type, now);
       score *= acc.factor;
-      if (acc.samples) why.push(`past results x${acc.factor.toFixed(2)} (${acc.samples})`);
+      if (acc.samples) why.push(`past results x${acc.factor.toFixed(2)} (${acc.samples} rated)`);
 
       if (busy) { score *= 0.5; why.push('busy, will queue'); }
 

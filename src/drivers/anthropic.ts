@@ -15,7 +15,12 @@ export async function runAnthropic(req: DriverRequest): Promise<DriverResult> {
   const body: Record<string, unknown> = {
     model: req.model,
     max_tokens: req.maxOutputTokens ?? 8192,
-    messages: [{ role: 'user', content: req.prompt }],
+    messages: [{
+      role: 'user',
+      content: req.images?.length
+        ? [{ type: 'text', text: req.prompt }, ...req.images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.mime, data: i.data } }))]
+        : req.prompt,
+    }],
   };
   if (req.system) body.system = req.system;
 

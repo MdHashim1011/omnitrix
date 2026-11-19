@@ -16,9 +16,14 @@ function authHeaders(account: Account): Record<string, string> {
 export async function runOpenAI(req: DriverRequest): Promise<DriverResult> {
   const { account } = req;
   if (!account.baseUrl) throw new DriverError(`account ${account.id} has no base URL`, 'bad_request');
-  const messages = [] as { role: string; content: string }[];
+  const messages = [] as { role: string; content: unknown }[];
   if (req.system) messages.push({ role: 'system', content: req.system });
-  messages.push({ role: 'user', content: req.prompt });
+  messages.push({
+    role: 'user',
+    content: req.images?.length
+      ? [{ type: 'text', text: req.prompt }, ...req.images.map((i) => ({ type: 'image_url', image_url: { url: `data:${i.mime};base64,${i.data}` } }))]
+      : req.prompt,
+  });
 
   const body: Record<string, unknown> = { model: req.model, messages, stream: false };
   if (req.maxOutputTokens) body.max_tokens = req.maxOutputTokens;

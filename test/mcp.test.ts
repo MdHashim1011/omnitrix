@@ -101,7 +101,7 @@ describe('MCP server with no accounts', () => {
     try {
       const status: any = await client.callTool({ name: 'pool_status', arguments: {} });
       expect(status.isError).toBeFalsy();
-      expect(status.structuredContent).toEqual({ ready: 0, total: 0, accounts: [] });
+      expect(status.structuredContent).toEqual({ ready: 0, total: 0, accounts: [], dashboard: null });
     } finally {
       await client.close();
     }

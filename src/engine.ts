@@ -14,6 +14,7 @@ import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
 import { DriverError, type Account, type AccountHealth, type Config, type Job, type JobCheck, type TaskSpec, type UsageRecord } from './types.js';
+import { statsKey } from './models.js';
 import { compactLedger, headroom, LedgerTail, recordUsage, summarize, type UsageSummary } from './usage.js';
 import { createScratch, createWorktree, discardWorktree, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
 
@@ -462,7 +463,7 @@ export class Engine {
     job.verdictNote = note;
     try {
       // a repeated verdict counts once, and a changed one moves its count to the other side
-      if (before !== accepted) recordVerdict(job.model, job.task.type, accepted, Date.now(), before !== undefined);
+      if (before !== accepted) recordVerdict(job.modelKey ?? job.model, job.task.type, accepted, Date.now(), before !== undefined);
     } catch (err) {
       // the verdict is still saved on the job; only the router's tally misses this one
       process.stderr.write(`omnitrix: could not save routing stats: ${err instanceof Error ? err.message : err}\n`);
@@ -679,6 +680,8 @@ export class Engine {
     job.status = 'running';
     job.accountId = account.id;
     job.model = cand.model;
+    const chosen = account.models.find((m) => m.id === cand.model);
+    job.modelKey = chosen ? statsKey(chosen) : cand.model;
     job.updatedAt = Date.now();
     this.saveJob(job);
     if (account.team) {
@@ -723,6 +726,7 @@ export class Engine {
           model: cand.model,
           system: edit ? `${WORKER_SYSTEM}\n${EDIT_RULES}` : WORKER_SYSTEM,
           prompt,
+          images: account.driver === 'cli' ? undefined : taskImages(job.task, scratch ? job.task.repo : cwd),
           cwd,
           timeoutMs: requestTimeoutMs(account.driver, job.task.size, cfg.settings.jobTimeoutSec),
           signal: ctrl.signal,
@@ -892,6 +896,34 @@ function ended(job: Job): boolean {
   return job.status === 'done' || job.status === 'failed' || job.status === 'cancelled';
 }
 
+const IMAGE_TYPES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+const MAX_IMAGES = 4;
+// providers limit the encoded picture to about 5 MB, and base64 makes it a third larger
+const MAX_IMAGE_BYTES = 3.75 * 1024 * 1024;
+
+function imageType(file: string): string | undefined {
+  return IMAGE_TYPES[path.extname(file).toLowerCase()];
+}
+
+/** The pictures among a task's files, under the same rules as other attachments, for drivers that send them. */
+export function taskImages(task: TaskSpec, inlineFrom: string | undefined): { mime: string; data: string }[] {
+  const out: { mime: string; data: string }[] = [];
+  // a text-only model would refuse the whole request, so only vision tasks carry pictures
+  if (task.type !== 'vision') return out;
+  for (const f of task.files ?? []) {
+    const full = inlineFrom && !path.isAbsolute(f) ? path.join(inlineFrom, f) : f;
+    const mime = imageType(full);
+    if (!mime || out.length >= MAX_IMAGES || !attachable(full, task.repo)) continue;
+    try {
+      if (fs.statSync(full).size > MAX_IMAGE_BYTES) continue;
+      out.push({ mime, data: fs.readFileSync(full).toString('base64') });
+    } catch {
+      // the prompt already says which files could not be read
+    }
+  }
+  return out;
+}
+
 // Folders whose files must never be sent to a provider, whatever a task asks for.
 function protectedDirs(): string[] {
   const h = os.homedir();
@@ -929,6 +961,10 @@ export function buildPrompt(task: TaskSpec, account: Account, cwd: string | unde
         const full = inlineFrom && !path.isAbsolute(f) ? path.join(inlineFrom, f) : f;
         if (!attachable(full, task.repo)) {
           parts.push(`### ${f}`, '(not allowed: outside the repository or in a protected folder)');
+          continue;
+        }
+        if (imageType(full)) {
+          parts.push(`### ${f}`, task.type === 'vision' ? '(image, sent with the request)' : '(image, not sent: only vision tasks send pictures)');
           continue;
         }
         let body: string;

@@ -10,6 +10,8 @@ import type { Account, Config } from '../src/types.js';
 export function tempHome(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-test-'));
   process.env.OMNITRIX_HOME = dir;
+  // commands run by tests never open a browser or leave a dashboard running
+  process.env.OMNITRIX_NO_BROWSER = '1';
   return dir;
 }
 

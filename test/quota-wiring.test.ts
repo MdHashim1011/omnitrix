@@ -209,12 +209,15 @@ lines.on('line', line => {
     expect(fs.readFileSync(fake.counter, 'utf8')).toBe('start\n');
   });
 
-  it('replaces old numbers with an empty reading when a read fails, and throttles the next attempt', async () => {
+  it('keeps the last good numbers, marked as failed, when a read fails, and throttles the next attempt', async () => {
     const fake = installFakeCodex('exit');
     const acc = account({ id: 'refresh-failed', provider: 'codex', profileDir: process.env.OMNITRIX_HOME });
     writeJson(files.quota(), { [acc.id]: { at: 0, windows: [{ name: '5 hours', usedPercent: 100, resetsAt: Date.now() + 3600_000 }] } });
     await expect(refreshQuotas([acc], 60_000)).resolves.toBeUndefined();
-    expect(loadQuotas()[acc.id]?.windows).toEqual([]);
+    // the old reading stays, with its own time; the failure is recorded beside it
+    expect(loadQuotas()[acc.id]?.windows).toHaveLength(1);
+    expect(loadQuotas()[acc.id]?.at).toBe(0);
+    expect(loadQuotas()[acc.id]?.failedAt).toBeGreaterThan(0);
     await expect(refreshQuotas([acc], 60_000)).resolves.toBeUndefined();
     expect(fs.readFileSync(fake.counter, 'utf8')).toBe('start\n');
   });

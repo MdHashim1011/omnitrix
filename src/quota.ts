@@ -16,9 +16,12 @@ export interface QuotaWindow {
 }
 
 export interface AccountQuota {
+  /** when this reading was taken; 0 when there has never been one */
   at: number;
   plan?: string;
   windows: QuotaWindow[];
+  /** when the latest attempt to read it failed, if that came after the reading */
+  failedAt?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -71,6 +74,7 @@ export function loadQuotas(): Record<string, AccountQuota> {
   for (const [id, q] of Object.entries(raw)) {
     if (!isRecord(q) || typeof q.at !== 'number' || !Array.isArray(q.windows) || !q.windows.every(validWindow)) continue;
     if (q.plan !== undefined && typeof q.plan !== 'string') continue;
+    if (q.failedAt !== undefined && typeof q.failedAt !== 'number') continue;
     out[id] = q as unknown as AccountQuota;
   }
   return out;
@@ -80,12 +84,21 @@ const reading = new Map<string, Promise<void>>();
 // Failed reads count too, or a logged-out account would start Codex on every dashboard poll.
 const lastTried = new Map<string, number>();
 
+/**
+ * Note a failed read. The last good reading stays, with its own time, so the dashboard can still show it
+ * and say how old it is; the failure time throttles the other omnitrix processes too.
+ */
+export function saveQuotaFailure(accountId: string, now = Date.now()): void {
+  const all = loadQuotas();
+  all[accountId] = { ...(all[accountId] ?? { at: 0, windows: [] }), failedAt: now };
+  writeJson(files.quota(), all);
+}
+
 async function refreshOne(account: Account, profileDir: string): Promise<void> {
   try {
-    // A failed read is saved as an empty reading. That replaces numbers we can no longer vouch for,
-    // and its timestamp throttles the other omnitrix processes too.
-    const quota = (await readCodexQuota(profileDir)) ?? { at: Date.now(), windows: [] };
-    writeJson(files.quota(), { ...loadQuotas(), [account.id]: quota });
+    const quota = await readCodexQuota(profileDir);
+    if (quota) writeJson(files.quota(), { ...loadQuotas(), [account.id]: quota });
+    else saveQuotaFailure(account.id);
   } catch {
     // Quota is a nice-to-have; a failed read must never fail the caller.
   } finally {
@@ -105,7 +118,7 @@ export async function refreshQuotas(accounts: Account[], maxAgeMs = 60_000, wait
     if (!account.enabled || account.provider !== 'codex' || !account.profileDir) continue;
     let read = reading.get(account.id);
     if (!read) {
-      if (now - Math.max(saved[account.id]?.at ?? 0, lastTried.get(account.id) ?? 0) < maxAgeMs) continue;
+      if (now - Math.max(saved[account.id]?.at ?? 0, saved[account.id]?.failedAt ?? 0, lastTried.get(account.id) ?? 0) < maxAgeMs) continue;
       lastTried.set(account.id, now);
       read = refreshOne(account, account.profileDir);
       reading.set(account.id, read);
