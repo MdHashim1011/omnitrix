@@ -18,7 +18,7 @@ import { basisOf, isChatModel, makeModel, statsKey } from './models.js';
 import { loadStats } from './stats.js';
 import { PROVIDERS, getProvider } from './providers.js';
 import { renderStatusLine } from './statusline.js';
-import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
+import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, updateConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
 import { branchExists, branchMerged, deleteBranch, pruneWorktree } from './worktree.js';
 import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, type Limits, type ModelInfo, type TaskType, type UsageRecord } from './types.js';
 import { refreshQuotas } from './quota.js';
@@ -190,8 +190,11 @@ async function addAccount(providerId: string, o: Record<string, any>): Promise<v
     }
   }
 
-  cfg.accounts.push(account);
-  saveConfig(cfg);
+  updateConfig((latest) => {
+    // another command may have added an account with this id while this one asked the provider
+    if (findAccount(latest, id)) die(`an account "${id}" was added meanwhile; run the command again`);
+    latest.accounts.push(account);
+  });
   console.log(`added ${id} (${spec.name}, ${account.models.length} model${account.models.length === 1 ? '' : 's'}, owner ${account.owner})`);
   if (spec.note) console.log(`note: ${spec.note}`);
   if (account.owner !== 'me' && (spec.id === 'claude-code' || spec.id === 'antigravity')) {
@@ -251,23 +254,23 @@ limitOptions(
     .option('--key-env <NAME>')
     .option('--base-url <url>'),
 ).action((id: string, o: Record<string, any>) => {
-  const cfg = loadConfig();
-  const acc = ownAccount(cfg, id);
-  if (o.label) acc.label = o.label;
-  if (o.owner) acc.owner = o.owner;
-  if (o.concurrency !== undefined) acc.concurrency = Math.max(1, o.concurrency);
-  if (o.priority !== undefined) acc.priority = o.priority;
-  if (o.trainsOnData !== undefined) acc.trainsOnData = o.trainsOnData;
-  if (o.baseUrl) acc.baseUrl = o.baseUrl;
-  if (o.key) {
-    setSecret(id, o.key);
-    acc.apiKey = 'secret';
-  } else if (o.keyEnv) {
-    deleteSecret(id);
-    acc.apiKey = `env:${o.keyEnv}`;
-  }
-  acc.limits = limitsFrom(o, acc.limits);
-  saveConfig(cfg);
+  updateConfig((cfg) => {
+    const acc = ownAccount(cfg, id);
+    if (o.label) acc.label = o.label;
+    if (o.owner) acc.owner = o.owner;
+    if (o.concurrency !== undefined) acc.concurrency = Math.max(1, o.concurrency);
+    if (o.priority !== undefined) acc.priority = o.priority;
+    if (o.trainsOnData !== undefined) acc.trainsOnData = o.trainsOnData;
+    if (o.baseUrl) acc.baseUrl = o.baseUrl;
+    if (o.key) {
+      setSecret(id, o.key);
+      acc.apiKey = 'secret';
+    } else if (o.keyEnv) {
+      deleteSecret(id);
+      acc.apiKey = `env:${o.keyEnv}`;
+    }
+    acc.limits = limitsFrom(o, acc.limits);
+  });
   if (o.key || o.keyEnv) saveHealth({ [id]: { state: 'ready' } });
   console.log(`updated ${id}`);
 });
@@ -277,10 +280,9 @@ for (const [name, value] of [['enable', true], ['disable', false]] as const) {
     .command(`${name} <id>`)
     .description(`${name} an account`)
     .action((id: string) => {
-      const cfg = loadConfig();
-      const acc = ownAccount(cfg, id);
-      acc.enabled = value;
-      saveConfig(cfg);
+      updateConfig((cfg) => {
+        ownAccount(cfg, id).enabled = value;
+      });
       if (value) saveHealth({ [id]: { state: 'ready' } });
       console.log(`${id} ${value ? 'enabled' : 'disabled'}`);
     });
@@ -291,10 +293,11 @@ program
   .description('remove an account (its CLI profile folder is kept unless --purge)')
   .option('--purge', 'also delete the profile folder with the saved login')
   .action((id: string, o) => {
-    const cfg = loadConfig();
-    const acc = ownAccount(cfg, id);
-    cfg.accounts = cfg.accounts.filter((a) => a.id !== id);
-    saveConfig(cfg);
+    const acc = updateConfig((cfg) => {
+      const found = ownAccount(cfg, id);
+      cfg.accounts = cfg.accounts.filter((a) => a.id !== id);
+      return found;
+    });
     deleteSecret(id);
     if (o.purge && acc.profileDir) fs.rmSync(acc.profileDir, { recursive: true, force: true });
     console.log(`removed ${id}${acc.profileDir && !o.purge ? ` (profile kept at ${acc.profileDir})` : ''}`);
@@ -311,19 +314,22 @@ program
   .description('show an account\'s models and their skill scores')
   .option('--refresh', 'ask the provider for its current model list')
   .action(async (id: string, o) => {
-    const cfg = loadConfig();
-    const acc = o.refresh ? ownAccount(cfg, id) : findAccount(cfg, id) ?? die(`no account "${id}"`);
+    let acc = o.refresh ? ownAccount(loadConfig(), id) : findAccount(loadConfig(), id) ?? die(`no account "${id}"`);
     if (o.refresh) {
       const found = (await discoverModels(acc)).filter(isChatModel);
       if (!found.length) die('the provider returned no models');
-      const old = new Map(acc.models.map((m) => [m.id, m]));
-      // scores set by hand stay; guesses are made again, with what the server now reports
-      acc.models = (await modelsFor(acc, found)).map((m) => {
-        const before = old.get(m.id);
-        if (before?.pinned) return { ...before, digest: m.digest ?? before.digest };
-        return { ...m, inputPrice: before?.inputPrice, outputPrice: before?.outputPrice };
+      const fresh = await modelsFor(acc, found);
+      acc = updateConfig((cfg) => {
+        const latest = ownAccount(cfg, id);
+        const old = new Map(latest.models.map((m) => [m.id, m]));
+        // scores set by hand stay; guesses are made again, with what the server now reports
+        latest.models = fresh.map((m) => {
+          const before = old.get(m.id);
+          if (before?.pinned) return { ...before, digest: m.digest ?? before.digest };
+          return { ...m, inputPrice: before?.inputPrice, outputPrice: before?.outputPrice };
+        });
+        return latest;
       });
-      saveConfig(cfg);
       console.log(`now ${acc.models.length} models`);
     }
     const stats = loadStats();
@@ -359,38 +365,41 @@ program
   .option('--add', 'add this model to the account')
   .option('--remove', 'remove this model from the account')
   .action((id: string, modelId: string, o: Record<string, any>) => {
-    const cfg = loadConfig();
-    const acc = ownAccount(cfg, id);
     if (o.remove) {
-      acc.models = acc.models.filter((m) => m.id !== modelId);
-      saveConfig(cfg);
+      updateConfig((cfg) => {
+        const acc = ownAccount(cfg, id);
+        acc.models = acc.models.filter((m) => m.id !== modelId);
+      });
       return console.log(`removed ${modelId} from ${id}`);
     }
-    let m = acc.models.find((x) => x.id === modelId);
-    if (!m) {
-      if (!o.add) die(`${id} has no model "${modelId}" (use --add)`);
-      // a model added by hand to a local account follows the local rules: its name proves nothing
-      m = makeModel(modelId, {}, { local: acc.local });
-      acc.models.push(m);
-    }
-    const clamp = (n: number) => Math.max(0, Math.min(10, n));
-    const map: Record<string, keyof typeof m.skills> = { coding: 'coding', reasoning: 'reasoning', writing: 'writing', longContext: 'longContext', vision: 'vision', speed: 'speed' };
-    let touched = false;
-    for (const [opt, skill] of Object.entries(map)) {
-      if (o[opt] !== undefined) {
-        m.skills[skill] = clamp(o[opt]);
-        touched = true;
+    const m = updateConfig((cfg) => {
+      const acc = ownAccount(cfg, id);
+      let m = acc.models.find((x) => x.id === modelId);
+      if (!m) {
+        if (!o.add) die(`${id} has no model "${modelId}" (use --add)`);
+        // a model added by hand to a local account follows the local rules: its name proves nothing
+        m = makeModel(modelId, {}, { local: acc.local });
+        acc.models.push(m);
       }
-    }
-    if (touched) {
-      m.pinned = true;
-      m.basis = 'manual';
-    }
-    // a person who sets a vision score vouches for it, on any server
-    if (o.vision !== undefined) m.visionChecked = true;
-    if (o.inputPrice !== undefined) m.inputPrice = o.inputPrice;
-    if (o.outputPrice !== undefined) m.outputPrice = o.outputPrice;
-    saveConfig(cfg);
+      const clamp = (n: number) => Math.max(0, Math.min(10, n));
+      const map: Record<string, keyof typeof m.skills> = { coding: 'coding', reasoning: 'reasoning', writing: 'writing', longContext: 'longContext', vision: 'vision', speed: 'speed' };
+      let touched = false;
+      for (const [opt, skill] of Object.entries(map)) {
+        if (o[opt] !== undefined) {
+          m.skills[skill] = clamp(o[opt]);
+          touched = true;
+        }
+      }
+      if (touched) {
+        m.pinned = true;
+        m.basis = 'manual';
+      }
+      // a person who sets a vision score vouches for it, on any server
+      if (o.vision !== undefined) m.visionChecked = true;
+      if (o.inputPrice !== undefined) m.inputPrice = o.inputPrice;
+      if (o.outputPrice !== undefined) m.outputPrice = o.outputPrice;
+      return m;
+    });
     console.log(`${id}/${modelId}: ${JSON.stringify(m.skills)}`);
   });
 
@@ -489,21 +498,22 @@ program
   .option('--timeout <seconds>', 'job timeout', int)
   .option('--preview-chars <n>', 'how much of each result Claude sees', int)
   .action((o) => {
-    const cfg = loadConfig();
-    const s = cfg.settings;
-    if (o.mode) s.mode = o.mode;
-    if (o.protectPrivate) s.protectPrivate = o.protectPrivate === 'on';
-    if (o.ban && !s.bannedProviders.includes(o.ban)) s.bannedProviders.push(o.ban);
-    if (o.unban) s.bannedProviders = s.bannedProviders.filter((p) => p !== o.unban);
-    if (o.pin) {
-      const [type, list] = String(o.pin).split('=');
-      if (!type || !list || !(TASK_TYPES as readonly string[]).includes(type)) die('use --pin type=account[/model],... with a valid task type');
-      s.pins[type as TaskType] = list.split(',').map((x) => x.trim()).filter(Boolean);
-    }
-    if (o.unpin) delete s.pins[o.unpin as TaskType];
-    if (o.timeout) s.jobTimeoutSec = o.timeout;
-    if (o.previewChars) s.resultPreviewChars = o.previewChars;
-    saveConfig(cfg);
+    const s = updateConfig((cfg) => {
+      const s = cfg.settings;
+      if (o.mode) s.mode = o.mode;
+      if (o.protectPrivate) s.protectPrivate = o.protectPrivate === 'on';
+      if (o.ban && !s.bannedProviders.includes(o.ban)) s.bannedProviders.push(o.ban);
+      if (o.unban) s.bannedProviders = s.bannedProviders.filter((p) => p !== o.unban);
+      if (o.pin) {
+        const [type, list] = String(o.pin).split('=');
+        if (!type || !list || !(TASK_TYPES as readonly string[]).includes(type)) die('use --pin type=account[/model],... with a valid task type');
+        s.pins[type as TaskType] = list.split(',').map((x) => x.trim()).filter(Boolean);
+      }
+      if (o.unpin) delete s.pins[o.unpin as TaskType];
+      if (o.timeout) s.jobTimeoutSec = o.timeout;
+      if (o.previewChars) s.resultPreviewChars = o.previewChars;
+      return s;
+    });
     console.log(JSON.stringify(s, null, 2));
   });
 
@@ -654,10 +664,10 @@ team
       console.log(`Nothing was changed. If this looks right, join with: omnitrix team join ${file}${o.as ? ` --as ${o.as}` : ''} --yes ${code}`);
       return;
     }
-    const cfg = loadConfig();
-    const clash = parsed.accounts.filter((a) => cfg.accounts.some((own) => own.id === a.id && !own.team)).map((a) => a.id);
-    cfg.settings.team = { file: full, user, sha256: fingerprint(text) };
-    saveConfig(cfg);
+    const clash = updateConfig((cfg) => {
+      cfg.settings.team = { file: full, user, sha256: fingerprint(text) };
+      return parsed.accounts.filter((a) => cfg.accounts.some((own) => own.id === a.id && !own.team)).map((a) => a.id);
+    });
     console.log(`\njoined ${parsed.name} as ${user}`);
     if (clash.length) console.log(`note: you already have accounts named ${clash.join(', ')}; your own ones are used, and the team's are not loaded`);
     console.log('If the team file changes later, its accounts stop loading until you review it here again.');
@@ -673,8 +683,9 @@ team
       console.log('You are not in a team.');
       return;
     }
-    cfg.settings.team = undefined;
-    saveConfig(cfg);
+    updateConfig((latest) => {
+      latest.settings.team = undefined;
+    });
     console.log(`left ${state.team?.name ?? 'the team'}`);
   });
 

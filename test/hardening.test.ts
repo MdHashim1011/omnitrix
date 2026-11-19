@@ -149,3 +149,42 @@ describe('output of agent CLIs', () => {
     expect(String(err)).toContain('café');
   }, 30_000);
 });
+
+describe('the configuration file', () => {
+  it('keeps a change made while another command waits for a provider', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const { loadConfig } = await import('../src/store.js');
+    const { writeConfig } = await import('./helpers.js');
+    const http = await import('node:http');
+    // a provider that takes a while to list its models
+    const server = http.createServer((_req, res) => {
+      setTimeout(() => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ data: [{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }] })), 1500);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    cleanups.push(() => server.close());
+    const url = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}/v1`;
+    writeConfig([account({ id: 'a', baseUrl: url, local: true, models: [makeModel('m1'), makeModel('m2')] })]);
+    const cli = path.join(dist, 'cli.js');
+    const env = { ...process.env, OMNITRIX_HOME: home };
+    const refresh = spawn(process.execPath, [cli, 'models', 'a', '--refresh'], { env, stdio: 'ignore' });
+    await new Promise((r) => setTimeout(r, 500));
+    // meanwhile, the account is renamed from another terminal
+    expect(spawnSync(process.execPath, [cli, 'set', 'a', '--label', 'Renamed'], { env, encoding: 'utf8' }).status).toBe(0);
+    await new Promise((r) => refresh.on('exit', r));
+    const acc = loadConfig().accounts.find((x) => x.id === 'a')!;
+    expect(acc.models.map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+    expect(acc.label).toBe('Renamed');
+  }, 30_000);
+});
+
+describe('the configuration file, changed by several processes', () => {
+  it('loses no change when several processes change it at once', async () => {
+    const { loadConfig } = await import('../src/store.js');
+    const { writeConfig } = await import('./helpers.js');
+    writeConfig([account({ id: 'a', models: Array.from({ length: 100 }, (_, i) => makeModel(`m${i}`)) })]);
+    const url = JSON.stringify('file:///' + path.join(dist, 'store.js').split(path.sep).join('/'));
+    // each process removes its own 25 models
+    await inParallel(4, `const { dropModel } = await import(${url}); const p = Number(process.argv[1]); for (let i = 0; i < 25; i++) dropModel('a', 'm' + (p * 25 + i));`);
+    expect(loadConfig().accounts[0]!.models).toEqual([]);
+  }, 60_000);
+});

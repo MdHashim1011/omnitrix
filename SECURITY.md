@@ -28,7 +28,7 @@ The dashboard listens only on 127.0.0.1 and rejects requests addressed to any ho
 
 On Windows, omnitrix does not run an agent program, such as `codex`, that is located in the current folder, so a cloned repository cannot substitute its own program.
 
-Several omnitrix processes, such as the MCP server, the dashboard and the command line, change the same files for verdicts, account health, quota readings and keys. Each of these changes is made under a short lock file that names the process holding it. A lock left by a process that stopped is taken over at once, or after 10 seconds if its holder cannot be read, and after 5 seconds of waiting omnitrix makes the change without the lock and prints a warning. `config.json` and job records are not locked, so two changes made to them at the same moment can overwrite each other.
+Several omnitrix processes, such as the MCP server, the dashboard and the command line, change the same files for the configuration, verdicts, account health, quota readings and keys. Each of these changes is made under a short lock file that names the process holding it. A lock left by a process that stopped is taken over at once, or after 10 seconds if its holder cannot be read, and after 5 seconds of waiting omnitrix makes the change without the lock and prints a warning. A command that waits for a provider, such as `omnitrix models <id> --refresh`, applies its change to the latest configuration afterwards, so a change made meanwhile is kept. Job records are written by the process that runs the job and are not locked.
 
 Each release from version 0.1.21 onward includes `omnitrix.tgz.sha256`, the SHA-256 checksum of the package, so a download can be checked before it is installed; the README shows how.
 

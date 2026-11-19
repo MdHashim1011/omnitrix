@@ -192,14 +192,29 @@ export function saveConfig(cfg: Config): void {
   writeJson(files.config(), { ...cfg, accounts: cfg.accounts.filter((a) => !a.team) });
 }
 
+/**
+ * Change the configuration under its lock: read the latest copy, apply `change`, save. Every change goes
+ * through here, so a command that waited for a provider never writes back a copy that is out of date.
+ * `change` must not wait for anything; fetch first, then change.
+ */
+export function updateConfig<T>(change: (cfg: Config) => T): T {
+  ensureHome();
+  return withLock(files.config(), () => {
+    const cfg = loadConfig();
+    const result = change(cfg);
+    saveConfig(cfg);
+    return result;
+  });
+}
+
 /** Remove a model the provider no longer serves, so the router stops choosing it. */
 export function dropModel(accountId: string, modelId: string): void {
-  const cfg = loadConfig();
-  const acc = findAccount(cfg, accountId);
-  // a team account is rebuilt from the team file on every load; its model rests instead (see the engine)
-  if (!acc || acc.team || !acc.models.some((m) => m.id === modelId)) return;
-  acc.models = acc.models.filter((m) => m.id !== modelId);
-  saveConfig(cfg);
+  updateConfig((cfg) => {
+    const acc = findAccount(cfg, accountId);
+    // a team account is rebuilt from the team file on every load; its model rests instead (see the engine)
+    if (!acc || acc.team || !acc.models.some((m) => m.id === modelId)) return;
+    acc.models = acc.models.filter((m) => m.id !== modelId);
+  });
 }
 
 export function findAccount(cfg: Config, id: string): Account | undefined {
