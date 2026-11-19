@@ -187,7 +187,9 @@ describe('after review', () => {
   async function impostor(version: string) {
     const port = await freePort();
     const { spawn } = await import('node:child_process');
-    const child = spawn(process.execPath, ['-e', `require('http').createServer((q,s)=>{s.setHeader('content-type','application/json');s.end(JSON.stringify(q.url==='/api/claim-open'?{open:true}:{omnitrix:true,version:${JSON.stringify(version)},pid:process.pid,viewers:0}))}).listen(${port},'127.0.0.1')`], { stdio: 'ignore' });
+    // the program text is fixed; the version and port reach it as arguments
+    const program = "const [version,port]=process.argv.slice(1);require('http').createServer((q,s)=>{s.setHeader('content-type','application/json');s.end(JSON.stringify(q.url==='/api/claim-open'?{open:true}:{omnitrix:true,version,pid:process.pid,viewers:0}))}).listen(Number(port),'127.0.0.1')";
+    const child = spawn(process.execPath, ['-e', program, version, String(port)], { stdio: 'ignore' });
     cleanups.push(() => child.kill());
     await expect.poll(async () => (await ping(port)) !== undefined, { timeout: 5000 }).toBe(true);
     return { port, child };
