@@ -263,9 +263,24 @@ OpenAI, Google and Anthropic all prohibit sharing a consumer account, so connect
 
 omnitrix is an independent project. It is not affiliated with OpenAI, Google, Anthropic or any other AI provider, or with Cartoon Network and Warner Bros. Discovery. Product names and trademarks belong to their respective owners.
 
+## Agent CLI compatibility
+
+omnitrix starts each agent CLI with flags taken from that tool's own documentation. This table shows how each one was last checked, in November 2026.
+
+| CLI | How it was checked | Not yet confirmed |
+|---|---|---|
+| Codex | Every flag confirmed with the `--help` of codex-cli 0.167.1 on Windows, and used in real jobs and quota readings | |
+| Claude Code | Flags confirmed in the official documentation; `--permission-prompts` needs Claude Code 2.1.259 or later | the exact names of the token counts in its JSON output |
+| Gemini CLI | Flags confirmed in the official documentation | Google now offers it mainly with Code Assist licences |
+| Qwen Code | Flags and its list-of-messages answer confirmed in the official documentation | |
+| OpenCode | `opencode run --model` confirmed in the official documentation | reading the task from standard input, and an answer printed as plain text |
+| Antigravity CLI | Experimental, and not added by `omnitrix init` | its permission and input options |
+
+The tests check every driver's flags and how it reads the documented answer format, and they run the Codex driver against a fake CLI. Only Codex has also been run against the real tool, so treat the others as less tested, and report a CLI that fails with the output of `omnitrix test <id>`.
+
 ## Current limitations
 
-Remaining quota is measured for ChatGPT plans and for providers that send rate-limit headers. For other subscriptions it is an estimate, because those providers do not offer an API for it. The Codex and Claude Code drivers depend on the current flags of those tools and may need updating when the flags change. The other agent CLIs have been tested less thoroughly than Codex.
+Remaining quota is measured for ChatGPT plans and for providers that send rate-limit headers. For other subscriptions it is an estimate, because those providers do not offer an API for it. The agent CLI drivers depend on the current flags of those tools and may need updating when the flags change.
 
 ## Roadmap
 

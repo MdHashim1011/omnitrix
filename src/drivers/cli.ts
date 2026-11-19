@@ -107,7 +107,9 @@ export const CLI_TOOLS: Record<string, CliTool> = {
     command: 'claude',
     profileEnv: 'CLAUDE_CONFIG_DIR',
     args: ({ model, edit }) => [
-      '-p', '--output-format', 'json', '--permission-prompts', 'none',
+      // documented as `cat file | claude -p '...'`: the short prompt here, the task on standard input
+      '-p', 'Follow the instructions given on standard input.',
+      '--output-format', 'json', '--permission-prompts', 'none',
       '--permission-mode', edit ? 'acceptEdits' : 'dontAsk',
       '--allowedTools', edit ? 'Read,Edit,Write,Glob,Grep' : 'Read,Glob,Grep',
       ...(model && model !== 'default' ? ['--model', model] : []),
@@ -160,7 +162,8 @@ export const CLI_TOOLS: Record<string, CliTool> = {
     args: ({ model, edit }) => [
       '-p', 'Follow the instructions given on standard input.',
       '--output-format', 'json',
-      '--approval-mode', edit ? 'auto_edit' : 'default',
+      // Qwen Code spells this mode "auto-edit"; Gemini CLI spells it "auto_edit"
+      '--approval-mode', edit ? 'auto-edit' : 'default',
       ...(model && model !== 'default' ? ['-m', model] : []),
     ],
     parse: parseGeminiStyle,
@@ -181,14 +184,28 @@ export const CLI_TOOLS: Record<string, CliTool> = {
     id: 'opencode',
     command: 'opencode',
     profileEnv: 'HOME',
-    args: ({ model }) => ['run', ...(model && model !== 'default' ? ['-m', model] : [])],
+    args: ({ model }) => ['run', ...(model && model !== 'default' ? ['--model', model] : [])],
     parse: (stdout) => ({ text: stdout.trim(), inputTokens: 0, outputTokens: 0 }),
     loginArgs: ['auth', 'login'],
   },
 };
 
+/** The JSON answer: Qwen Code prints one list of messages, ending in the "result"; others print objects. */
+function answerJson(stdout: string): any {
+  const t = stdout.trim();
+  if (t.startsWith('[')) {
+    try {
+      const all = JSON.parse(t);
+      if (Array.isArray(all)) return [...all].reverse().find((m) => m?.type === 'result') ?? all.at(-1);
+    } catch {
+      // not one JSON list; read it line by line below
+    }
+  }
+  return lastJson(stdout);
+}
+
 function parseGeminiStyle(stdout: string) {
-  const j = lastJson(stdout);
+  const j = answerJson(stdout);
   if (!j) return { text: stdout.trim(), inputTokens: 0, outputTokens: 0 };
   let inputTokens = Number(j.usage?.input_tokens ?? 0);
   let outputTokens = Number(j.usage?.output_tokens ?? 0);
