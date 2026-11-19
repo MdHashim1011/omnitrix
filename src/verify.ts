@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { childEnv, killTree, launch, resolveCommand, type Resolved } from './drivers/cli.js';
+import { childEnv, killTree, launch, resolveCommand, stripTerminalCodes, type Resolved } from './drivers/cli.js';
 import { redact } from './store.js';
 import type { JobVerify, TaskSpec } from './types.js';
 
@@ -53,6 +53,7 @@ function testEnv(home: string, extra: Record<string, string>): Record<string, st
 
 type TestResult = NonNullable<JobVerify['test']>;
 
+
 /** Run the task's test command in the job's worktree, within `timeoutMs`; `signal` stops it early. */
 export function runTest(command: string[], cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<TestResult> {
   const shown = command.join(' ');
@@ -75,7 +76,8 @@ export function runTest(command: string[], cwd: string, timeoutMs: number, signa
       signal?.removeEventListener('abort', onAbort);
       // keys are hidden before the output is cut, so a cut never splits one out of sight; the first,
       // possibly partial line is dropped
-      let text = redact(r.output ?? '');
+      // terminal colour and cursor codes mean nothing to Claude and only take up its context
+      let text = redact(stripTerminalCodes(r.output ?? ''));
       if (text.length > MAX_OUTPUT) text = text.slice(-MAX_OUTPUT).replace(/^[^\n]*\n/, '');
       resolve({ ...r, output: text, durationMs: Date.now() - t0 });
     };

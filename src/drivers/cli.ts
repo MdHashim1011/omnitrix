@@ -262,6 +262,11 @@ export function resolveCommand(command: string): Resolved | undefined {
   return { file: cmd, prefix: [], shell: true };
 }
 
+/** Text without the escape sequences that terminals use for colours, cursor moves and titles. */
+export function stripTerminalCodes(text: string): string {
+  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(\u0007|\u001b\\)|\u001b[@-Z\\-_]/g, '');
+}
+
 export interface Launch {
   file: string;
   args: string[];
@@ -421,7 +426,7 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
           resolve({ text: parsed.text || '(no summary from the agent; see the diff)', inputTokens: parsed.inputTokens, outputTokens: parsed.outputTokens, costUsd: parsed.costUsd });
           return;
         }
-        const detail = redact((parsed.error ?? '') + '\n' + stderr.slice(-1500) + (parsed.text ? '' : '\n' + stdout.slice(-500))).trim();
+        const detail = redact(stripTerminalCodes((parsed.error ?? '') + '\n' + stderr.slice(-1500) + (parsed.text ? '' : '\n' + stdout.slice(-500)))).trim();
         reject(new DriverError(`${tool.command} exited with code ${code}: ${detail || 'no output'}`, classifyCliError(detail)));
       });
     });

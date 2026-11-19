@@ -197,6 +197,18 @@ describe('the check omnitrix makes of a code job', () => {
     expect(r.output).toContain('é');
   });
 
+  it('removes terminal colour codes from the test output', async () => {
+    const { runTest } = await import('../src/verify.js');
+    const r = await runTest(node("console.log('\\u001b[32m✓\\u001b[39m 331 passed \\u001b[2m(212s)\\u001b[22m')"), os.tmpdir(), 10_000);
+    expect(r.output).toContain('✓ 331 passed (212s)');
+    expect(r.output).not.toContain('\u001b');
+  });
+
+  it('says when a job changes no files', () => {
+    expect(verifySummary({ files: [], outside: [] })).toBe('changed no files');
+    expect(verifySummary({ files: [] })).toBe('changed no files');
+  });
+
   it('says when a test was stopped by a signal', () => {
     expect(verifySummary({ files: [], test: { command: 'npm test', status: 'failed', durationMs: 400 } })).toMatch(/stopped by a signal/);
     // the seconds shown and the seconds reported agree
