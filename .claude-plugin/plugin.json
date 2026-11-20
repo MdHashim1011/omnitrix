@@ -1,0 +1,30 @@
+{
+  "name": "omnitrix",
+  "version": "0.5.2",
+  "description": "Delegate tasks from Claude Code to the AI accounts you already pay for: ChatGPT through Codex, Gemini, DeepSeek, Groq, local models and any OpenAI- or Anthropic-compatible API. Claude plans and reviews; omnitrix routes each task and tracks each account's quota.",
+  "author": {
+    "name": "Mohamed Hashim"
+  },
+  "homepage": "https://github.com/MdHashim1011/omnitrix#readme",
+  "repository": "https://github.com/MdHashim1011/omnitrix",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "delegation",
+    "codex",
+    "gemini",
+    "ollama",
+    "llm-router",
+    "multi-agent"
+  ],
+  "mcpServers": {
+    "omnitrix": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "omnitrix",
+        "mcp"
+      ]
+    }
+  }
+}

@@ -145,3 +145,17 @@ describe('omnitrix providers --free', () => {
     for (const id of ['openai', 'anthropic', 'deepinfra', 'codex']) expect(out).not.toMatch(new RegExp(`^  ${id} `, 'm'));
   }, 30_000);
 });
+
+describe('the Claude Code plugin', () => {
+  it('has the same version as the package and starts omnitrix from npm', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const root = path.resolve(__dirname, '..');
+    const plugin = JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8'));
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    expect(plugin.version).toBe(pkg.version);
+    expect(plugin.mcpServers.omnitrix).toEqual({ command: 'npx', args: ['-y', 'omnitrix', 'mcp'] });
+    const market = JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'marketplace.json'), 'utf8'));
+    expect(market.plugins).toEqual([expect.objectContaining({ name: 'omnitrix', source: './' })]);
+  });
+});

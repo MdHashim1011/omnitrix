@@ -40,6 +40,14 @@ omnitrix requires Node.js 20 or later.
 npm install -g omnitrix
 ```
 
+omnitrix is also a Claude Code plugin. In Claude Code 2.1.275 or later, this command installs it in one step:
+
+```
+/plugin install omnitrix --marketplace MdHashim1011/omnitrix
+```
+
+From a terminal, `claude plugin marketplace add MdHashim1011/omnitrix` followed by `claude plugin install omnitrix@omnitrix` does the same. The plugin starts the latest omnitrix from npm with `npx`, so it needs Node.js 20 or later as well. It registers the MCP server only: add your accounts with `npx omnitrix init --apply`, or install the package globally with the command above to have the `omnitrix` command itself.
+
 The same package is attached to each GitHub release, so you can also install it from there:
 
 ```bash
