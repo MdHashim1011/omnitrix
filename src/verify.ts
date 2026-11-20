@@ -71,7 +71,12 @@ export function runTest(command: string[], cwd: string, timeoutMs: number, signa
     const finish = (r: TestResult) => {
       if (settled) return;
       settled = true;
-      fs.rmSync(home, { recursive: true, force: true });
+      try {
+        fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 });
+      } catch {
+        // a process the test left behind can still hold a file on Windows; a stray temporary folder is
+        // better than a result that never arrives
+      }
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
       // keys are hidden before the output is cut, so a cut never splits one out of sight; the first,

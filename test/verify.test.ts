@@ -132,6 +132,21 @@ describe('the check omnitrix makes of a code job', () => {
     expect((await runTest(['node*', '-e', 'process.exit(0)'], os.tmpdir(), 10_000)).status).toBe('error');
   });
 
+  it('still reports the test when its temporary home folder cannot be removed', async () => {
+    // a leftover process on Windows can hold a file there; the error must not escape the close handler
+    const { runTest } = await import('../src/verify.js');
+    const real = fs.rmSync;
+    fs.rmSync = () => {
+      throw Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
+    };
+    try {
+      const r = await runTest([process.execPath, '-e', 'process.exit(0)'], os.tmpdir(), 10_000);
+      expect(r.status).toBe('passed');
+    } finally {
+      fs.rmSync = real;
+    }
+  });
+
   it('refuses a test command on a task that does not edit code', () => {
     const engine = setup();
     expect(() => engine.dispatch([{ title: 'r', type: 'review', prompt: 'p', test: ['npm', 'test'] }])).toThrow(/test/);

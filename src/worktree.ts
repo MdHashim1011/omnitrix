@@ -117,7 +117,11 @@ export function removeWorktree(repoRoot: string, dir: string): void {
 export function discardWorktree(repoRoot: string, dir: string, branch: string): void {
   removeWorktree(repoRoot, dir);
   spawnSync('git', ['branch', '-D', branch], { cwd: repoRoot, windowsHide: true });
-  fs.rmSync(dir, { recursive: true, force: true });
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  } catch {
+    // a process the worker left behind can still hold a file on Windows; `omnitrix clean` removes it later
+  }
 }
 
 /** True when everything on the branch is already in the repo's current HEAD. */

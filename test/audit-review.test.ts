@@ -7,7 +7,7 @@ import { classifyCliError } from '../src/drivers/cli.js';
 import { buildPrompt, Engine } from '../src/engine.js';
 import { files, loadHealth, saveHealth, setSecret } from '../src/store.js';
 import { compactLedger, LedgerTail, readLedger } from '../src/usage.js';
-import { createWorktree, finishWorktree } from '../src/worktree.js';
+import { createWorktree, discardWorktree, finishWorktree } from '../src/worktree.js';
 import { account, chatReply, mockProvider, tempHome, writeConfig } from './helpers.js';
 
 const cleanups: (() => unknown)[] = [];
@@ -147,5 +147,22 @@ describe('a retry saved by another process', () => {
     engine.verdict(job!.id, false, 'again');
     expect(JSON.parse(fs.readFileSync(file, 'utf8')).retriedAs).toBe('jother999');
     expect(engine.retry(job!.id, 'twice')).toBeUndefined();
+  });
+});
+
+describe('throwing away a worker copy before a retry', () => {
+  it('does not throw when a file in the copy is still held open', () => {
+    // a process the worker left behind can hold a file on Windows; the retry must still go ahead
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-discard-'));
+    const real = fs.rmSync;
+    fs.rmSync = () => {
+      throw Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
+    };
+    try {
+      expect(() => discardWorktree(os.tmpdir(), dir, 'omnitrix/no-such-branch')).not.toThrow();
+    } finally {
+      fs.rmSync = real;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
