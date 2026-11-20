@@ -42,6 +42,16 @@ describe('burn-rate forecast', () => {
     expect(s.windows[0]!.runsOutAt).toBeUndefined();
   });
 
+  it('needs a full day of a weekly provider window before it judges the pace', () => {
+    // seen in real use: one large job used 2% of the week in under 2 hours, and the straight line
+    // said the week would run out in three and a half days
+    const early = summarize(codex, [], undefined, now, plan(2, 7 * 24 * 60, 7 * DAY - 105 * MIN));
+    expect(early.windows[0]!.runsOutAt).toBeUndefined();
+    // a day and a half in with 40% used: the last 60% lasts 2 days 6 hours, before the reset
+    const later = summarize(codex, [], undefined, now, plan(40, 7 * 24 * 60, 5.5 * DAY));
+    expect(later.windows[0]!.runsOutAt).toBe(now + 54 * HOUR);
+  });
+
   it('projects a counted window from the last hour of requests', () => {
     const acc = account({ id: 'a', limits: { requestsPerDay: 100 } });
     // 40 requests earlier today and 50 in the last hour: 10 left at 50 an hour is 12 minutes

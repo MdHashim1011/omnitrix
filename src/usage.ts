@@ -289,7 +289,9 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
     // from the reading, not from now, keeps an older reading from making the forecast late.
     const at = quota!.at;
     const elapsed = w.minutes && w.resetsAt ? w.minutes * MIN - (w.resetsAt - at) : 0;
-    const end = elapsed >= MIN_PACE_MS ? runOut(100 - w.usedPercent, w.usedPercent / elapsed, at, w.resetsAt! - at) : undefined;
+    // A window longer than a day needs a day of use first: one large job early in a week is not a pace.
+    const enough = w.minutes! * MIN > DAY ? DAY : MIN_PACE_MS;
+    const end = elapsed >= enough ? runOut(100 - w.usedPercent, w.usedPercent / elapsed, at, w.resetsAt! - at) : undefined;
     const runsOutAt = end && end > now ? end : undefined;
     windows.push({ name: w.name, used: w.usedPercent, limit: 100, remaining: 100 - w.usedPercent, unit: 'percent', resetsAt: w.resetsAt, runsOutAt });
   }
