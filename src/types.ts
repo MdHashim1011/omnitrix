@@ -162,6 +162,8 @@ export interface TaskSpec {
   check?: boolean;
   /** only models without tools (API drivers); set on checks, whose prompt holds another worker's output */
   textOnly?: boolean;
+  /** models whose fit for this task type is lower are not used; set on checks, so a checker is not much weaker than the worker */
+  minFit?: number;
 }
 
 export interface JobCheck {

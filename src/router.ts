@@ -156,6 +156,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       if (task.type === 'vision' && model.skills.vision < 5) { reject('model cannot read images', model.id); continue; }
       const why: string[] = [];
       const f = fit(model.skills, task.type);
+      if (task.minFit !== undefined && f < task.minFit) { reject(`weaker at ${task.type} (fit ${f.toFixed(2)}) than the worker it would check`, model.id); continue; }
       let score = settings.mode === 'quality' ? f * f : f;
       const basis = basisOf(model);
       why.push(`fit ${f.toFixed(2)}${basis === 'untested' ? ' (untested scores)' : basis === 'estimated' ? ' (estimated scores)' : ''}`);

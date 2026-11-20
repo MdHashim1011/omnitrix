@@ -9,7 +9,7 @@ import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
 import { reachable } from './init.js';
 import { budgetBlocks, budgetFor, estimateCost, loadTeam, periodStart, personSpend, readShared, shareRecord, type Reserved, type TeamSummary } from './team.js';
 import { loadQuotas, refreshQuotas } from './quota.js';
-import { route, effectivePrivacy, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
+import { route, effectivePrivacy, fit, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
@@ -41,6 +41,8 @@ const BREAKER_KINDS = new Set(['network', 'server', 'timeout', 'unknown']);
 // what a checker reads: enough of the task and result to judge them, without paying for a huge prompt twice
 const CHECK_TASK_CHARS = 4_000;
 const CHECK_RESULT_CHARS = 20_000;
+// a checker may be a little weaker at review than the worker, since the scores are rough, but not much
+const CHECKER_MARGIN = 0.15;
 
 const WORKER_SYSTEM = [
   'You are one worker in a team. A lead engineer split a larger job and gave you this part.',
@@ -575,7 +577,10 @@ export class Engine {
       `Acceptance criteria, repeated: ${t.acceptance!}`,
       'On the first line, write only PASS or FAIL. On the second line, give one sentence that explains why.',
     ].join('\n');
-    const [check] = this.dispatch([{ title: `Check: ${t.title}`.slice(0, 200), type: 'review', prompt, privacy: t.privacy, size: 'small', avoid: [job.accountId!], textOnly: true }], { checkOf: job.id });
+    // a much weaker model passes what it cannot judge, which is worse than no check
+    const worker = this.config().accounts.find((a) => a.id === job.accountId)?.models.find((m) => m.id === job.model);
+    const minFit = worker ? fit(worker.skills, 'review') - CHECKER_MARGIN : undefined;
+    const [check] = this.dispatch([{ title: `Check: ${t.title}`.slice(0, 200), type: 'review', prompt, privacy: t.privacy, size: 'small', avoid: [job.accountId!], textOnly: true, minFit }], { checkOf: job.id });
     // with no suitable checker, the check job has already failed and settled this job
     if (job.check?.status === 'pending' && !job.check.jobId) this.setCheck(job, { status: 'pending', jobId: check!.id });
   }
@@ -585,7 +590,7 @@ export class Engine {
     if (job?.check?.status !== 'pending') return;
     this.setCheck(job, check.status === 'done'
       ? { ...readVerdict(this.readOutput(check.id) ?? check.preview ?? ''), jobId: check.id, by: `${check.accountId}/${check.model}` }
-      : { status: 'unavailable', jobId: check.id, note: (check.error ?? check.status).slice(0, 200) });
+      : { status: 'unavailable', jobId: check.id, note: (check.error ?? check.status).slice(0, 400) });
   }
 
   /**

@@ -32,6 +32,15 @@ describe('avoid list', () => {
   });
 });
 
+describe('lowest fit', () => {
+  it('leaves out models below the lowest fit a task allows', () => {
+    const a = account({ id: 'a', models: [makeModel('strong', { skills: { coding: 8, reasoning: 8, writing: 8, longContext: 8, vision: 0, speed: 8 } }), makeModel('weak', { skills: { coding: 2, reasoning: 2, writing: 2, longContext: 2, vision: 0, speed: 9 } })] });
+    const r = route(task({ type: 'review', minFit: 0.5 }), ctx([a]));
+    expect(r.candidates.map((c) => c.model)).toEqual(['strong']);
+    expect(r.rejected).toContainEqual(expect.objectContaining({ model: 'weak', reason: expect.stringMatching(/weaker/) }));
+  });
+});
+
 describe('retry after a rejection', () => {
   async function twoWorkers() {
     const first = await mockProvider(() => ({ json: chatReply('first answer') }));
@@ -144,6 +153,24 @@ describe('second-model check', () => {
     expect(done!.status).toBe('done');
     expect(done!.check!.status).toBe('unavailable');
     expect(worker.calls).toHaveLength(1);
+  });
+
+  it('does not let a much weaker model check the result', async () => {
+    // seen in real use: a 3B local model passed a Gemini review that was mostly wrong
+    const strong = { coding: 7, reasoning: 7, writing: 7, longContext: 7, vision: 0, speed: 7 };
+    const weak = { coding: 3, reasoning: 3, writing: 4, longContext: 3, vision: 0, speed: 9 };
+    const worker = await mockProvider(() => ({ json: chatReply('done') }));
+    const checker = await mockProvider(() => ({ json: chatReply('PASS\nfine') }));
+    closers.push(worker.close, checker.close);
+    writeConfig([
+      account({ id: 'worker', baseUrl: worker.url, local: true, priority: 0, models: [makeModel('big', { skills: strong })] }),
+      account({ id: 'checker', baseUrl: checker.url, local: true, priority: 1, models: [makeModel('tiny', { skills: weak })] }),
+    ]);
+    const engine = new Engine();
+    const [job] = engine.dispatch([checked()]);
+    const [done] = await engine.wait([job!.id], 10);
+    expect(done!.check).toMatchObject({ status: 'unavailable', note: expect.stringMatching(/weaker/) });
+    expect(checker.calls).toHaveLength(0);
   });
 
   it('needs an acceptance line to check against', () => {
