@@ -104,31 +104,38 @@ export function olderVersion(a: string, b: string): boolean {
 }
 
 /**
- * Replace each background dashboard from this omnitrix home that runs an older version, without opening a
- * tab; open pages reconnect by themselves. Installing an update does not stop the old server, so this runs
- * when omnitrix starts. A newer dashboard is left alone, so an older omnitrix cannot turn it back.
+ * Run when omnitrix starts. Each background dashboard from this omnitrix home is replaced when it runs an
+ * older version, since installing an update does not stop it, and started again when its process ended
+ * without `omnitrix dashboard --stop`, which removes the record. No tab opens; open pages reconnect by
+ * themselves. A newer dashboard is left alone, so an older omnitrix cannot turn it back.
  */
-export async function upgradeDashboards(opts: { cli?: string } = {}): Promise<number[]> {
+export async function refreshDashboards(opts: { cli?: string } = {}): Promise<number[]> {
   let names: string[] = [];
   try {
     names = fs.readdirSync(homeDir()).filter((n) => /^dashboard-\d+\.json$/.test(n));
   } catch {
     return [];
   }
-  const upgraded: number[] = [];
+  const refreshed: number[] = [];
   for (const name of names) {
     const port = Number(/\d+/.exec(name)![0]);
-    const p = await ours(port);
-    if (!p || !olderVersion(p.version, VERSION)) continue;
+    const p = await ping(port);
+    const pid = recorded(port).pid;
+    if (p ? pid !== p.pid || !olderVersion(p.version, VERSION) : !Number.isInteger(pid) || processAlive(pid)) continue;
     try {
       await ensureDashboard({ port, cli: opts.cli, open: false });
-      upgraded.push(port);
+      refreshed.push(port);
     } catch {
-      // the old one keeps serving; `omnitrix dashboard` reports what is wrong
+      // `omnitrix dashboard` reports what is wrong, such as another program on the port
     }
   }
-  return upgraded;
+  return refreshed;
 }
+
+// A short-lived launcher starts the dashboard and exits at once. A program that closes its helpers on
+// Windows closes their whole process tree, detached children included, and the dashboard would go with
+// it. Its arguments arrive through argv, never as program text.
+const LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
 
 export interface EnsureOptions {
   port?: number;
@@ -159,7 +166,8 @@ export async function ensureDashboard(opts: EnsureOptions = {}): Promise<{ url: 
   let started = false;
   if (!running) {
     const cli = opts.cli ?? process.argv[1]!;
-    const child = spawn(process.execPath, [cli, 'dashboard', '--serve', '--port', String(port)], { detached: true, stdio: 'ignore', windowsHide: true, env: process.env });
+    const args = [cli, 'dashboard', '--serve', '--port', String(port)];
+    const child = spawn(process.execPath, process.platform === 'win32' ? ['-e', LAUNCHER, ...args] : args, { detached: true, stdio: 'ignore', windowsHide: true, env: process.env });
     child.unref();
     for (let i = 0; i < 80 && !running; i++) {
       await new Promise((r) => setTimeout(r, 100));

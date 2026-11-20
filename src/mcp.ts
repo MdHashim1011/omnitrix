@@ -9,7 +9,7 @@ import { EFFORTS, TASK_TYPES, type Job, type TaskSpec } from './types.js';
 import { formatTokens, roughSpan, type WindowUse } from './usage.js';
 import { testSeconds, verifySummary } from './verify.js';
 import { VERSION } from './version.js';
-import { runningDashboard, upgradeDashboards } from './dashboard-launch.js';
+import { runningDashboard, refreshDashboards } from './dashboard-launch.js';
 import { JOB_ID } from './store.js';
 
 // a job id from Claude becomes a file name, so nothing else is accepted
@@ -369,5 +369,5 @@ export function startMcp(): void {
   const engine = new Engine();
   serveStdio(() => buildServer(engine), { onerror: (err) => process.stderr.write(`omnitrix: ${err.message}\n`) });
   // an update leaves the old background dashboard running; Claude Code restarting omnitrix is the moment to replace it
-  void upgradeDashboards();
+  void refreshDashboards();
 }

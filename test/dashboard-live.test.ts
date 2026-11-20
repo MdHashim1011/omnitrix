@@ -10,6 +10,7 @@ import { loadQuotas, saveQuotaFailure } from '../src/quota.js';
 import { files, writeJson } from '../src/store.js';
 import { account, chatReply, mockProvider, tempHome, writeConfig } from './helpers.js';
 import { setSecret } from '../src/store.js';
+import { VERSION } from '../src/version.js';
 
 const cli = path.resolve(__dirname, '..', 'dist', 'cli.js');
 const cleanups: (() => unknown)[] = [];
@@ -201,8 +202,8 @@ describe('after review', () => {
     const old = await impostor('0.0.1');
     writeJson(path.join(home, `dashboard-${old.port}.json`), { pid: old.child.pid, port: old.port, version: '0.0.1' });
     cleanups.push(() => stopDashboard(old.port));
-    const { upgradeDashboards } = await import('../src/dashboard-launch.js');
-    expect(await upgradeDashboards({ cli })).toEqual([old.port]);
+    const { refreshDashboards } = await import('../src/dashboard-launch.js');
+    expect(await refreshDashboards({ cli })).toEqual([old.port]);
     expect((await ping(old.port))?.version).not.toBe('0.0.1');
   }, 30_000);
 
@@ -210,9 +211,34 @@ describe('after review', () => {
     writeConfig([]);
     const newer = await impostor('99.0.0');
     writeJson(path.join(home, `dashboard-${newer.port}.json`), { pid: newer.child.pid, port: newer.port, version: '99.0.0' });
-    const { upgradeDashboards } = await import('../src/dashboard-launch.js');
-    expect(await upgradeDashboards({ cli })).toEqual([]);
+    // if the code is wrong it starts a real dashboard here, which must not outlive the test
+    cleanups.push(() => stopDashboard(newer.port));
+    const { refreshDashboards } = await import('../src/dashboard-launch.js');
+    expect(await refreshDashboards({ cli })).toEqual([]);
     expect((await ping(newer.port))?.version).toBe('99.0.0');
+  }, 30_000);
+
+  it('brings back a dashboard whose process ended without being stopped, such as when Claude Code closed', async () => {
+    // seen in real use: restarting Claude Code closed the dashboard it had started, and nothing restarted it
+    writeConfig([]);
+    const port = await freePort();
+    writeJson(path.join(home, `dashboard-${port}.json`), { pid: 999999, port, version: '0.0.1' });
+    cleanups.push(() => stopDashboard(port));
+    const { refreshDashboards } = await import('../src/dashboard-launch.js');
+    expect(await refreshDashboards({ cli })).toEqual([port]);
+    expect((await ping(port))?.version).toBe(VERSION);
+  }, 30_000);
+
+  it.skipIf(process.platform !== 'win32')('starts the dashboard outside the process tree of whatever started it', async () => {
+    // a program that closes its helpers closes their whole process tree on Windows, detached children included
+    writeConfig([]);
+    const port = await freePort();
+    cleanups.push(() => stopDashboard(port));
+    await ensureDashboard({ port, cli, open: false });
+    const pid = (await ping(port))!.pid;
+    const { execFileSync } = await import('node:child_process');
+    const parent = Number(execFileSync('powershell', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").ParentProcessId`], { encoding: 'utf8' }).trim());
+    expect(parent).not.toBe(process.pid);
   }, 30_000);
 
   it('replaces an older dashboard even when its record is missing', async () => {
