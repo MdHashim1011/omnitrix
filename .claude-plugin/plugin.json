@@ -1,6 +1,6 @@
 {
   "name": "omnitrix",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Delegate tasks from Claude Code to the AI accounts you already pay for: ChatGPT through Codex, Gemini, DeepSeek, Groq, local models and any OpenAI- or Anthropic-compatible API. Claude plans and reviews; omnitrix routes each task and tracks each account's quota.",
   "author": {
     "name": "Mohamed Hashim"
