@@ -53,7 +53,7 @@ export function startDashboard(port: number): { url: string; server: http.Server
   let slowAt = 0;
   let openedAt = 0;
 
-  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine) });
+  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine), delegated: engine.delegated(7) });
   // Quota reads and local server probes run in the background and are throttled; the page never waits for them.
   const slowChecks = () => {
     if (Date.now() - slowAt < SLOW_MS) return;
@@ -132,7 +132,7 @@ export function startDashboard(port: number): { url: string; server: http.Server
     }
     if (req.url === '/api/status') {
       slowChecks();
-      json(res, { version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine) });
+      json(res, { version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine), delegated: engine.delegated(7) });
       return;
     }
     if (req.url === '/api/ping') {
@@ -242,7 +242,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:16px;fl
 .kpi b{display:block;font-size:26px;font-weight:600;line-height:1.15;margin-top:4px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 h2{font-size:15px;font-weight:600;margin:0 0 12px;letter-spacing:-.005em;display:flex;align-items:baseline;gap:8px}
 h2 small{font-size:13px;font-weight:400;color:var(--ink-3)}
-.kpi em{display:block;font-style:normal;font-size:13px;color:var(--warn);margin-top:2px}
+.kpi em{display:block;font-style:normal;font-size:13px;color:var(--warn);margin-top:2px}.kpi small{display:block;font-size:13px;color:var(--ink-2);margin-top:2px}
 .ver{font-size:13px;color:var(--ink-3)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:14px;margin-bottom:32px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
@@ -417,8 +417,11 @@ function draw(d){
   var sum=function(k){return acc.reduce(function(s,a){return s+(a.usage[k]||0)},0)};
   var attention=acc.filter(function(a){return a.enabled&&a.state!=='ready'&&a.state!=='busy'}).length;
   document.getElementById('kpis').innerHTML='<div class="kpi"><span>Accounts ready</span><b>'+ready+' of '+acc.length+'</b>'+(attention?'<em>'+attention+' need'+(attention>1?'':'s')+' attention</em>':'')+'</div>'
-    +[['Requests, last 24 h',String(sum('requestsToday'))],['Tokens, last 24 h',fmt(sum('tokensToday'))],['Known cost, last 24 h',money(sum('costToday'))]]
-    .map(function(k){return '<div class="kpi"><span>'+k[0]+'</span><b>'+esc(k[1])+'</b></div>'}).join('');
+    +[['Requests, last 24 h',String(sum('requestsToday'))]]
+    .map(function(k){return '<div class="kpi"><span>'+k[0]+'</span><b>'+esc(k[1])+'</b></div>'}).join('')
+    // the work other accounts did instead of Claude, counted from the usage log
+    +(function(g){g=g||{jobs:0,tokens:0,accepted:0};return '<div class="kpi"><span>Done by other accounts, 7 days</span><b>'+g.jobs+' job'+(g.jobs===1?'':'s')+'</b><small>'+esc(fmt(g.tokens))+' tokens'+(g.accepted?', '+g.accepted+' accepted':'')+'</small></div>'})(d.delegated)
+    +'<div class="kpi"><span>Known cost, last 24 h</span><b>'+esc(money(sum('costToday')))+'</b></div>';
   document.getElementById('acc-sub').textContent=acc.length?acc.length+' connected':'';
   document.getElementById('accounts').innerHTML=acc.length?acc.map(function(a){return cardHtml(a,open)}).join('')
     :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix init --apply</code> connects the AI tools, API keys and local models it finds on this PC</li><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>';

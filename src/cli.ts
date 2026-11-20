@@ -23,6 +23,7 @@ import { branchExists, branchMerged, deleteBranch, pruneWorktree } from './workt
 import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, type Limits, type ModelInfo, type TaskType, type UsageRecord } from './types.js';
 import { refreshQuotas } from './quota.js';
 import { formatTokens, readLedger, recordUsage, typicalLatency } from './usage.js';
+import { describeDelegated } from './value.js';
 
 /** A typical answer time as people read it: "4.2 s", "38 s", or "-" when there is none yet. */
 function seconds(ms: number | undefined): string {
@@ -779,6 +780,11 @@ program
       // shared records come from colleagues' machines; never print control characters from them
       const k = key.replace(/[\p{Cc}\p{Cf}]/gu, '?');
       console.log(`${k.padEnd(width)}${`${g.n} requests`.padEnd(14)}${`${formatTokens(g.tokens)} tokens`.padEnd(16)}${money(g.cost).padEnd(10)}${g.failed ? `${g.failed} failed` : ''}`);
+    }
+    // the work other accounts did instead of Claude; the team's shared log has no job verdicts
+    if (!o.team) {
+      const d = new Engine().delegated(o.days);
+      if (d.jobs) console.log(`\n${describeDelegated(d)}.`);
     }
     console.log('\nCosts are those reported by the provider, or estimated from model prices where they are known.');
   });

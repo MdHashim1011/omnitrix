@@ -8,6 +8,7 @@ import { refreshQuotas } from './quota.js';
 import { EFFORTS, TASK_TYPES, type Job, type TaskSpec } from './types.js';
 import { formatTokens, roughSpan, type WindowUse } from './usage.js';
 import { testSeconds, verifySummary } from './verify.js';
+import { describeDelegated } from './value.js';
 import { VERSION } from './version.js';
 import { runningDashboard, refreshDashboards } from './dashboard-launch.js';
 import { JOB_ID } from './store.js';
@@ -80,6 +81,8 @@ const poolOut = z.object({
   accounts: z.array(accountOut),
   team: teamOut.optional(),
   dashboard: z.string().nullable().describe('address of the live dashboard when it runs; a client with a browser can open it for the user'),
+  delegated: z.object({ days: z.number(), jobs: z.number(), accepted: z.number(), rejected: z.number(), tokens: z.number() }).optional()
+    .describe('work other accounts did instead of Claude in the last days: jobs answered, how many Claude accepted or rejected, and their tokens'),
 });
 
 
@@ -229,7 +232,9 @@ export function buildServer(engine: Engine): McpServer {
         stale: !!a.usage.stale,
       }));
       if (dashboard) lines.push(`live dashboard: ${dashboard}`);
-      return text(lines.join('\n'), { ready, total: pool.length, accounts, ...(team ? { team } : {}), dashboard });
+      const delegated = engine.delegated(7);
+      if (delegated.jobs) lines.push(describeDelegated(delegated));
+      return text(lines.join('\n'), { ready, total: pool.length, accounts, ...(team ? { team } : {}), dashboard, delegated });
     },
   );
 

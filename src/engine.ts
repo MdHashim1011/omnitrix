@@ -18,6 +18,7 @@ import { DriverError, type Account, type AccountHealth, type Config, type Job, t
 import { statsKey } from './models.js';
 import { compactLedger, headroom, LedgerTail, recordUsage, summarize, typicalLatency, type UsageSummary } from './usage.js';
 import { outsideFiles, runTest } from './verify.js';
+import { delegated, type Delegated } from './value.js';
 import { branchExists, changedFiles, createScratch, createWorktree, discardWorktree, fileVersion, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
 
 const MAX_ATTEMPTS = 3;
@@ -278,6 +279,21 @@ export class Engine {
       ...(Object.keys(this.localSizes).length ? { gpuBytes: gpuMemoryBytes(), localSizes: this.localSizes } : {}),
     };
   }
+
+  /** Work that other accounts did instead of Claude in the last `days` days (see value.ts). */
+  delegated(days = 7): Delegated & { days: number } {
+    // the dashboard asks every few seconds, and reading every job record each time is wasteful
+    const hit = this.delegatedCache;
+    if (hit && hit.days === days && Date.now() - hit.at < 15_000) return hit.value;
+    const since = Date.now() - days * 24 * 3600_000;
+    const verdicts = new Map<string, 'accepted' | 'rejected'>();
+    for (const j of this.listJobs(1000)) if (j.verdict && j.createdAt >= since - 24 * 3600_000) verdicts.set(j.id, j.verdict);
+    const value = { days, ...delegated([...this.records().values()].flat(), verdicts, since) };
+    this.delegatedCache = { days, at: Date.now(), value };
+    return value;
+  }
+
+  private delegatedCache?: { days: number; at: number; value: Delegated & { days: number } };
 
   pool(): PoolAccountView[] {
     const cfg = this.config();
