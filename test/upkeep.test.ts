@@ -257,3 +257,45 @@ describe('tables in the terminal', () => {
     expect(route).toMatch(new RegExp(`g/${long} +[0-9][.][0-9]{3}`));
   }, 30_000);
 });
+
+describe('two code jobs that change the same file', () => {
+  const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
+
+  it('tells each job about the other, so their changes are combined rather than copied over each other', () => {
+    // seen in real use: copying the second job's file silently dropped the first job's feature
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-overlap-'));
+    git(repo, 'init', '-q', '-b', 'main');
+    fs.writeFileSync(path.join(repo, 'f.js'), 'base\n');
+    fs.writeFileSync(path.join(repo, 'g.js'), 'g\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'base');
+    const work = (id: string, file: string, text: string) => {
+      git(repo, 'checkout', '-q', '-b', `omnitrix/${id}`, 'main');
+      fs.writeFileSync(path.join(repo, file), text);
+      git(repo, 'commit', '-q', '-am', id);
+      git(repo, 'checkout', '-q', 'main');
+      const now = Date.now();
+      writeJson(path.join(files.jobs(), `${id}.json`), {
+        id, status: 'done', createdAt: now, updatedAt: now, attempts: [], task: { title: id, type: 'code', prompt: 'p', repo },
+        worktree: { path: path.join(files.worktrees(), id), branch: `omnitrix/${id}` }, verify: { files: [file] },
+      });
+    };
+    work('jcurrency', 'f.js', 'currency\n');
+    work('jthousands', 'f.js', 'thousands\n');
+    work('jother', 'g.js', 'other\n');
+    const engine = new Engine();
+    const job = (id: string) => engine.getJob(id)!;
+    expect(engine.overlaps(job('jthousands'))).toEqual([{ jobId: 'jcurrency', files: ['f.js'] }]);
+    expect(engine.overlaps(job('jcurrency'))).toEqual([{ jobId: 'jthousands', files: ['f.js'] }]);
+    expect(engine.overlaps(job('jother'))).toEqual([]);
+
+    // once the first change is in the starting point of a later job, there is nothing to combine
+    git(repo, 'checkout', '-q', 'omnitrix/jcurrency', '--', 'f.js');
+    git(repo, 'commit', '-q', '-am', 'take currency');
+    work('jlater', 'f.js', 'currency and later\n');
+    expect(engine.overlaps(job('jlater')).map((o) => o.jobId)).not.toContain('jcurrency');
+    // rejected work is not going to be kept, so it is not an overlap either
+    writeJson(path.join(files.jobs(), 'jthousands.json'), { ...job('jthousands'), verdict: 'rejected' });
+    expect(engine.overlaps(job('jcurrency'))).toEqual([]);
+  }, 60_000);
+});

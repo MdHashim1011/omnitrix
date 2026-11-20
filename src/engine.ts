@@ -17,7 +17,7 @@ import { DriverError, type Account, type AccountHealth, type Config, type Job, t
 import { statsKey } from './models.js';
 import { compactLedger, headroom, LedgerTail, recordUsage, summarize, type UsageSummary } from './usage.js';
 import { outsideFiles, runTest } from './verify.js';
-import { changedFiles, createScratch, createWorktree, discardWorktree, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
+import { branchExists, changedFiles, createScratch, createWorktree, discardWorktree, fileVersion, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
 
 const MAX_ATTEMPTS = 3;
 // A model the provider no longer serves (or gives this plan no allowance for) is dropped from the account,
@@ -353,6 +353,35 @@ export class Engine {
     const disk = readJson<Job | null>(path.join(files.jobs(), `${id}.json`), null);
     // a file whose id does not match its name was not written by omnitrix for this job
     return (disk && disk.id === id ? disk : undefined) ?? mine;
+  }
+
+  /**
+   * Other finished code jobs in the same repository that changed a file this job also changed, where
+   * neither job started from the other's result and the two results differ. Copying both jobs'
+   * files would silently drop one of the changes, so Claude has to combine them. Rejected work does not
+   * count, and neither does a job whose branch is gone.
+   */
+  overlaps(job: Job): { jobId: string; files: string[] }[] {
+    const mine = job.verify?.files ?? [];
+    if (job.status !== 'done' || !job.worktree || !job.task.repo || !mine.length) return [];
+    const repo = path.resolve(job.task.repo);
+    const branch = `refs/heads/${job.worktree.branch}`;
+    const found: { jobId: string; files: string[] }[] = [];
+    for (const other of this.listJobs(50)) {
+      if (other.id === job.id || other.status !== 'done' || other.verdict === 'rejected' || !other.worktree || !other.task.repo) continue;
+      if (path.resolve(other.task.repo) !== repo) continue;
+      const shared = (other.verify?.files ?? []).filter((f) => mine.includes(f));
+      const theirs = `refs/heads/${other.worktree.branch}`;
+      const files = shared.filter((f) => {
+        if (!branchExists(repo, other.worktree!.branch)) return false;
+        // either job may have started from the other's result, which then already holds both changes
+        const v = fileVersion(repo, theirs, f);
+        const own = fileVersion(repo, branch, f);
+        return v !== own && v !== fileVersion(repo, `${branch}~1`, f) && own !== fileVersion(repo, `${theirs}~1`, f);
+      });
+      if (files.length) found.push({ jobId: other.id, files });
+    }
+    return found;
   }
 
   /** Newest first. Other processes' jobs come from disk, since our copies are startup snapshots and miss new ones. */

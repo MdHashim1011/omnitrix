@@ -124,6 +124,12 @@ export function discardWorktree(repoRoot: string, dir: string, branch: string): 
   }
 }
 
+/** The git object id of a file at a revision, or '' when the file or the revision does not exist there. */
+export function fileVersion(repo: string, rev: string, file: string): string {
+  const out = spawnSync('git', ['rev-parse', '--verify', '--quiet', `${rev}:${file}`], { cwd: repo, encoding: 'utf8', windowsHide: true });
+  return out.status === 0 ? out.stdout.trim() : '';
+}
+
 /** True when everything on the branch is already in the repo's current HEAD. */
 export function branchMerged(repo: string, branch: string): boolean {
   return spawnSync('git', ['merge-base', '--is-ancestor', `refs/heads/${branch}`, 'HEAD'], { cwd: repo, windowsHide: true }).status === 0;
