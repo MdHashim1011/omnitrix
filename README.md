@@ -212,7 +212,7 @@ Each task has a `title` of at most 200 characters, a `type`, a `prompt` and opti
 
 The `pool_status`, `dispatch` and `get_results` tools declare output schemas, and their structured data contains everything their text shows. `list_jobs` also lists jobs that other omnitrix processes started, and `cancel_job` can cancel them.
 
-A task can set `effort` to `low`, `medium` or `high` to ask a reasoning model to think less or more. omnitrix passes it to Codex and to OpenAI-compatible APIs such as Gemini, but not to Anthropic-format APIs or to other agent CLIs; without it, each provider uses its own default. From the command line, use `omnitrix run --effort high`.
+A task can set `effort` to `low`, `medium` or `high` to ask a reasoning model to think less or more. omnitrix passes it to Codex and to OpenAI-compatible APIs such as Gemini, but not to Anthropic-format APIs or to other agent CLIs; without it, each provider uses its own default. From the command line, use `omnitrix run --effort high`. Some models write their reasoning before the answer, such as Gemma 4 inside `<thought>` tags or DeepSeek R1 inside `<think>` tags; omnitrix removes such a block from the start of an answer from an OpenAI-compatible API, so that Claude receives only the answer.
 
 ### Checking and retrying results
 

@@ -12,6 +12,16 @@ function authHeaders(account: Account): Record<string, string> {
   return h;
 }
 
+/**
+ * The answer without a thinking block that some models put before it, such as Gemma 4's
+ * "<thought>...</thought>" or DeepSeek R1's "<think>...</think>". Only a closed block at the very start
+ * goes; a block later on is part of the answer, and an answer that is only thinking is kept whole.
+ */
+export function withoutThinking(text: string): string {
+  const m = /^\s*<(think|thought|thinking)>[\s\S]*?<\/\1>\s*/i.exec(text);
+  return m && m[0].length < text.length ? text.slice(m[0].length) : text;
+}
+
 /** Chat Completions: the format almost every provider and local runtime speaks. */
 export async function runOpenAI(req: DriverRequest): Promise<DriverResult> {
   const { account } = req;
@@ -33,7 +43,7 @@ export async function runOpenAI(req: DriverRequest): Promise<DriverResult> {
   const { json, headers } = await postJson(joinUrl(account.baseUrl, 'chat/completions'), authHeaders(account), body, req.timeoutMs, req.signal);
   const choice = json?.choices?.[0];
   const content = choice?.message?.content;
-  const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((p: any) => p?.text ?? '').join('') : '';
+  const text = withoutThinking(typeof content === 'string' ? content : Array.isArray(content) ? content.map((p: any) => p?.text ?? '').join('') : '');
   if (!text && !choice) throw new DriverError(`unexpected response: ${JSON.stringify(json).slice(0, 200)}`, 'server');
 
   const usage = json?.usage ?? {};

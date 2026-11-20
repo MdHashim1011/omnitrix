@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { classifyCliError } from '../src/drivers/cli.js';
 import { retryAfterMs } from '../src/drivers/http.js';
-import { runOpenAI } from '../src/drivers/openai.js';
+import { runOpenAI, withoutThinking } from '../src/drivers/openai.js';
 import { makeModel } from '../src/models.js';
 import { getProvider } from '../src/providers.js';
 import { route } from '../src/router.js';
 import { defaultSettings, redact, resolveKey, setSecret } from '../src/store.js';
-import { account, tempHome } from './helpers.js';
+import { account, chatReply, mockProvider, tempHome } from './helpers.js';
 
 beforeEach(() => {
   tempHome();
@@ -58,5 +58,31 @@ describe('secret tasks', () => {
 
   it('Gemini CLI uses the same API terms as the Gemini API, which may train on prompts', () => {
     expect(getProvider('gemini-cli')?.trainsOnData).toBe(getProvider('gemini')?.trainsOnData);
+  });
+});
+
+describe('thinking at the start of an answer', () => {
+  it('removes a thought block that a model puts before its answer', () => {
+    // seen in real use: Gemma 4 on the Gemini API answered "<thought>...</thought>Red, Blue, Yellow"
+    expect(withoutThinking('<thought>* Input: name colours.\n* Red, Blue, Yellow</thought>Red, Blue, Yellow')).toBe('Red, Blue, Yellow');
+    expect(withoutThinking('  <think>\nhmm\n</think>\n\nThe answer is 4.')).toBe('The answer is 4.');
+  });
+
+  it('keeps everything else as it is', () => {
+    // a block later in the answer is part of the answer
+    expect(withoutThinking('Use <think> tags like <think>this</think>.')).toBe('Use <think> tags like <think>this</think>.');
+    // an unclosed block may be cut off, and an answer that is only thinking is still better than nothing
+    expect(withoutThinking('<thought>still going')).toBe('<thought>still going');
+    expect(withoutThinking('<thought>only this</thought>')).toBe('<thought>only this</thought>');
+  });
+
+  it('gives the worker answer without the block', async () => {
+    const p = await mockProvider(() => ({ json: chatReply('<thought>plan</thought>Red, Blue, Yellow') }));
+    try {
+      const r = await runOpenAI({ account: account({ id: 'a', baseUrl: p.url, local: true }), model: 'test-model', prompt: 'p', timeoutMs: 5000 });
+      expect(r.text).toBe('Red, Blue, Yellow');
+    } finally {
+      await p.close();
+    }
   });
 });
