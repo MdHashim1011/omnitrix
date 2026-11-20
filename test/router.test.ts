@@ -179,3 +179,13 @@ describe('router quota timing and free tiers', () => {
     expect(why).not.toMatch(/resets in/);
   });
 });
+
+describe('how the router explains quota', () => {
+  it('does not present the assumed share of an account without a known limit as quota left', () => {
+    // seen in real use: a local Ollama model, which has no quota, was explained as "quota 80% left"
+    const local = account({ id: 'ollama', local: true });
+    const why = route({ title: 't', type: 'writing', prompt: 'p' }, ctx([local])).candidates[0]!.why.join(', ');
+    expect(why).not.toMatch(/quota 80% left/);
+    expect(why).toMatch(/no known limit/);
+  });
+});

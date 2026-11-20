@@ -164,7 +164,10 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       // an account with little quota left still qualifies, it just stops being the first pick
       const q = 0.4 + 0.6 * room;
       score *= q;
-      why.push(`quota ${(room * 100).toFixed(0)}% left${usage?.source === 'measured' ? ' (measured)' : usage?.source === 'estimated' ? ' (estimated)' : ''}`);
+      // without a known limit, the share is an assumption (see headroom), not a reading
+      why.push(usage?.percentUsed === undefined
+        ? `no known limit (counted as ${(room * 100).toFixed(0)}% left)`
+        : `quota ${(room * 100).toFixed(0)}% left${usage.source === 'measured' ? ' (measured)' : usage.source === 'estimated' ? ' (estimated)' : ''}`);
 
       const t = timing(usage, room, now);
       score *= t.factor;
