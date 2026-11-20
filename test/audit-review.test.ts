@@ -166,3 +166,30 @@ describe('throwing away a worker copy before a retry', () => {
     }
   });
 });
+
+describe('file contents in a worker prompt', () => {
+  const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-lines-'));
+
+  it('numbers the lines for a review, so findings can name them', () => {
+    const d = dir();
+    fs.writeFileSync(path.join(d, 'a.ts'), 'const a = 1;\r\nconst b = 2;\nexport { a, b };\n');
+    const p = buildPrompt({ title: 't', type: 'review', prompt: 'p', files: [path.join(d, 'a.ts')] }, account({ id: 'a' }), undefined);
+    expect(p).toContain('1| const a = 1;\n2| const b = 2;\n3| export { a, b };\n');
+    expect(p).toMatch(/line number/i);
+  });
+
+  it('leaves the text as it is for writing work, where numbers would end up in the answer', () => {
+    const d = dir();
+    fs.writeFileSync(path.join(d, 'a.md'), 'Hello\nWorld\n');
+    const p = buildPrompt({ title: 't', type: 'writing', prompt: 'translate', files: [path.join(d, 'a.md')] }, account({ id: 'a' }), undefined);
+    expect(p).toContain('Hello\nWorld\n');
+    expect(p).not.toMatch(/line number/i);
+  });
+
+  it('keeps a file that holds its own code fences inside one block', () => {
+    const d = dir();
+    fs.writeFileSync(path.join(d, 'README.md'), 'Run:\n```\nnpm test\n```\nDone.\n');
+    const p = buildPrompt({ title: 't', type: 'writing', prompt: 'p', files: [path.join(d, 'README.md')] }, account({ id: 'a' }), undefined);
+    expect(p).toContain('````\nRun:\n```\nnpm test\n```\nDone.\n\n````');
+  });
+});

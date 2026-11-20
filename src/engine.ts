@@ -13,7 +13,7 @@ import { route, effectivePrivacy, fit, modelHealthKey, type Candidate, type Reje
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
-import { DriverError, type Account, type AccountHealth, type Config, type Job, type JobCheck, type TaskSpec, type UsageRecord } from './types.js';
+import { DriverError, type Account, type AccountHealth, type Config, type Job, type JobCheck, type TaskSpec, type TaskType, type UsageRecord } from './types.js';
 import { statsKey } from './models.js';
 import { compactLedger, headroom, LedgerTail, recordUsage, summarize, type UsageSummary } from './usage.js';
 import { outsideFiles, runTest } from './verify.js';
@@ -991,6 +991,16 @@ function attachable(full: string, repo: string | undefined): boolean {
   return !protectedDirs().some((d) => inside(full, d));
 }
 
+const NUMBERED_TYPES = new Set<TaskType>(['review', 'reasoning']);
+
+/** "12| text" on each line, padded to the widest number, without numbering the end of a final newline. */
+function numberLines(body: string): string {
+  const lines = body.replace(/\r\n/g, '\n').split('\n');
+  const last = lines.at(-1) === '' ? lines.pop() : undefined;
+  const width = String(lines.length).length;
+  return lines.map((l, i) => `${String(i + 1).padStart(width)}| ${l}`).join('\n') + (last === undefined ? '' : '\n');
+}
+
 /**
  * The worker's prompt. `inlineFrom` names the folder whose files are copied in; a CLI working in `cwd`
  * reads them itself. Task files are untrusted input (Claude may have been talked into naming them), so
@@ -1004,7 +1014,10 @@ export function buildPrompt(task: TaskSpec, account: Account, cwd: string | unde
       parts.push('', '## Files to look at', ...task.files.map((f) => `- ${f}`));
     } else {
       let budget = MAX_FILE_BYTES;
+      // a finding that names a line is easy to check; in writing or code the numbers could end up in the answer
+      const numbered = NUMBERED_TYPES.has(task.type);
       parts.push('', '## Files');
+      if (numbered) parts.push('Each line starts with its line number and "| ", which are not part of the file.');
       for (const f of task.files) {
         const full = inlineFrom && !path.isAbsolute(f) ? path.join(inlineFrom, f) : f;
         if (!attachable(full, task.repo)) {
@@ -1025,7 +1038,10 @@ export function buildPrompt(task: TaskSpec, account: Account, cwd: string | unde
         }
         if (body.length > budget) body = body.slice(0, Math.max(0, budget)) + '\n[...cut: file too long...]';
         budget -= body.length;
-        parts.push(`### ${f}`, '```', body, '```');
+        if (numbered) body = numberLines(body);
+        // a file with its own code fences, such as a README, must not close this block early
+        const fence = '`'.repeat(Math.max(3, ...[...body.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+        parts.push(`### ${f}`, fence, body, fence);
         if (budget <= 0) break;
       }
     }
