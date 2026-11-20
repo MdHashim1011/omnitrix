@@ -10,8 +10,9 @@ import type { Job } from './types.js';
 import { verifySummary } from './verify.js';
 import { VERSION } from './version.js';
 
-function recentJobs(engine: Engine, limit = 30): Record<string, unknown>[] {
-  return engine.listJobs(limit).map((j) => ({
+/** The newest jobs for the page. A second check is shown on the job it checks, not as a job of its own. */
+export function recentJobs(engine: Engine, limit = 30): Record<string, unknown>[] {
+  return engine.listJobs(limit * 2).filter((j) => !j.checkOf).slice(0, limit).map((j) => ({
     id: j.id,
     status: j.status,
     accountId: j.accountId,
@@ -24,6 +25,7 @@ function recentJobs(engine: Engine, limit = 30): Record<string, unknown>[] {
     task: { title: j.task.title, type: j.task.type } as Job['task'],
     // omnitrix's own check of a code job, as one line; a failed test or files outside the task stand out
     verify: j.verify ? { summary: verifySummary(j.verify), warn: !!j.verify.outside?.length || (!!j.verify.test && j.verify.test.status !== 'passed' && j.verify.test.status !== 'running') } : undefined,
+    check: j.check ? { status: j.check.status, by: j.check.by, note: j.check.note?.slice(0, 400) } : undefined,
   }));
 }
 
@@ -318,7 +320,7 @@ var fmt=function(n){n=Number(n)||0;return n>=999500?(n/1e6).toFixed(1)+'M':n>=1e
 var money=function(c){c=Number(c)||0;return c>0&&c<0.005?'under $0.01':'$'+c.toFixed(2)};
 var clock=function(t){return new Date(t).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})};
 var span=function(ms){var m=Math.max(0,Math.round(ms/60000));return m<1?'under a minute':m<60?m+' min':m<1440?Math.floor(m/60)+' h'+(m%60?' '+(m%60)+' min':''):Math.floor(m/1440)+' d '+Math.floor(m%1440/60)+' h'};
-var ago=function(t){var s=Math.round((Date.now()-t)/1000);return s<60?s+' s ago':s<3600?Math.round(s/60)+' min ago':Math.round(s/3600)+' h ago'};
+var ago=function(t){var s=Math.round((Date.now()-t)/1000);return s<60?s+' s ago':s<3600?Math.round(s/60)+' min ago':s<172800?Math.round(s/3600)+' h ago':Math.round(s/86400)+' days ago'};
 function icon(name){
   var p={terminal:'<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 9l3 3-3 3M12 15h5"/>',
     cloud:'<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.5 1.5A3.75 3.75 0 0 1 17.5 18z"/>',
@@ -381,7 +383,18 @@ function jobHtml(j,open){
   return '<li class="job"><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span>'
     +'<div><div class="t">'+esc(j.task.title)+'</div><div class="m">'+esc(j.task.type)+(j.accountId?' · '+esc(j.accountId)+(j.model?' / '+esc(j.model):''):'')+'</div></div>'
     +'<div class="r">'+[tokens,ago(j.createdAt)].filter(Boolean).join(' · ')+(verdict?'<div>'+verdict+'</div>':'')+'</div>'+err
-    +(j.verify?'<div class="vf'+(j.verify.warn?' warn':'')+'">Checked by omnitrix: '+esc(j.verify.summary)+'</div>':'')+'</li>';
+    +(j.verify?'<div class="vf'+(j.verify.warn?' warn':'')+'">Checked by omnitrix: '+esc(j.verify.summary)+'</div>':'')+checkHtml(j.check)+'</li>';
+}
+// the second model's check, on the job it checks; a check that could not run is not a failure of the job
+function checkHtml(c){
+  if(!c)return '';
+  var by=c.by?' by '+esc(c.by):'', note=c.note?' '+esc(c.note):'';
+  var text=c.status==='pass'?'Second check'+by+': passed.'+note
+    :c.status==='fail'?'Second check'+by+': failed.'+note
+    :c.status==='unclear'?'Second check'+by+' gave no clear answer.'+note
+    :c.status==='pending'?'Second check is running.'
+    :'Second check not run:'+note;
+  return '<div class="vf'+(c.status==='fail'||c.status==='unclear'?' warn':'')+'">'+text+'</div>';
 }
 var last=0, wasStale=null, lastRaw='', drawnMinute=-1, started=Date.now(), connected=false, savedAt=0, down=false;
 function tick(){

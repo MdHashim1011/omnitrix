@@ -260,3 +260,17 @@ describe('after review', () => {
     expect(await runningDashboard()).toBe(`http://127.0.0.1:${port}`);
   }, 30_000);
 });
+
+describe('jobs as the dashboard lists them', () => {
+  it('shows a second check on the job it belongs to, not as a job of its own', async () => {
+    // seen in real use: a check that found no account strong enough showed as a red "Failed" job
+    const { recentJobs } = await import('../src/dashboard.js');
+    const base = { owner: '999999.dead', pid: 999999, createdAt: Date.now(), updatedAt: Date.now(), attempts: [] };
+    writeJson(path.join(files.jobs(), 'jparent9.json'), { ...base, id: 'jparent9', status: 'done', task: { title: 'Review', type: 'review', prompt: 'p' },
+      check: { status: 'unavailable', jobId: 'jcheck99', note: 'no account can take this task. ollama/tiny: weaker at review (fit 0.30) than the worker it would check' } });
+    writeJson(path.join(files.jobs(), 'jcheck99.json'), { ...base, id: 'jcheck99', status: 'failed', checkOf: 'jparent9', error: 'no account can take this task', task: { title: 'Check: Review', type: 'review', prompt: 'p' } });
+    const jobs = recentJobs(new Engine());
+    expect(jobs.map((j) => j.id)).toEqual(['jparent9']);
+    expect(jobs[0]!.check).toEqual({ status: 'unavailable', by: undefined, note: expect.stringMatching(/weaker at review/) });
+  });
+});
