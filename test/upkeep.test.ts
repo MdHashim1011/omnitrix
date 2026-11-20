@@ -121,6 +121,8 @@ describe('omnitrix clean --branches', () => {
 
     const dry = spawnSync(process.execPath, [cli, 'clean', '--branches', '--dry-run'], { env: { ...process.env, OMNITRIX_HOME: home }, encoding: 'utf8' });
     expect(dry.stdout).toMatch(/would delete 3 branches/);
+    // a dry run changes nothing, so it says what it would keep, and names the branches
+    expect(dry.stdout).toMatch(/would keep 2 that are not merged: omnitrix\/junmerged, omnitrix\/junrated/);
     expect(git(repo, 'branch', '--list', 'omnitrix/*').stdout.match(/omnitrix\//g)).toHaveLength(5);
 
     const r = spawnSync(process.execPath, [cli, 'clean', '--branches'], { env: { ...process.env, OMNITRIX_HOME: home }, encoding: 'utf8' });
@@ -131,7 +133,8 @@ describe('omnitrix clean --branches', () => {
     expect(left).not.toContain('omnitrix/jrejected');
     expect(left).not.toContain('omnitrix/jfailed');
     expect(left).not.toContain('omnitrix/jmerged');
-    expect(r.stdout).toMatch(/deleted 3 branches, kept 2 that are not merged/);
+    expect(r.stdout).toMatch(/deleted 3 branches, kept 2 that are not merged: omnitrix\/junmerged, omnitrix\/junrated/);
+    expect(r.stdout).toMatch(/git branch -D/);
     expect(fs.existsSync(path.join(files.jobs(), 'junmerged.json'))).toBe(true);
   }, 60_000);
 });

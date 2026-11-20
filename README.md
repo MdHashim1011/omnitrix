@@ -251,7 +251,7 @@ omnitrix statusline             print the status line (Claude Code runs this its
 
 Run `omnitrix <command> --help` for every option of a command. `omnitrix run` takes no `check`, `test`, `files` or `size`; those are set by Claude through `dispatch`.
 
-`omnitrix clean --branches` also deletes the git branch of each old job that was rejected, failed or cancelled, and the branch of any other old job once its work is already in the repository's current branch. A branch with work that has not been merged is kept, together with its job record, so that a later `clean --branches` can still remove it once it is merged or rejected. Only branches that omnitrix created for its jobs are deleted. Add `--dry-run` to see what would be deleted first; it changes nothing.
+`omnitrix clean --branches` also deletes the git branch of each old job that was rejected, failed or cancelled, and the branch of any other old job once its work is already in the repository's current branch. A branch with work that has not been merged is kept, together with its job record, so that a later `clean --branches` can still remove it once it is merged or rejected. Work taken by copying files from the branch, rather than by merging it, does not count as merged, so the command names each branch it keeps; delete one with `git branch -D <name>` once you no longer need it. Only branches that omnitrix created for its jobs are deleted. Add `--dry-run` to see what would be deleted first; it changes nothing.
 
 `omnitrix settings --mode saver` prefers free and low-cost models, `--mode quality` prefers the strongest models, and `--pin code=codex-main` tries that account first for code tasks whenever it is eligible.
 

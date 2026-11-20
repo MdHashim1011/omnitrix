@@ -814,7 +814,7 @@ program
     let jobs = 0;
     let trees = 0;
     let branches = 0;
-    let kept = 0;
+    const kept: string[] = [];
     let stuck = 0;
     for (const name of fs.existsSync(files.jobs()) ? fs.readdirSync(files.jobs()) : []) {
       const file = path.join(files.jobs(), name);
@@ -843,7 +843,7 @@ program
         // rejected or broken work is not wanted; anything else goes only once it is in the repo's history
         const unwanted = job.verdict === 'rejected' || job.status === 'failed' || job.status === 'cancelled';
         if (!unwanted && !branchMerged(repo, branch)) {
-          kept++;
+          kept.push(branch);
           keepRecord = true;
         } else if (o.dryRun || deleteBranch(repo, branch)) {
           branches++;
@@ -865,9 +865,16 @@ program
       trees++;
       if (!o.dryRun) pruneWorktree(dir);
     }
-    const verb = o.dryRun ? 'would remove' : 'removed';
-    console.log(`${verb} ${jobs} old jobs and ${trees} worktrees`);
-    if (o.branches) console.log(`${o.dryRun ? 'would delete' : 'deleted'} ${branches} branches, kept ${kept} that are not merged${stuck ? `, could not delete ${stuck}` : ''}`);
+    const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+    console.log(`${o.dryRun ? 'would remove' : 'removed'} ${count(jobs, 'old job', 'old jobs')} and ${count(trees, 'worktree', 'worktrees')}`);
+    if (o.branches) {
+      // Work copied with "git checkout <branch> -- <file>" never counts as merged, so a kept branch is named:
+      // only the user knows whether it is still needed.
+      const names = kept.sort();
+      const shown = names.length ? `: ${names.slice(0, 10).join(', ')}${names.length > 10 ? ', ...' : ''}` : '';
+      console.log(`${o.dryRun ? 'would delete' : 'deleted'} ${count(branches, 'branch', 'branches')}, ${o.dryRun ? 'would keep' : 'kept'} ${kept.length} that are not merged${shown}${stuck ? `, could not delete ${stuck}` : ''}`);
+      if (names.length) console.log('Once a kept branch is no longer needed, delete it with "git branch -D <name>" in its repository.');
+    }
   });
 
 program
