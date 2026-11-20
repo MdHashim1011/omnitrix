@@ -114,6 +114,23 @@ export function readRateHeaders(headers: Headers, now = Date.now()) {
   return { remainingRequests, remainingTokens, resetAt };
 }
 
+/**
+ * What a provider said went wrong, on one line: the sentence from a JSON error such as Gemini's
+ * [{"error":{"message":"..."}}], or else the body itself. Only for people and Claude to read; the kind
+ * of error is decided from the whole body.
+ */
+export function errorMessage(text: string): string {
+  try {
+    let j = JSON.parse(text);
+    if (Array.isArray(j)) j = j[0];
+    const m = j?.error?.message ?? (typeof j?.error === 'string' ? j.error : undefined) ?? j?.message ?? j?.detail;
+    if (typeof m === 'string' && m.trim()) return m.replace(/\s+/g, ' ').trim();
+  } catch {
+    // not JSON
+  }
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 export async function postJson(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number, signal?: AbortSignal) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(new Error('timeout')), timeoutMs);
@@ -131,7 +148,7 @@ export async function postJson(url: string, headers: Record<string, string>, bod
     const text = await readCapped(res, MAX_ANSWER);
     if (!res.ok) {
       const kind = classifyStatus(res.status, text);
-      throw new DriverError(`HTTP ${res.status}: ${redact(text.slice(0, 400))}`, kind, res.status, retryAfterMs(res.headers));
+      throw new DriverError(`HTTP ${res.status}: ${redact(errorMessage(text).slice(0, 400))}`, kind, res.status, retryAfterMs(res.headers));
     }
     let json: any;
     try {
@@ -155,7 +172,7 @@ export async function postJson(url: string, headers: Record<string, string>, bod
 export async function getJson(url: string, headers: Record<string, string>, timeoutMs = 15_000) {
   const res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
   const text = await readCapped(res, MAX_LIST);
-  if (!res.ok) throw new DriverError(`HTTP ${res.status}: ${redact(text.slice(0, 300))}`, classifyStatus(res.status, text), res.status);
+  if (!res.ok) throw new DriverError(`HTTP ${res.status}: ${redact(errorMessage(text).slice(0, 300))}`, classifyStatus(res.status, text), res.status);
   return JSON.parse(text);
 }
 

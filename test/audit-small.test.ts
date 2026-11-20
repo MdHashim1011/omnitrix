@@ -86,3 +86,25 @@ describe('thinking at the start of an answer', () => {
     }
   });
 });
+
+describe('error messages from providers', () => {
+  it('shows the sentence from a JSON error on one line, and keeps the kind of error', async () => {
+    // seen in real use: Gemini answered 503 with [{ "error": { "code": 503, "message": "...", "status": "UNAVAILABLE" } }]
+    const busy = 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.';
+    const p = await mockProvider(() => ({ status: 503, json: [{ error: { code: 503, message: busy, status: 'UNAVAILABLE' } }] }));
+    try {
+      const err: any = await runOpenAI({ account: account({ id: 'a', baseUrl: p.url, local: true }), model: 'test-model', prompt: 'p', timeoutMs: 5000 }).catch((e) => e);
+      expect(err.message).toBe(`HTTP 503: ${busy}`);
+      expect(err.kind).toBe('server');
+    } finally {
+      await p.close();
+    }
+  });
+
+  it('keeps a body that is not a JSON error, on one line', async () => {
+    const { errorMessage } = await import('../src/drivers/http.js');
+    expect(errorMessage('<html>\n  Bad Gateway\n</html>')).toBe('<html> Bad Gateway </html>');
+    expect(errorMessage('{"message":"model not found"}')).toBe('model not found');
+    expect(errorMessage('{"error":"invalid key"}')).toBe('invalid key');
+  });
+});
