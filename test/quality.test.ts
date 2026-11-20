@@ -342,3 +342,50 @@ describe('check ownership and tools', () => {
     expect(done!.check!.note).toMatch(/without tools/);
   });
 });
+
+describe('several independent answers to one task', () => {
+  async function three() {
+    const servers = await Promise.all(['A', 'B', 'C'].map((n) => mockProvider(() => ({ json: chatReply(`answer from ${n}`) }))));
+    for (const s of servers) closers.push(s.close);
+    writeConfig(servers.map((s, i) => account({ id: `acc${i}`, baseUrl: s.url, local: true, priority: i })));
+    return servers;
+  }
+
+  it('sends each copy to a different model, so the answers are independent', async () => {
+    const servers = await three();
+    const engine = new Engine();
+    const jobs = engine.dispatch([task({ title: 'Review', type: 'review', copies: 3 })]);
+    expect(jobs.map((j) => j.task.title)).toEqual(['Review [1/3]', 'Review [2/3]', 'Review [3/3]']);
+    const done = await engine.wait(jobs.map((j) => j.id), 10);
+    expect(new Set(done.map((j) => j.accountId)).size).toBe(3);
+    expect(servers.every((s) => s.calls.length === 1)).toBe(true);
+  });
+
+  it('sends only as many copies as there are different models', async () => {
+    await three();
+    const jobs = new Engine().dispatch([task({ title: 'Review', type: 'review', copies: 5 })]);
+    expect(jobs.map((j) => j.task.title)).toEqual(['Review [1/3]', 'Review [2/3]', 'Review [3/3]']);
+  });
+
+  it('refuses copies of a code task, whose copies would change the same files', () => {
+    writeConfig([account({ id: 'a' })]);
+    expect(() => new Engine().dispatch([task({ type: 'code', repo: process.cwd(), copies: 2 })])).toThrow(/copies/);
+  });
+});
+
+describe('copies and weak models', () => {
+  it('leaves out a model much weaker than the best one, which would only add noise', () => {
+    // seen in a real preview: a 3B local model was picked as the third reviewer next to Gemini
+    const strong = { coding: 7, reasoning: 7, writing: 7, longContext: 7, vision: 0, speed: 7 };
+    const weak = { coding: 3, reasoning: 3, writing: 4, longContext: 3, vision: 0, speed: 9 };
+    writeConfig([
+      account({ id: 'a', local: true, priority: 0, models: [makeModel('big1', { skills: strong })] }),
+      account({ id: 'b', local: true, priority: 1, models: [makeModel('big2', { skills: strong })] }),
+      account({ id: 'c', local: true, priority: 2, models: [makeModel('tiny', { skills: weak })] }),
+    ]);
+    const jobs = new Engine().dispatch([task({ title: 'Review', type: 'review', copies: 3 })]);
+    expect(jobs.map((j) => j.task.title)).toEqual(['Review [1/2]', 'Review [2/2]']);
+    // a copy whose model fails must not fall back to the weak model either
+    expect(jobs.every((j) => (j.task.minFit ?? 0) > 0.4)).toBe(true);
+  });
+});

@@ -160,6 +160,8 @@ export interface TaskSpec {
   avoid?: string[];
   /** when the job is done, a different account checks the result against `acceptance` */
   check?: boolean;
+  /** 2 to 5: send the task to that many different models, for independent answers to compare (not for code) */
+  copies?: number;
   /** only models without tools (API drivers); set on checks, whose prompt holds another worker's output */
   textOnly?: boolean;
   /** models whose fit for this task type is lower are not used; set on checks, so a checker is not much weaker than the worker */

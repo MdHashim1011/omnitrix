@@ -322,18 +322,51 @@ export class Engine {
     return route(task, this.routeContext(cfg));
   }
 
+  /**
+   * A task with `copies` becomes one task per model, each on a different model: different accounts
+   * first, then other models of the same accounts. Each copy avoids the models picked for the others, so
+   * the answers are independent, and it can still fall back to a model nobody picked. With fewer
+   * suitable models than copies, there are fewer copies.
+   */
+  private copiesOf(t: TaskSpec): TaskSpec[] {
+    if (!t.copies) return [t];
+    const { copies, ...task } = t;
+    // a model much weaker than the best one adds noise, not confidence, so the copies keep the check's floor
+    const cfg = this.config();
+    const fitOf = (c: Candidate) => {
+      const m = cfg.accounts.find((a) => a.id === c.accountId)?.models.find((x) => x.id === c.model);
+      return m ? fit(m.skills, task.type) : 0;
+    };
+    const all = this.preview(task).candidates;
+    const minFit = Math.max(0, ...all.map(fitOf)) - CHECKER_MARGIN;
+    const ranked = all.filter((c) => fitOf(c) >= minFit).map((c) => ({ account: c.accountId, key: `${c.accountId}/${c.model}` }));
+    const picks: string[] = [];
+    const accounts = new Set<string>();
+    for (const c of ranked) if (picks.length < copies && !accounts.has(c.account)) { picks.push(c.key); accounts.add(c.account); }
+    for (const c of ranked) if (picks.length < copies && !picks.includes(c.key)) picks.push(c.key);
+    if (picks.length < 2) return [task];
+    return picks.map((pick, i) => ({
+      ...task,
+      title: `${task.title.slice(0, 190)} [${i + 1}/${picks.length}]`,
+      avoid: [...(task.avoid ?? []), ...picks.filter((p) => p !== pick)],
+      minFit: Math.max(task.minFit ?? 0, minFit),
+    }));
+  }
+
   /** Throws before queuing anything if a task can never run. */
   dispatch(tasks: TaskSpec[], links: Pick<Job, 'checkOf' | 'retryOf'> = {}): Job[] {
     for (const t of tasks) {
       // without a repo the agent would edit a temp folder that is deleted afterwards
       if (t.type === 'code' && !t.repo) throw new Error(`task "${t.title}": code tasks need "repo", the absolute path of a git repository`);
       if (t.check && !t.acceptance?.trim()) throw new Error(`task "${t.title}": a check needs "acceptance", the line the result is checked against`);
+      if (t.copies !== undefined && (!Number.isInteger(t.copies) || t.copies < 2 || t.copies > 5)) throw new Error(`task "${t.title}": "copies" is a whole number from 2 to 5`);
+      if (t.copies !== undefined && t.type === 'code') throw new Error(`task "${t.title}": a code task cannot have copies, because they would change the same files`);
       if (t.test !== undefined && (t.type !== 'code' || !Array.isArray(t.test) || !t.test.length || t.test.length > 30 || t.test.some((a) => typeof a !== 'string' || !a || a.length > 500 || a.includes('\0')))) {
         throw new Error(`task "${t.title}": "test" is a test command for a code task, given as the program and its arguments, such as ["npm", "test"]`);
       }
     }
     const now = Date.now();
-    const created = tasks.map((task) => {
+    const created = tasks.flatMap((t) => this.copiesOf(t)).map((task) => {
       const job: Job = { id: newId('j'), task, status: 'queued', createdAt: now, updatedAt: now, attempts: [], pid: process.pid, owner: OWNER, ...links };
       this.jobs.set(job.id, job);
       this.saveJob(job);
