@@ -42,7 +42,14 @@ export interface RouteContext {
   blocked?: Record<string, string>;
   /** typical answer time in ms per "account/model", from usage (see typicalLatency) */
   latency?: Record<string, number>;
+  /** memory of this computer's graphics card in bytes, when known (NVIDIA only) */
+  gpuBytes?: number;
+  /** size in bytes of local models per "account/model", as the local server reports it */
+  localSizes?: Record<string, number>;
 }
+
+// a local model larger than the graphics card's memory runs mostly on the processor, many times slower
+const TOO_BIG_FOR_GPU = 0.4;
 
 /** True when the address is this computer, so a "local" account really keeps prompts here. */
 export function loopback(baseUrl: string | undefined): boolean {
@@ -193,6 +200,12 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       const acc = exact.samples || !model.digest ? exact : acceptanceFactor(ctx.stats, model.id, task.type, now);
       score *= acc.factor;
       if (acc.samples) why.push(`past results x${acc.factor.toFixed(2)} (${acc.samples} rated)`);
+
+      const size = account.local ? ctx.localSizes?.[`${account.id}/${model.id}`] : undefined;
+      if (size && ctx.gpuBytes && size > ctx.gpuBytes) {
+        score *= TOO_BIG_FOR_GPU;
+        why.push(`about ${Math.round(size / 1024 ** 3)} GB, more than this computer's ${Math.round(ctx.gpuBytes / 1024 ** 3)} GB of GPU memory, so it runs mostly on the processor and slowly`);
+      }
 
       // A fast task prefers models that answered quickly before: the quickest keeps its score and one ten
       // times slower loses about half. Without a typical time, the speed score stands in, a little below

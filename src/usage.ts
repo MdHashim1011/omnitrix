@@ -195,6 +195,8 @@ export interface WindowUse {
 export interface UsageSummary {
   accountId: string;
   requestsToday: number;
+  /** requests in the last 24 hours that got no answer, such as timeouts, which requestsToday leaves out */
+  failedToday: number;
   tokensToday: number;
   tokensMonth: number;
   costToday: number;
@@ -244,8 +246,10 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
   let hour = 0;
   let hourTokens = 0;
   const monthFrom = monthStart(now);
+  let failed = 0;
   for (const r of records) {
     if (r.accountId !== account.id) continue;
+    if (!r.ok && r.ts >= now - DAY) failed++;
     // failed calls that never reached the model do not count against a quota
     if (!(r.ok || r.errorKind === 'rate_limit' || r.errorKind === 'quota')) continue;
     const t = r.inputTokens + r.outputTokens;
@@ -311,6 +315,7 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
   return {
     accountId: account.id,
     requestsToday: day,
+    failedToday: failed,
     tokensToday: dayTokens,
     tokensMonth: monthTokens,
     costToday: dayCost,

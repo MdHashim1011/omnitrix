@@ -299,3 +299,46 @@ describe('two code jobs that change the same file', () => {
     expect(engine.overlaps(job('jcurrency'))).toEqual([]);
   }, 60_000);
 });
+
+describe('omnitrix test with an empty answer (field report)', () => {
+  const cli = path.resolve(__dirname, '..', 'dist', 'cli.js');
+  it('does not report success when the model answers with nothing', async () => {
+    const empty = await mockProvider(() => ({ json: chatReply('') }));
+    closers.push(empty.close);
+    writeConfig([account({ id: 'q', baseUrl: empty.url, local: true, models: [makeModel('quiet')] })]);
+    // started without blocking: the fake provider answers from this same process
+    const { execFile } = await import('node:child_process');
+    const r = await new Promise<{ stdout: string; status: number | null }>((resolve) => {
+      execFile(process.execPath, [cli, 'test', 'q'], { env: { ...process.env } }, (err, stdout) => resolve({ stdout: String(stdout), status: err ? (typeof err.code === 'number' ? err.code : 1) : 0 }));
+    });
+    expect(r.stdout).toMatch(/empty/);
+    expect(r.stdout).not.toMatch(/^.*ok in/m);
+    expect(r.status).not.toBe(0);
+  }, 30_000);
+});
+
+describe('omnitrix doctor (field report)', () => {
+  const cli = path.resolve(__dirname, '..', 'dist', 'cli.js');
+  it('reports an account whose last request failed, and one that was never used, instead of only "ok"', () => {
+    process.env.OMNITRIX_TEST_NV_KEY = 'x';
+    writeConfig([
+      account({ id: 'nv', apiKey: 'env:OMNITRIX_TEST_NV_KEY', models: [makeModel('m')] }),
+      account({ id: 'fresh', apiKey: 'env:OMNITRIX_TEST_NV_KEY', models: [makeModel('m')] }),
+    ]);
+    writeJson(files.health(), { nv: { state: 'auth_error', reason: 'HTTP 404: Function not found for account', at: Date.now() } });
+    const out = spawnSync(process.execPath, [cli, 'doctor'], { env: { ...process.env }, encoding: 'utf8' }).stdout;
+    expect(out).toMatch(/FAIL\s+nv: last request failed: HTTP 404: Function not found for account/);
+    expect(out).toMatch(/fresh: no request has been sent yet; "omnitrix test fresh" sends one/);
+  }, 30_000);
+});
+
+describe('omnitrix init without --apply (field report)', () => {
+  const cli = path.resolve(__dirname, '..', 'dist', 'cli.js');
+  it('only lists: it neither starts nor opens the dashboard', () => {
+    writeConfig([]);
+    const r = spawnSync(process.execPath, [cli, 'init'], { env: { ...process.env, GROQ_API_KEY: 'x' }, encoding: 'utf8' });
+    expect(r.stdout).toMatch(/Nothing was changed/);
+    expect(r.stdout).not.toMatch(/dashboard:|could not open the dashboard/);
+    expect(r.stdout).toMatch(/omnitrix dashboard/);
+  }, 30_000);
+});

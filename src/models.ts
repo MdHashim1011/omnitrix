@@ -106,6 +106,8 @@ export function statsKey(m: Pick<ModelInfo, 'id' | 'digest'>): string {
 /** Skip models that are clearly not chat models (embeddings, audio, moderation...). */
 export function isChatModel(id: string): boolean {
   if (/(embed|embedding|whisper|tts|audio|moderation|rerank|dall-e|image-gen|transcribe|guard)/i.test(id)) return false;
+  // code-completion models (NVIDIA lists starcoder2) and reward models that only score answers do not chat
+  if (/(starcoder|santacoder|codegen\b|-reward\b|\breward-)/i.test(id)) return false;
   // Gemini lists music (lyria), image output (-image, nano-banana), voice sessions (-live, realtime), research
   // and computer-use agents and attributed QA beside its chat models; none of them answer a chat request
   return !/(lyria|nano-banana|-image(-preview)?$|-live\b|realtime|deep-research|computer-use|\baqa$)/i.test(id);

@@ -286,7 +286,7 @@ summary:active{color:var(--ink)}
 .job details{grid-column:2/4;margin-top:4px}
 .job .err{color:var(--bad);font:12.5px/1.5 var(--mono);margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere}
 .job .vf{grid-column:2/4;color:var(--ink-2);font-size:12.5px;line-height:1.5;overflow-wrap:anywhere}
-.job .vf.warn{color:var(--warn)}
+.job .vf.warn{color:var(--warn)}.stats .warn{color:var(--warn)}
 .empty{background:var(--surface);border:1px dashed var(--line-strong);border-radius:var(--r);padding:22px;color:var(--ink-2)}
 .empty h3{margin:0 0 6px;font-size:16px;color:var(--ink)}
 .empty ol{margin:10px 0 0;padding-left:20px;line-height:2}
@@ -369,7 +369,7 @@ function cardHtml(a,open){
   return '<article class="card" aria-label="'+esc(a.label)+'">'
     +'<div class="head"><div class="title">'+icon(ico)+'<div><h3>'+esc(a.label)+'</h3><div class="sub">'+sub+'</div></div></div><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span></div>'
     +(quota?'<div>'+quota+'</div>':'')+notes
-    +'<div class="stats"><span>Last 24 h</span><span><b>'+u.requestsToday+'</b> request'+(u.requestsToday===1?'':'s')+'</span><span><b>'+fmt(u.tokensToday)+'</b> tokens</span>'+(u.costToday?'<span><b>'+money(u.costToday)+'</b></span>':'')
+    +'<div class="stats"><span>Last 24 h</span><span><b>'+u.requestsToday+'</b> answered</span>'+(u.failedToday?'<span class="warn"><b>'+u.failedToday+'</b> failed</span>':'')+'<span><b>'+fmt(u.tokensToday)+'</b> tokens</span>'+(u.costToday?'<span><b>'+money(u.costToday)+'</b></span>':'')
     +(u.windows.length?'<span class="prov">'+esc(SOURCES[u.source]||u.source)+(u.updatedAt&&!u.stale?', updated '+esc(ago(u.updatedAt)):'')+'</span>':'')+'</div>'
     +(u.stale&&u.updatedAt?'<div class="note warn">omnitrix could not read these numbers again. They are from '+esc(clock(u.updatedAt))+' and may be out of date.</div>':'')
     +modelHtml+'</article>';

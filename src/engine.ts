@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runDriver } from './drivers/index.js';
+import { gpuMemoryBytes, modelSizes } from './drivers/ollama.js';
 import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
 import { reachable } from './init.js';
 import { budgetBlocks, budgetFor, estimateCost, loadTeam, periodStart, personSpend, readShared, shareRecord, type Reserved, type TeamSummary } from './team.js';
@@ -168,6 +169,8 @@ export class Engine {
   }
 
   private localProbedAt = new Map<string, number>();
+  /** sizes in bytes of local Ollama models per "account/model", read with each check of the local servers */
+  private localSizes: Record<string, number> = {};
 
   /** Ask each local server whether it answers, at most every 30 s, so the pool never shows a stopped one as ready. */
   async checkLocal(): Promise<void> {
@@ -176,6 +179,10 @@ export class Engine {
     await Promise.all(due.map(async (a) => {
       this.localProbedAt.set(a.id, now);
       const up = await reachable(a.baseUrl!);
+      // the size of each Ollama model, so routing can tell which ones fit in the graphics card's memory
+      if (up && a.provider === 'ollama') {
+        for (const [name, bytes] of Object.entries(await modelSizes(a.baseUrl!))) this.localSizes[`${a.id}/${name}`] = bytes;
+      }
       // Decide on the latest state from any process. A rest or a sign-in problem set for another reason is
       // left alone: answering its model list does not prove the server can do work, and is no reason to shorten it.
       const disk = loadHealth()[a.id];
@@ -264,7 +271,12 @@ export class Engine {
     const quotas = loadQuotas();
     const usage: Record<string, UsageSummary> = {};
     for (const a of cfg.accounts) usage[a.id] = summarize(a, records.get(a.id) ?? [], this.health[a.id], Date.now(), quotas[a.id]);
-    return { config: cfg, health: this.health, usage, running: this.running, stats: loadStats(), blocked: this.teamBlocks(cfg, records), latency: typicalLatency([...records.values()].flat()) };
+    return {
+      config: cfg, health: this.health, usage, running: this.running, stats: loadStats(), blocked: this.teamBlocks(cfg, records),
+      latency: typicalLatency([...records.values()].flat()),
+      // only read when a local model's size is known, so a computer without local models never runs nvidia-smi
+      ...(Object.keys(this.localSizes).length ? { gpuBytes: gpuMemoryBytes(), localSizes: this.localSizes } : {}),
+    };
   }
 
   pool(): PoolAccountView[] {
@@ -892,6 +904,13 @@ export class Engine {
         this.applyFailure(account, e, cand.model);
         this.tripBreaker(account, e);
       }
+      // A model that broke is paused for five minutes, but one attempt can take that long, so the job itself
+      // keeps it out from now on. After a local timeout, the same computer's models that are as big or
+      // bigger would most likely time out too.
+      if (MODEL_FAULTS.has(e.kind)) {
+        const out = e.kind === 'timeout' && account.local ? avoidAfterTimeout(account.id, cand.model, this.localSizes) : [`${account.id}/${cand.model}`];
+        job.task = { ...job.task, avoid: [...new Set([...(job.task.avoid ?? []), ...out])] };
+      }
       if (e.kind === 'model_gone') {
         try {
           dropModel(account.id, cand.model);
@@ -1074,6 +1093,17 @@ function attachable(full: string, repo: string | undefined): boolean {
   if (repo && !inside(full, repo)) return false;
   if (CREDENTIAL_FILE.test(path.basename(full))) return false;
   return !protectedDirs().some((d) => inside(full, d));
+}
+
+/**
+ * The models a job leaves out after a local model timed out: that model and the same computer's models that
+ * are as big or bigger, which would most likely time out as well. Without its size, only the model itself.
+ */
+export function avoidAfterTimeout(accountId: string, model: string, sizes: Record<string, number>): string[] {
+  const key = `${accountId}/${model}`;
+  const own = sizes[key];
+  if (own === undefined) return [key];
+  return Object.entries(sizes).filter(([k, bytes]) => k.startsWith(`${accountId}/`) && bytes >= own).map(([k]) => k);
 }
 
 const NUMBERED_TYPES = new Set<TaskType>(['review', 'reasoning']);

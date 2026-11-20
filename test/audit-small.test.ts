@@ -108,3 +108,27 @@ describe('error messages from providers', () => {
     expect(errorMessage('{"error":"invalid key"}')).toBe('invalid key');
   });
 });
+
+describe('NVIDIA and other provider messages (field report)', () => {
+  it('knows code-completion and scoring models are not chat models', async () => {
+    const { isChatModel } = await import('../src/models.js');
+    expect(isChatModel('bigcode/starcoder2-15b')).toBe(false);
+    expect(isChatModel('nvidia/nemotron-4-340b-reward')).toBe(false);
+    expect(isChatModel('meta/llama-3.1-8b-instruct')).toBe(true);
+    expect(isChatModel('google/gemma-3-12b-it')).toBe(true);
+  });
+
+  it('reads NVIDIA\'s "not found for account" as a model this key cannot use', async () => {
+    const { classifyStatus } = await import('../src/drivers/http.js');
+    expect(classifyStatus(404, "Function 'abc-123': Not found for account 'xyz'")).toBe('model_gone');
+    // a plain wrong address is not blamed on one model
+    expect(classifyStatus(404, '404 page not found')).not.toBe('model_gone');
+  });
+
+  it('explains a missing key variable as one that omnitrix itself cannot see', async () => {
+    delete process.env.OMNITRIX_TEST_MISSING_KEY;
+    const err = await runOpenAI({ account: account({ id: 'nv', baseUrl: 'https://example.invalid/v1', apiKey: 'env:OMNITRIX_TEST_MISSING_KEY' }), model: 'm', prompt: 'p', timeoutMs: 1000 }).catch((e: Error) => e);
+    expect(String(err)).toMatch(/OMNITRIX_TEST_MISSING_KEY is not set where omnitrix runs/);
+    expect(String(err)).toMatch(/restart Claude Code/);
+  });
+});

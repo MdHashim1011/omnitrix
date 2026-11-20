@@ -444,3 +444,29 @@ describe('privacy of a follow-up', () => {
     await engine.wait([stricter!.id], 10);
   });
 });
+
+describe('local models that time out or are too big (field report)', () => {
+  it('never tries a model twice in one job after it broke, even when its pause has run out', async () => {
+    // seen on a 4 GB GPU: attempts went 9B (timeout), 35B (timeout), then the 9B model again
+    const p = await mockProvider((call) => (call.body?.model === 'm1' ? { status: 500, json: { error: 'boom' } } : { json: chatReply('fine') }));
+    closers.push(p.close);
+    // m1 scores higher, so it is tried first and breaks
+    const better = { coding: 9, reasoning: 9, writing: 9, longContext: 9, vision: 0, speed: 9 };
+    writeConfig([account({ id: 'a', baseUrl: p.url, local: true, models: [makeModel('m1', { skills: better }), makeModel('m2')] })]);
+    const engine = new Engine();
+    const [job] = engine.dispatch([task({ prompt: 'p' })]);
+    const [done] = await engine.wait([job!.id], 10);
+    expect(done!.status).toBe('done');
+    expect(done!.model).toBe('m2');
+    // kept on the job, so the model stays out even after its five-minute pause
+    expect(done!.task.avoid).toContain('a/m1');
+  });
+
+  it('after a local model times out, skips that computer\'s models that are as big or bigger', async () => {
+    const { avoidAfterTimeout } = await import('../src/engine.js');
+    const sizes = { 'a/big': 20e9, 'a/mid': 8e9, 'a/same': 8e9, 'a/small': 3e9, 'b/huge': 40e9 };
+    expect(avoidAfterTimeout('a', 'mid', sizes).sort()).toEqual(['a/big', 'a/mid', 'a/same']);
+    // nothing is known about the size: only the model itself is skipped
+    expect(avoidAfterTimeout('a', 'unknown', sizes)).toEqual(['a/unknown']);
+  });
+});

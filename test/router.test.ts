@@ -214,3 +214,26 @@ describe('speed', () => {
     expect(normal.candidates[0]!.why.join(', ')).not.toMatch(/typical/);
   });
 });
+
+describe('local models and GPU memory (field report)', () => {
+  it('ranks a local model that does not fit in GPU memory below one that does, and says why', () => {
+    const a = account({ id: 'ollama', local: true, models: [makeModel('big', { skills: { coding: 8, reasoning: 8, writing: 8, longContext: 6, vision: 0, speed: 5 } }), makeModel('small', { skills: { coding: 6, reasoning: 6, writing: 6, longContext: 6, vision: 0, speed: 8 } })] });
+    const gpu = { gpuBytes: 4 * 1024 ** 3, localSizes: { 'ollama/big': 20e9, 'ollama/small': 3e9 } };
+    const r = route({ title: 't', type: 'writing', prompt: 'p' }, ctx([a], gpu));
+    expect(r.candidates[0]!.model).toBe('small');
+    expect(r.candidates.find((c) => c.model === 'big')!.why.join(', ')).toMatch(/more than this computer's 4 GB of GPU memory/);
+    // without GPU information nothing changes
+    expect(route({ title: 't', type: 'writing', prompt: 'p' }, ctx([a])).candidates[0]!.model).toBe('big');
+  });
+});
+
+describe('reading the graphics card memory', () => {
+  it('reads nvidia-smi output in MiB, takes the largest card, and ignores anything else', async () => {
+    const { parseGpuMemory } = await import('../src/drivers/ollama.js');
+    // a GTX 1650 Ti reports 4096 MiB
+    expect(parseGpuMemory('4096\r\n')).toBe(4 * 1024 ** 3);
+    expect(parseGpuMemory('4096\n24576\n')).toBe(24 * 1024 ** 3);
+    expect(parseGpuMemory('')).toBeUndefined();
+    expect(parseGpuMemory('NVIDIA-SMI has failed\n')).toBeUndefined();
+  });
+});

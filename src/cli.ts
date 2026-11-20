@@ -18,7 +18,7 @@ import { basisOf, isChatModel, makeModel, statsKey } from './models.js';
 import { loadStats } from './stats.js';
 import { PROVIDERS, getProvider } from './providers.js';
 import { renderStatusLine } from './statusline.js';
-import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, updateConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
+import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, updateConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
 import { branchExists, branchMerged, deleteBranch, pruneWorktree } from './worktree.js';
 import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, type Limits, type ModelInfo, type TaskType, type UsageRecord } from './types.js';
 import { refreshQuotas } from './quota.js';
@@ -424,13 +424,22 @@ program
     const cfg = loadConfig();
     const acc = findAccount(cfg, id) ?? die(`no account "${id}"`);
     // try the listed models in order until one answers; a provider may still list models it has retired
-    const queue = o.model ? [o.model] : acc.models.length ? acc.models.map((m) => m.id) : ['default'];
+    // a code-completion or scoring model in the list would fail a chat test for reasons of its own
+    const chat = acc.models.map((m) => m.id).filter(isChatModel);
+    const queue = o.model ? [o.model] : chat.length ? chat : acc.models.length ? acc.models.map((m) => m.id) : ['default'];
     for (const model of queue) {
       const t0 = Date.now();
       process.stdout.write(`testing ${id}/${model} ... `);
       try {
         const r = await runDriver({ account: acc, model, prompt: 'Reply with the single word OK.', timeoutMs: 180_000, maxOutputTokens: 64 });
         const ms = Date.now() - t0;
+        // an empty answer means the model cannot do chat work as it is, so it is not counted as a success
+        if (!r.text.trim()) {
+          console.log(`answered in ${(ms / 1000).toFixed(1)}s, but the answer was empty`);
+          if (!o.model) continue;
+          fail(`${model} gave an empty answer; it may need more output room, or it may not suit chat tasks`);
+          return;
+        }
         const costUsd = r.costUsd ?? estimateCost(acc.models.find((m) => m.id === model), r.inputTokens, r.outputTokens);
         const rec = { ts: Date.now(), accountId: id, model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ok: true, latencyMs: ms, costUsd };
         // a test on a team account spends the team's money like any other request
@@ -593,10 +602,14 @@ program
   .action(async (o) => {
     // looking changes nothing; addAccount creates the data folder when something is connected
     const found = await detect(loadConfig());
+    // only --apply starts anything; looking, as the first step is described, changes nothing at all
+    const dashboard = async () => {
+      if (o.apply) await showDashboard(DEFAULT_PORT, o.open, true).catch((err) => console.log(`could not open the dashboard: ${err instanceof Error ? err.message : err}`));
+      else console.log('See the pool live with "omnitrix dashboard".');
+    };
     if (!found.length) {
       console.log('Nothing to connect was found. Run "omnitrix providers" to see what omnitrix supports.');
-      // the dashboard shows the same first steps, and updates by itself once something is connected
-      await showDashboard(DEFAULT_PORT, o.open, true).catch((err) => console.log(`could not open the dashboard: ${err instanceof Error ? err.message : err}`));
+      await dashboard();
       return;
     }
     console.log('Found on this computer:');
@@ -616,7 +629,7 @@ program
       }
     }
     console.log('\nTo use omnitrix from Claude Code, run "omnitrix setup-claude" once, then restart Claude Code.');
-    await showDashboard(DEFAULT_PORT, o.open, true).catch((err) => console.log(`could not open the dashboard: ${err instanceof Error ? err.message : err}`));
+    await dashboard();
   });
 
 function money(v: number): string {
@@ -905,6 +918,8 @@ program
     ok(fs.existsSync(homeDir()), `data folder ${homeDir()}`);
     const cfg = loadConfig();
     ok(cfg.accounts.length > 0, `${cfg.accounts.length} accounts`);
+    const health = loadHealth();
+    const answered = new Set(readLedger(Date.now() - 32 * 24 * 3600_000).filter((r) => r.ok).map((r) => r.accountId));
     for (const a of cfg.accounts) {
       if (a.driver === 'cli') {
         const tool = CLI_TOOLS[providerTool(a.provider)];
@@ -914,6 +929,15 @@ program
         ok(keyOk, `${a.id}: API key ${a.apiKey?.startsWith('env:') ? `from ${a.apiKey.slice(4)}` : a.local ? 'not needed' : 'saved'}`);
       }
       ok(a.models.length > 0, `${a.id}: ${a.models.length} models`);
+      // A key and a model list do not prove that requests work, so the last real request counts too.
+      // doctor itself sends nothing, so it never spends anyone's quota.
+      const h = health[a.id];
+      const broken = h && (h.state === 'auth_error' || h.state === 'disabled' || ((h.state === 'offline' || h.state === 'exhausted') && (h.until ?? Infinity) > Date.now()));
+      if (broken) ok(false, `${a.id}: last request failed: ${(h.reason ?? h.state).slice(0, 160)}`);
+      else if (!answered.has(a.id)) console.log(`note  ${a.id}: no request has been sent yet; "omnitrix test ${a.id}" sends one`);
+    }
+    if (cfg.accounts.some((a) => a.apiKey?.startsWith('env:'))) {
+      console.log('note  Claude Code passes on only the key variables that existed when it started; restart it after setting one');
     }
   });
 

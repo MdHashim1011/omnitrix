@@ -144,7 +144,8 @@ export function describeAccount(a: PoolAccountView): string {
     bits.push('no limits set');
   }
   if (u.measured?.remainingRequests !== undefined) bits.push(`provider says ${u.measured.remainingRequests} requests left`);
-  bits.push(`today: ${u.requestsToday} req, ${formatTokens(u.tokensToday)} tokens${u.costToday ? `, $${u.costToday.toFixed(3)}` : ''}`);
+  // a rolling day, and failures shown, so the line matches `omnitrix usage`
+  bits.push(`last 24 h: ${u.requestsToday} answered${u.failedToday ? `, ${u.failedToday} failed` : ''}, ${formatTokens(u.tokensToday)} tokens${u.costToday ? `, ${u.costToday.toFixed(3)}` : ''}`);
   if (a.until) bits.push(`back at ${new Date(a.until).toLocaleTimeString()}`);
   if (a.reason) bits.push(a.reason);
   bits.push(`models: ${a.models.slice(0, 6).join(', ')}${a.models.length > 6 ? ` +${a.models.length - 6}` : ''}`);

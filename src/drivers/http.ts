@@ -1,7 +1,21 @@
 // Shared pieces for the API drivers: requests with a timeout, and turning provider errors and
 // rate-limit headers into something the router can act on.
 import { redact } from '../store.js';
-import { DriverError, type ErrorKind } from '../types.js';
+import { DriverError, type Account, type ErrorKind } from '../types.js';
+
+/**
+ * Why an account has no key, in words that lead to the fix. A key variable set in a terminal is not seen by
+ * omnitrix when Claude Code started it before the variable existed, which `omnitrix doctor` in that
+ * terminal cannot show.
+ */
+export function missingKey(account: Account): string {
+  if (account.apiKey?.startsWith('env:')) {
+    const name = account.apiKey.slice(4);
+    return `no API key for ${account.id}: ${name} is not set where omnitrix runs. If it is set in your terminal, restart Claude Code, which passes on only the variables that existed when it started`;
+  }
+  if (account.apiKey === 'secret') return `no API key for ${account.id}: no key is saved for it; save one with "omnitrix set ${account.id} --key-env NAME"`;
+  return `no API key for ${account.id}: none is set; use "omnitrix set ${account.id} --key-env NAME"`;
+}
 
 export function classifyStatus(status: number, body: string): ErrorKind {
   const text = body.toLowerCase();
@@ -25,6 +39,8 @@ export function classifyStatus(status: number, body: string): ErrorKind {
 
 function retiredModel(text: string): boolean {
   if (/(parameter|\bparam\b|argument|max_tokens|max_completion_tokens|reasoning_effort|temperature)/.test(text)) return false;
+  // NVIDIA lists models that a given key cannot call and answers them with "Function '<id>': Not found for account"
+  if (/function '[^']*': not found for account/.test(text)) return true;
   const names = /(model_not_found|invalid_model|models\/|the model|model `|model ')/.test(text);
   return names && /(no longer available|not found|does not exist|is not supported|deprecated|retired)/.test(text);
 }

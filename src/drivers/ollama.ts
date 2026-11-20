@@ -1,12 +1,55 @@
 // Ollama's own API knows what each local model can do. The OpenAI-style model list does not say.
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
 import { makeModel } from '../models.js';
+import { resolveCommand } from './cli.js';
 import type { ModelInfo } from '../types.js';
 import { getJson, postJson } from './http.js';
 
 interface Tag {
   name?: string;
   digest?: string;
+  size?: number;
   details?: { parameter_size?: string };
+}
+
+/** Each local model's size in bytes, as Ollama reports it; empty when the server does not answer. */
+export async function modelSizes(baseUrl: string): Promise<Record<string, number>> {
+  const root = baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
+  try {
+    const list = await getJson(`${root}/api/tags`, {}, 5000);
+    const out: Record<string, number> = {};
+    for (const t of Array.isArray(list?.models) ? (list.models as Tag[]) : []) {
+      if (typeof t.name === 'string' && typeof t.size === 'number' && t.size > 0) out[t.name] = t.size;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+let gpuCache: { bytes: number | undefined } | undefined;
+
+/**
+ * The memory of the largest NVIDIA graphics card, read once with nvidia-smi, or undefined without one.
+ * A local model larger than this runs mostly on the processor, which is many times slower. Other cards
+ * and Apple's shared memory are not read, so nothing changes for them.
+ */
+export function gpuMemoryBytes(): number | undefined {
+  if (gpuCache) return gpuCache.bytes;
+  gpuCache = { bytes: undefined };
+  // resolveCommand skips the current folder on Windows, so a project cannot plant its own nvidia-smi
+  const found = resolveCommand('nvidia-smi');
+  if (!found || !path.isAbsolute(found.file) || found.shell) return undefined;
+  const r = spawnSync(found.file, ['--query-gpu=memory.total', '--format=csv,noheader,nounits'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+  if (r.status === 0) gpuCache.bytes = parseGpuMemory(r.stdout ?? '');
+  return gpuCache.bytes;
+}
+
+/** nvidia-smi prints one line per card with its memory in MiB, such as "4096"; the largest card counts. */
+export function parseGpuMemory(stdout: string): number | undefined {
+  const mib = stdout.split(/\r?\n/).map((l) => Number(l.trim())).filter((n) => Number.isFinite(n) && n > 0);
+  return mib.length ? Math.max(...mib) * 1024 * 1024 : undefined;
 }
 
 /** The given models with capabilities, size and version from Ollama; a model it cannot describe gets plain local scores. */

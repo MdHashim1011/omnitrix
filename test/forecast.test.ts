@@ -158,3 +158,16 @@ describe('forecast edge cases', () => {
     expect(s.windows.map((w) => w.runsOutAt)).toEqual([undefined, undefined]);
   });
 });
+
+describe('requests in the last 24 hours (field report)', () => {
+  it('counts failed requests too, and says so, so the line matches the usage log', async () => {
+    // seen in real use: "today: 1 req" while the usage log held three failed requests as well
+    const failed = (n: number): UsageRecord[] => Array.from({ length: n }, (_, i) => ({ ts: now - (i + 1) * MIN, accountId: 'a', model: 'm', inputTokens: 0, outputTokens: 0, ok: false, errorKind: 'timeout' as const, latencyMs: 300_000 }));
+    const s = summarize(account({ id: 'a', local: true }), [...requests(1, 30 * MIN, 0), ...failed(3)], undefined, now);
+    expect(s.requestsToday).toBe(1);
+    expect(s.failedToday).toBe(3);
+    const { describeAccount } = await import('../src/mcp.js');
+    const text = describeAccount({ id: 'a', label: 'a', state: 'ready', provider: 'ollama', owner: 'me', models: ['m'], usage: s } as any);
+    expect(text).toMatch(/last 24 h: 1 answered, 3 failed/);
+  });
+});

@@ -157,6 +157,8 @@ export async function ensureDashboard(opts: EnsureOptions = {}): Promise<{ url: 
   // After an upgrade the old version gives way. Exactly the process that answered is stopped, so a new
   // server started meanwhile by another `omnitrix init` is never stopped by mistake.
   if (running && running.version !== VERSION) {
+    // only a dashboard this data folder started gives way; one from another folder belongs to someone else's setup
+    if (recorded(port).pid !== running.pid) throw new Error(`port ${port} is used by an omnitrix dashboard (${running.version}) of another omnitrix data folder; stop it from there, or choose another port with --port`);
     await stopProcess(port, running.pid);
     running = await ping(port);
     if (running && running.version !== VERSION) throw new Error(`an older omnitrix dashboard on port ${port} could not be stopped; stop it, then try again`);

@@ -1,10 +1,10 @@
 import { resolveKey } from '../store.js';
 import { DriverError, type Account, type DriverRequest, type DriverResult } from '../types.js';
-import { getJson, joinUrl, postJson, readRateHeaders } from './http.js';
+import { getJson, joinUrl, missingKey, postJson, readRateHeaders } from './http.js';
 
 function headers(account: Account): Record<string, string> {
   const key = resolveKey(account);
-  if (!key) throw new DriverError(`no API key for ${account.id} (${account.apiKey?.startsWith('env:') ? `set ${account.apiKey.slice(4)}` : account.apiKey === 'secret' ? 'no saved key' : 'not set'})`, 'auth');
+  if (!key) throw new DriverError(missingKey(account), 'auth');
   return { 'x-api-key': key, 'anthropic-version': '2023-06-01' };
 }
 

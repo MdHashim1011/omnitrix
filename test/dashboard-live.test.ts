@@ -241,9 +241,19 @@ describe('after review', () => {
     expect(parent).not.toBe(process.pid);
   }, 30_000);
 
-  it('replaces an older dashboard even when its record is missing', async () => {
+  it('never stops an older dashboard that this omnitrix data folder did not start', async () => {
+    // seen in real use: a run with another data folder stopped the owner's own dashboard and took its port
+    writeConfig([]);
+    const other = await impostor('0.0.1');
+    cleanups.push(() => stopDashboard(other.port));
+    await expect(ensureDashboard({ port: other.port, cli, open: false })).rejects.toThrow(/another omnitrix data folder/);
+    expect((await ping(other.port))?.version).toBe('0.0.1');
+  }, 30_000);
+
+  it('still replaces an older dashboard that this data folder started', async () => {
     writeConfig([]);
     const old = await impostor('0.0.1');
+    writeJson(path.join(home, `dashboard-${old.port}.json`), { pid: old.child.pid, port: old.port, version: '0.0.1' });
     cleanups.push(() => stopDashboard(old.port));
     const d = await ensureDashboard({ port: old.port, cli, open: false });
     expect(d.started).toBe(true);
