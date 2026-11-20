@@ -137,10 +137,14 @@ Tasks are `private` by default, which keeps them away from accounts flagged as p
 | An API key | `omnitrix add kimi --key-env MOONSHOT_API_KEY` |
 | Gemini | `omnitrix add gemini --key-env GEMINI_API_KEY` with a key from Google AI Studio. A Google AI Pro sign-in works only through `antigravity`, which is experimental. |
 | A coding plan (GLM, Kimi, MiniMax) | `omnitrix add claude-code --base-url https://api.z.ai/api/anthropic --key-env ZAI_API_KEY` |
+| A free tier | `omnitrix add groq`, `sambanova`, `cerebras`, `huggingface`, `cohere` and others, each with the key in its usual environment variable |
+| GitHub Models | `omnitrix add github-models` with a GitHub token that has the `models:read` permission in `GITHUB_TOKEN`; name models as `publisher/model`, such as `openai/gpt-4.1` |
+| Cloudflare Workers AI | `omnitrix add cloudflare --base-url https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/v1` with the token in `CLOUDFLARE_API_TOKEN` |
 | A local model | `omnitrix add ollama` (LM Studio, llama.cpp and vLLM are also supported) |
 | Any other service | `omnitrix add custom-openai --base-url https://host/v1 --key-env MY_KEY --model my-model` |
+| One more model on an account | `omnitrix model <account> <model> --add`, or `omnitrix models <account> --refresh` to read the provider's current list |
 
-Run `omnitrix providers` for the full list. Each CLI account has its own profile folder, so two Codex logins never mix. Keys are stored as plain text in `~/.omnitrix/secrets.json`, not in the operating system's keychain; on macOS and Linux only your user account can read the file, and on Windows omnitrix leaves its permissions as Windows sets them. Set `OMNITRIX_HOME` to keep omnitrix's data in another folder. If you use `--key-env`, omnitrix does not store the key at all, and when you give neither `--key` nor `--key-env`, `omnitrix add` uses the provider's usual environment variable if it is set. Avoid `--key <value>`, because the key then appears in your shell history.
+Run `omnitrix providers` for the full list, and `omnitrix providers --free` for only the providers with a free tier, free credits or a free allowance, plus local servers. `omnitrix init` finds keys in the usual environment variables, but it does not add GitHub Models or Cloudflare on its own, because `GITHUB_TOKEN` and `CLOUDFLARE_API_TOKEN` are often set for other tools. Each CLI account has its own profile folder, so two Codex logins never mix. Keys are stored as plain text in `~/.omnitrix/secrets.json`, not in the operating system's keychain; on macOS and Linux only your user account can read the file, and on Windows omnitrix leaves its permissions as Windows sets them. Set `OMNITRIX_HOME` to keep omnitrix's data in another folder. If you use `--key-env`, omnitrix does not store the key at all, and when you give neither `--key` nor `--key-env`, `omnitrix add` uses the provider's usual environment variable if it is set. Avoid `--key <value>`, because the key then appears in your shell history.
 
 To track a limit, specify it when you add the account or later with `omnitrix set`:
 
@@ -228,7 +232,7 @@ By default, previews are limited to 1,500 characters to keep Claude's token usag
 
 ```
 omnitrix init                   list what can be connected on this computer (--apply connects it, --no-open skips the dashboard)
-omnitrix providers              list the providers you can connect
+omnitrix providers              list the providers you can connect (--free for free ones)
 omnitrix add <provider>         connect an account (--label, --owner, --id, --key-env, --base-url, --model, --concurrency, limits)
 omnitrix login <id>             sign in a CLI account in its own profile
 omnitrix list                   show accounts, usage and remaining quota (also "status"; --json for machine-readable output)

@@ -80,7 +80,8 @@ function limitsFrom(o: Record<string, any>, base: Limits = {}): Limits {
 program
   .command('providers')
   .description('list the providers you can connect')
-  .action(() => {
+  .option('--free', 'only providers with a free tier or free allowance, and local ones')
+  .action((o: { free?: boolean }) => {
     const groups: [string, (p: (typeof PROVIDERS)[number]) => boolean][] = [
       ['Agent CLIs (sign in with a subscription, can edit files)', (p) => p.driver === 'cli'],
       ['Hosted APIs', (p) => p.driver !== 'cli' && !p.local && !p.id.startsWith('custom')],
@@ -88,8 +89,10 @@ program
       ['Anything else', (p) => p.id.startsWith('custom')],
     ];
     for (const [title, test] of groups) {
+      const shown = PROVIDERS.filter(test).filter((p) => !o.free || p.free || p.local);
+      if (!shown.length) continue;
       console.log(`\n${title}`);
-      for (const p of PROVIDERS.filter(test)) {
+      for (const p of shown) {
         const pad = `\n  ${''.padEnd(17)} `;
         console.log(`  ${p.id.padEnd(17)} ${p.name}${p.signup ? `${pad}${p.signup}` : ''}${p.note ? `${pad}${p.note}` : ''}`);
       }
@@ -132,7 +135,7 @@ async function addAccount(providerId: string, o: Record<string, any>): Promise<v
     driver = 'anthropic';
     baseUrl = o.baseUrl ?? spec.anthropicUrl;
   }
-  if (driver !== 'cli' && !baseUrl) die('this provider needs --base-url');
+  if (driver !== 'cli' && !baseUrl) die(spec.baseUrlHint ? `this provider needs --base-url ${spec.baseUrlHint}` : 'this provider needs --base-url');
   if (driver === 'cli' && o.baseUrl) baseUrl = o.baseUrl;
   else if (driver === 'cli') baseUrl = undefined;
 

@@ -24,6 +24,9 @@ export interface DetectDeps {
 const NOT_AUTOMATIC: Record<string, string> = {
   'claude-code': 'Claude Code is the lead; as a worker it would spend the same Claude quota',
   antigravity: 'Google has suspended accounts used through outside tools; add it yourself if you accept that risk',
+  // these variables are often set for other tools, with tokens that may lack the permission needed here
+  'github-models': 'GITHUB_TOKEN is often set for other tools; if yours has the models:read permission, run "omnitrix add github-models"',
+  cloudflare: 'its address needs your account id: run "omnitrix add cloudflare --base-url https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/v1"',
 };
 
 /** A local server counts when its OpenAI-style model list answers within a moment. */

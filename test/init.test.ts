@@ -113,3 +113,35 @@ describe('omnitrix init: CLIs that need a key or a login', () => {
     expect(fs.existsSync(home)).toBe(false);
   }, 30_000);
 });
+
+describe('more free and open-model providers', () => {
+  it('knows the official addresses and key variables of SambaNova, Hugging Face, Cohere, DeepInfra, GitHub Models and Cloudflare', () => {
+    const byId = Object.fromEntries(PROVIDERS.map((p) => [p.id, p]));
+    expect(byId.sambanova).toMatchObject({ baseUrl: 'https://api.sambanova.ai/v1', keyEnv: 'SAMBANOVA_API_KEY' });
+    expect(byId.huggingface).toMatchObject({ baseUrl: 'https://router.huggingface.co/v1', keyEnv: 'HF_TOKEN' });
+    expect(byId.cohere).toMatchObject({ baseUrl: 'https://api.cohere.ai/compatibility/v1', keyEnv: 'COHERE_API_KEY' });
+    expect(byId.deepinfra).toMatchObject({ baseUrl: 'https://api.deepinfra.com/v1/openai', keyEnv: 'DEEPINFRA_API_KEY' });
+    expect(byId['github-models']).toMatchObject({ baseUrl: 'https://models.github.ai/inference', keyEnv: 'GITHUB_TOKEN' });
+    // its address holds the user's own account id, so it has no fixed one
+    expect(byId.cloudflare).toMatchObject({ keyEnv: 'CLOUDFLARE_API_TOKEN', baseUrlHint: expect.stringContaining('/accounts/') });
+  });
+
+  it('finds a key for a new provider, but never adds GitHub Models or Cloudflare on its own', async () => {
+    // GITHUB_TOKEN and CLOUDFLARE_API_TOKEN are often set for other tools and may lack the needed permission
+    const found = await detect(config(), { ...nothing, env: { SAMBANOVA_API_KEY: 'x', GITHUB_TOKEN: 'x', CLOUDFLARE_API_TOKEN: 'x' } });
+    const byId = Object.fromEntries(found.map((f) => [f.provider, f]));
+    expect(byId.sambanova!.action).toBe('add');
+    expect(byId['github-models']).toMatchObject({ action: 'skip', reason: expect.stringMatching(/omnitrix add github-models/) });
+    expect(byId.cloudflare).toMatchObject({ action: 'skip', reason: expect.stringMatching(/--base-url/) });
+  });
+});
+
+describe('omnitrix providers --free', () => {
+  it('lists only providers with a free tier or allowance, and local ones', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const path = await import('node:path');
+    const out = spawnSync(process.execPath, [path.resolve(__dirname, '..', 'dist', 'cli.js'), 'providers', '--free'], { encoding: 'utf8' }).stdout;
+    for (const id of ['gemini', 'groq', 'openrouter', 'cerebras', 'sambanova', 'github-models', 'cloudflare', 'ollama']) expect(out).toMatch(new RegExp(`^  ${id} `, 'm'));
+    for (const id of ['openai', 'anthropic', 'deepinfra', 'codex']) expect(out).not.toMatch(new RegExp(`^  ${id} `, 'm'));
+  }, 30_000);
+});
