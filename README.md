@@ -278,6 +278,10 @@ omnitrix starts each agent CLI with flags taken from that tool's own documentati
 
 The tests check every driver's flags and how it reads the documented answer format, and they run the Codex driver against a fake CLI. Only Codex has also been run in real jobs, so treat the others as less tested, and report a CLI that fails with the output of `omnitrix test <id>`.
 
+## Tested with real accounts
+
+Besides the automated tests, version 0.2.0 was checked in real use on Windows with three kinds of account: a ChatGPT Plus plan through Codex, a free Gemini API key, and Ollama with two small local models. On a sample project, omnitrix ran code jobs on Codex in their own worktrees with its own test run, reviews on Gemini, a retry that went to another model with the reason attached, a cancelled code job that freed its slot, a secret task and a picture-reading task that stayed on the local models, and a second-model check that reported itself unavailable when no account was strong enough. The live dashboard, quota readings, `omnitrix clean` and every other command were used on the same accounts. Other providers and agent CLIs are covered by the automated tests only.
+
 ## Current limitations
 
 Remaining quota is measured for ChatGPT plans and for providers that send rate-limit headers. For other subscriptions it is an estimate, because those providers do not offer an API for it. The agent CLI drivers depend on the current flags of those tools and may need updating when the flags change.
