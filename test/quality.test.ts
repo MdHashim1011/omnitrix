@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Engine, readVerdict } from '../src/engine.js';
 import { makeModel } from '../src/models.js';
 import { route, type RouteContext } from '../src/router.js';
-import { defaultSettings, files, readJson, redact, writeJson } from '../src/store.js';
+import { defaultSettings, files, readJson, redact, setSecret, writeJson } from '../src/store.js';
 import type { Account, Job, TaskSpec } from '../src/types.js';
 import { account, chatReply, mockProvider, tempHome, writeConfig } from './helpers.js';
 
@@ -363,7 +363,10 @@ describe('several independent answers to one task', () => {
 
   it('sends only as many copies as there are different models', async () => {
     await three();
-    const jobs = new Engine().dispatch([task({ title: 'Review', type: 'review', copies: 5 })]);
+    const engine = new Engine();
+    const jobs = engine.dispatch([task({ title: 'Review', type: 'review', copies: 5 })]);
+    // finished here, so the jobs never reach the accounts of a later test
+    await engine.wait(jobs.map((j) => j.id), 10);
     expect(jobs.map((j) => j.task.title)).toEqual(['Review [1/3]', 'Review [2/3]', 'Review [3/3]']);
   });
 
@@ -374,7 +377,7 @@ describe('several independent answers to one task', () => {
 });
 
 describe('copies and weak models', () => {
-  it('leaves out a model much weaker than the best one, which would only add noise', () => {
+  it('leaves out a model much weaker than the best one, which would only add noise', async () => {
     // seen in a real preview: a 3B local model was picked as the third reviewer next to Gemini
     const strong = { coding: 7, reasoning: 7, writing: 7, longContext: 7, vision: 0, speed: 7 };
     const weak = { coding: 3, reasoning: 3, writing: 4, longContext: 3, vision: 0, speed: 9 };
@@ -383,9 +386,61 @@ describe('copies and weak models', () => {
       account({ id: 'b', local: true, priority: 1, models: [makeModel('big2', { skills: strong })] }),
       account({ id: 'c', local: true, priority: 2, models: [makeModel('tiny', { skills: weak })] }),
     ]);
-    const jobs = new Engine().dispatch([task({ title: 'Review', type: 'review', copies: 3 })]);
+    const engine = new Engine();
+    const jobs = engine.dispatch([task({ title: 'Review', type: 'review', copies: 3 })]);
     expect(jobs.map((j) => j.task.title)).toEqual(['Review [1/2]', 'Review [2/2]']);
     // a copy whose model fails must not fall back to the weak model either
     expect(jobs.every((j) => (j.task.minFit ?? 0) > 0.4)).toBe(true);
+    // finished here, so the jobs never reach the accounts of a later test
+    await engine.wait(jobs.map((j) => j.id), 10);
+  });
+});
+
+describe('follow-up questions', () => {
+  it('asks the same model again, with the earlier task and its own answer', async () => {
+    const a = await mockProvider(() => ({ json: chatReply('other') }));
+    const b = await mockProvider(() => ({ json: chatReply('The total is 20.52.') }));
+    closers.push(a.close, b.close);
+    writeConfig([account({ id: 'a', baseUrl: a.url, local: true, priority: 0 }), account({ id: 'b', baseUrl: b.url, local: true, priority: 1 })]);
+    const engine = new Engine();
+    const [first] = engine.dispatch([task({ title: 'Total', prompt: 'What is the invoice total?', privacy: 'secret', use: 'b' })]);
+    await engine.wait([first!.id], 10);
+    const [next] = engine.dispatch([task({ title: 'Tax', prompt: 'And how much of it is tax?', followUpOf: first!.id })]);
+    const [done] = await engine.wait([next!.id], 10);
+    // b ranks below a, so only the follow-up rule sends it to b
+    expect(done!.accountId).toBe('b');
+    // a follow-up never loosens the privacy of the task it continues
+    expect(done!.task.privacy).toBe('secret');
+    // the server also gets omnitrix's checks that it is up, so the follow-up is found by its text
+    const asked = JSON.stringify(b.calls.map((c) => c.body?.messages).filter(Boolean).at(-1));
+    expect(asked).toContain('What is the invoice total?');
+    expect(asked).toContain('The total is 20.52.');
+    expect(asked).toContain('And how much of it is tax?');
+    expect(a.calls.filter((c) => c.body?.messages)).toHaveLength(0);
+  });
+
+  it('refuses a follow-up of a job that has not finished or that changed code', () => {
+    writeConfig([account({ id: 'a' })]);
+    const engine = new Engine();
+    expect(() => engine.dispatch([task({ followUpOf: 'jnosuchjob1' })])).toThrow(/follow/);
+  });
+});
+
+describe('privacy of a follow-up', () => {
+  it('keeps a public task public when the follow-up does not say otherwise, and takes the stricter level when it does', async () => {
+    // seen in real use: a follow-up of a public Gemini task became private and Gemini could not answer it
+    const p = await mockProvider(() => ({ json: chatReply('4827') }));
+    closers.push(p.close);
+    writeConfig([account({ id: 'g', baseUrl: p.url, apiKey: 'secret', trainsOnData: true })]);
+    setSecret('g', 'sk-test-123456789012345');
+    const engine = new Engine();
+    const [first] = engine.dispatch([task({ prompt: 'pick a number', privacy: 'public' })]);
+    await engine.wait([first!.id], 10);
+    const [same] = engine.dispatch([task({ prompt: 'double it', followUpOf: first!.id })]);
+    expect(same!.task.privacy).toBe('public');
+    expect((await engine.wait([same!.id], 10))[0]!.status).toBe('done');
+    const [stricter] = engine.dispatch([task({ prompt: 'and this', privacy: 'private', followUpOf: first!.id })]);
+    expect(stricter!.task.privacy).toBe('private');
+    await engine.wait([stricter!.id], 10);
   });
 });

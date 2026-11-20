@@ -43,6 +43,9 @@ const CHECK_TASK_CHARS = 4_000;
 const CHECK_RESULT_CHARS = 20_000;
 // a checker may be a little weaker at review than the worker, since the scores are rough, but not much
 const CHECKER_MARGIN = 0.15;
+// how much of the earlier task and answer a follow-up carries
+const FOLLOW_UP_TASK_CHARS = 8_000;
+const FOLLOW_UP_ANSWER_CHARS = 20_000;
 
 const WORKER_SYSTEM = [
   'You are one worker in a team. A lead engineer split a larger job and gave you this part.',
@@ -353,6 +356,26 @@ export class Engine {
     }));
   }
 
+  /**
+   * A follow-up goes to the model that answered the earlier job, with that job's task and answer in front
+   * of the new prompt, so the worker continues instead of starting cold. Its privacy is never looser than
+   * the earlier task's. A code job's work is on its branch, not in its answer, so code is left out.
+   */
+  private followUp(t: TaskSpec): TaskSpec {
+    if (!t.followUpOf) return t;
+    const prev = this.getJob(t.followUpOf);
+    if (!prev || prev.status !== 'done' || !prev.accountId || !prev.model) throw new Error(`task "${t.title}": follow_up_of must name a job that has finished`);
+    if (prev.task.type === 'code' || t.type === 'code') throw new Error(`task "${t.title}": a code job cannot be followed up; send a new code task that names its branch`);
+    if (t.copies) throw new Error(`task "${t.title}": a follow-up goes to one model, so it cannot have copies`);
+    // without a level of its own the follow-up keeps the earlier one; with one, the stricter of the two
+    const order = ['public', 'private', 'secret'] as const;
+    const before = effectivePrivacy(prev.task);
+    const privacy = t.privacy ? order[Math.max(order.indexOf(before), order.indexOf(effectivePrivacy(t)))] : before;
+    const answer = (this.readOutput(prev.id) ?? prev.preview ?? '').slice(0, FOLLOW_UP_ANSWER_CHARS);
+    const prompt = ['## Earlier task', prev.task.prompt.slice(0, FOLLOW_UP_TASK_CHARS), '', '## Your earlier answer', answer, '', '## Follow-up', t.prompt].join('\n');
+    return { ...t, prompt, privacy, use: t.use ?? `${prev.accountId}/${prev.model}` };
+  }
+
   /** Throws before queuing anything if a task can never run. */
   dispatch(tasks: TaskSpec[], links: Pick<Job, 'checkOf' | 'retryOf'> = {}): Job[] {
     for (const t of tasks) {
@@ -366,7 +389,7 @@ export class Engine {
       }
     }
     const now = Date.now();
-    const created = tasks.flatMap((t) => this.copiesOf(t)).map((task) => {
+    const created = tasks.map((t) => this.followUp(t)).flatMap((t) => this.copiesOf(t)).map((task) => {
       const job: Job = { id: newId('j'), task, status: 'queued', createdAt: now, updatedAt: now, attempts: [], pid: process.pid, owner: OWNER, ...links };
       this.jobs.set(job.id, job);
       this.saveJob(job);
