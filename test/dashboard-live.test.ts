@@ -310,3 +310,20 @@ describe('jobs as the dashboard lists them', () => {
     expect(jobs[0]!.check).toEqual({ status: 'unavailable', by: undefined, note: expect.stringMatching(/weaker at review/) });
   });
 });
+
+describe('the omnitrix icon in the dashboard', () => {
+  it('serves the icon as an SVG image, and the page links to it as its tab icon', async () => {
+    writeConfig([]);
+    const port = await serve();
+    const icon = await fetch(`http://127.0.0.1:${port}/favicon.svg`);
+    expect(icon.status).toBe(200);
+    expect(icon.headers.get('content-type')).toMatch(/image\/svg\+xml/);
+    const svg = await icon.text();
+    expect(svg).toMatch(/^<svg[^>]*viewBox="0 0 256 256"/);
+    // the same icon as the Claude Code plugin
+    const fs = await import('node:fs');
+    expect(svg).toBe(fs.readFileSync(path.resolve(__dirname, '..', '.claude-plugin', 'icon.svg'), 'utf8'));
+    const page = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    expect(page).toMatch(/<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml">/);
+  }, 20_000);
+});

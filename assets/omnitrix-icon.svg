@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="t">
+  <title id="t">omnitrix: three AI connections around one core</title>
+  <rect width="256" height="256" rx="58" fill="#120a0e"/>
+  <g fill="none" stroke-width="26" stroke-linecap="round">
+    <path d="M68.55 74.47A80 80 0 0 1 187.45 74.47" stroke="#c62841"/>
+    <path d="M204.08 103.28A80 80 0 0 1 144.63 206.25" stroke="#f59e0b"/>
+    <path d="M111.37 206.25A80 80 0 0 1 51.92 103.28" stroke="#0e9fb8"/>
+  </g>
+  <circle cx="128" cy="128" r="44" fill="none" stroke="#f3ece2" stroke-width="9"/>
+  <circle cx="128" cy="128" r="26" fill="#ffffff"/>
+</svg>

@@ -1,3 +1,5 @@
+<img src="assets/omnitrix-icon.svg" width="96" alt="The omnitrix icon: three coloured arcs, one for each AI connection, around a white core">
+
 # omnitrix
 
 Claude plans the work, and your other AI accounts carry it out.

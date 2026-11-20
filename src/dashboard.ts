@@ -8,6 +8,7 @@ import { refreshQuotas } from './quota.js';
 import { ensureHome, homeDir, writeJson } from './store.js';
 import type { Job } from './types.js';
 import { verifySummary } from './verify.js';
+import { ICON_SVG } from './icon.js';
 import { VERSION } from './version.js';
 
 /** The newest jobs for the page. A second check is shown on the job it checks, not as a job of its own. */
@@ -146,6 +147,10 @@ export function startDashboard(port: number): { url: string; server: http.Server
       json(res, { open });
       return;
     }
+    if (req.url === '/favicon.svg') {
+      res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'max-age=86400', 'x-content-type-options': 'nosniff' }).end(ICON_SVG);
+      return;
+    }
     if (req.url === '/' || req.url === '/index.html') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'", 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY' }).end(PAGE);
       return;
@@ -204,6 +209,7 @@ const PAGE = /* html */ `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>omnitrix</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
 :root{
   --bg:#f6f6f3;--surface:#ffffff;--tile:#efeee9;--line:rgba(20,20,19,.11);--line-strong:rgba(20,20,19,.2);
