@@ -333,7 +333,9 @@ program
       console.log(`now ${acc.models.length} models`);
     }
     const stats = loadStats();
-    console.log('model'.padEnd(44) + 'code reas writ long vis  speed  scores     Claude accepted');
+    // the name column fits the longest name, so a long one never runs into the scores
+    const width = Math.max(44, ...acc.models.map((m) => m.id.length + 2));
+    console.log('model'.padEnd(width) + 'code reas writ long vis  speed  scores     Claude accepted');
     for (const m of acc.models) {
       const s = m.skills;
       // verdicts fade over 30 days, so the counts are rounded
@@ -345,7 +347,7 @@ program
         all += c.ok + c.bad;
       }
       const rated = Math.round(all) ? `${Math.round(ok)} of ${Math.round(all)} rated jobs` : 'no rated jobs';
-      console.log(`${m.id.padEnd(44)}${[s.coding, s.reasoning, s.writing, s.longContext, s.vision, s.speed].map((n) => String(n).padEnd(5)).join('')}  ${basisOf(m).padEnd(11)}${rated}`);
+      console.log(`${m.id.padEnd(width)}${[s.coding, s.reasoning, s.writing, s.longContext, s.vision, s.speed].map((n) => String(n).padEnd(5)).join('')}  ${basisOf(m).padEnd(11)}${rated}`);
     }
     console.log('\nScores: "untested" means no information, "estimated" a guess from the name or from what the server reports, "manual" set with "omnitrix model".');
     console.log('They are starting points; the router also follows how often Claude accepted each model\'s work.');
@@ -479,7 +481,9 @@ program
   .action((words: string[], o) => {
     const { candidates, rejected } = new Engine().preview({ title: 'preview', type: o.type, prompt: words.join(' '), privacy: o.privacy });
     if (!candidates.length) console.log('nobody can take this task');
-    candidates.slice(0, 8).forEach((c, i) => console.log(`${String(i + 1).padStart(2)}. ${`${c.accountId}/${c.model}`.padEnd(46)} ${c.score.toFixed(3)}  ${c.why.join(', ')}`));
+    const shown = candidates.slice(0, 8);
+    const width = Math.max(46, ...shown.map((c) => `${c.accountId}/${c.model}`.length));
+    shown.forEach((c, i) => console.log(`${String(i + 1).padStart(2)}. ${`${c.accountId}/${c.model}`.padEnd(width)} ${c.score.toFixed(3)}  ${c.why.join(', ')}`));
     if (rejected.length) {
       console.log('\nskipped:');
       for (const r of rejected.slice(0, 12)) console.log(`    ${r.accountId}${r.model ? '/' + r.model : ''}: ${r.reason}`);

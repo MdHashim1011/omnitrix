@@ -243,3 +243,17 @@ describe('omnitrix clean safeguards', () => {
     expect(fs.existsSync(path.join(files.jobs(), 'jbusy.json'))).toBe(true);
   }, 30_000);
 });
+
+describe('tables in the terminal', () => {
+  const cli = path.resolve(__dirname, '..', 'dist', 'cli.js');
+  it('keeps a long model name apart from the next column', () => {
+    // seen in real use: "models/gemini-robotics-er-2-streaming-preview6" ran into the first score
+    const long = 'models/gemini-robotics-er-2-streaming-preview-extra';
+    writeConfig([account({ id: 'g', models: [makeModel('short'), makeModel(long)] })]);
+    const env = { ...process.env };
+    const models = spawnSync(process.execPath, [cli, 'models', 'g'], { env, encoding: 'utf8' }).stdout;
+    expect(models).toMatch(new RegExp(`${long} +[0-9]`));
+    const route = spawnSync(process.execPath, [cli, 'route', 'hello'], { env, encoding: 'utf8' }).stdout;
+    expect(route).toMatch(new RegExp(`g/${long} +[0-9][.][0-9]{3}`));
+  }, 30_000);
+});
