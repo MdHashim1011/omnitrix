@@ -189,3 +189,28 @@ describe('how the router explains quota', () => {
     expect(why).toMatch(/no known limit/);
   });
 });
+
+describe('speed', () => {
+  const rec = (model: string, latencyMs: number, ok = true, ago = 60_000) => ({ ts: Date.now() - ago, accountId: 'a', model, inputTokens: 1, outputTokens: 1, ok, latencyMs });
+
+  it('takes the typical time of a model from its recent successful answers', async () => {
+    const { typicalLatency } = await import('../src/usage.js');
+    const records = [rec('m', 1000), rec('m', 3000), rec('m', 2000), rec('m', 90_000, false), rec('old', 500, true, 40 * 24 * 3600_000), rec('few', 100), rec('few', 100)];
+    const t = typicalLatency(records, Date.now());
+    // the median of the three good answers; a failure does not count
+    expect(t['a/m']).toBe(2000);
+    // too old, or too few answers to tell
+    expect(t['a/old']).toBeUndefined();
+    expect(t['a/few']).toBeUndefined();
+  });
+
+  it('prefers a model that answered quickly when a task asks for speed, and only then', () => {
+    const a = account({ id: 'a', models: [makeModel('slow'), makeModel('quick')] });
+    const latency = { 'a/slow': 30_000, 'a/quick': 3_000 };
+    const fast = route({ title: 't', type: 'writing', prompt: 'p', fast: true }, ctx([a], { latency }));
+    expect(fast.candidates[0]!.model).toBe('quick');
+    expect(fast.candidates[0]!.why.join(', ')).toMatch(/typical 3 s/);
+    const normal = route({ title: 't', type: 'writing', prompt: 'p' }, ctx([a], { latency }));
+    expect(normal.candidates[0]!.why.join(', ')).not.toMatch(/typical/);
+  });
+});

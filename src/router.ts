@@ -40,6 +40,8 @@ export interface RouteContext {
   now?: number;
   /** accounts that must not be used right now, with the reason (team budgets) */
   blocked?: Record<string, string>;
+  /** typical answer time in ms per "account/model", from usage (see typicalLatency) */
+  latency?: Record<string, number>;
 }
 
 /** True when the address is this computer, so a "local" account really keeps prompts here. */
@@ -109,6 +111,8 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
   const [forcedAccount, forcedModel] = task.use ? splitUse(task.use) : [undefined, undefined];
 
   const candidates: Candidate[] = [];
+  // the quickest typical time seen, which a model's own typical time is compared with
+  const fastest = task.fast ? Math.min(...Object.values(ctx.latency ?? {})) : Infinity;
   const rejected: Rejected[] = [];
 
   for (const account of ctx.config.accounts) {
@@ -189,6 +193,16 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       const acc = exact.samples || !model.digest ? exact : acceptanceFactor(ctx.stats, model.id, task.type, now);
       score *= acc.factor;
       if (acc.samples) why.push(`past results x${acc.factor.toFixed(2)} (${acc.samples} rated)`);
+
+      // A fast task prefers models that answered quickly before: the quickest keeps its score and one ten
+      // times slower loses about half. Without a typical time, the speed score stands in, a little below
+      // the quickest measured model, since a guess should not beat a measurement.
+      if (task.fast) {
+        const typical = ctx.latency?.[`${account.id}/${model.id}`];
+        const known = typical !== undefined && Number.isFinite(fastest);
+        score *= known ? 0.5 + 0.5 * Math.min(1, fastest / typical) : 0.5 + 0.05 * Math.min(9, model.skills.speed);
+        why.push(known ? `typical ${(typical / 1000).toFixed(typical < 10_000 ? 1 : 0).replace(/\.0$/, '')} s` : 'speed not measured yet');
+      }
 
       if (busy) { score *= 0.5; why.push('busy, will queue'); }
 

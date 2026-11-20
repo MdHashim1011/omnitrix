@@ -332,6 +332,36 @@ export function headroom(summary: UsageSummary): number {
   return Math.max(0, 1 - summary.percentUsed / 100);
 }
 
+const LATENCY_SAMPLES = 20;
+const LATENCY_MIN_SAMPLES = 3;
+const LATENCY_DAYS = 30;
+
+/**
+ * Each model's typical answer time, keyed "account/model": the median of its last 20 successful answers
+ * in the last 30 days. A model with fewer than 3 such answers has no typical time yet; failures do not
+ * count, because a timeout says nothing about how fast the model answers.
+ */
+export function typicalLatency(records: UsageRecord[], now = Date.now()): Record<string, number> {
+  const byModel = new Map<string, number[]>();
+  for (const r of records) {
+    if (!r.ok || r.ts < now - LATENCY_DAYS * DAY || !(r.latencyMs > 0)) continue;
+    const key = `${r.accountId}/${r.model}`;
+    const list = byModel.get(key) ?? [];
+    list.push(r.ts, r.latencyMs);
+    byModel.set(key, list);
+  }
+  const out: Record<string, number> = {};
+  for (const [key, flat] of byModel) {
+    const pairs: [number, number][] = [];
+    for (let i = 0; i < flat.length; i += 2) pairs.push([flat[i]!, flat[i + 1]!]);
+    const recent = pairs.sort((a, b) => b[0] - a[0]).slice(0, LATENCY_SAMPLES).map((p) => p[1]).sort((a, b) => a - b);
+    if (recent.length < LATENCY_MIN_SAMPLES) continue;
+    const mid = Math.floor(recent.length / 2);
+    out[key] = recent.length % 2 ? recent[mid]! : Math.round((recent[mid - 1]! + recent[mid]!) / 2);
+  }
+  return out;
+}
+
 /** "45 min", "1 h 20 min", "2 d 3 h": rounded, because a forecast is never exact. */
 export function roughSpan(ms: number): string {
   const min = Math.max(1, Math.round(ms / 60_000));

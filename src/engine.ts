@@ -15,7 +15,7 @@ import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
 import { DriverError, type Account, type AccountHealth, type Config, type Job, type JobCheck, type TaskSpec, type TaskType, type UsageRecord } from './types.js';
 import { statsKey } from './models.js';
-import { compactLedger, headroom, LedgerTail, recordUsage, summarize, type UsageSummary } from './usage.js';
+import { compactLedger, headroom, LedgerTail, recordUsage, summarize, typicalLatency, type UsageSummary } from './usage.js';
 import { outsideFiles, runTest } from './verify.js';
 import { branchExists, changedFiles, createScratch, createWorktree, discardWorktree, fileVersion, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
 
@@ -264,7 +264,7 @@ export class Engine {
     const quotas = loadQuotas();
     const usage: Record<string, UsageSummary> = {};
     for (const a of cfg.accounts) usage[a.id] = summarize(a, records.get(a.id) ?? [], this.health[a.id], Date.now(), quotas[a.id]);
-    return { config: cfg, health: this.health, usage, running: this.running, stats: loadStats(), blocked: this.teamBlocks(cfg, records) };
+    return { config: cfg, health: this.health, usage, running: this.running, stats: loadStats(), blocked: this.teamBlocks(cfg, records), latency: typicalLatency([...records.values()].flat()) };
   }
 
   pool(): PoolAccountView[] {

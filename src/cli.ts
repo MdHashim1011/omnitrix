@@ -22,7 +22,13 @@ import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, insid
 import { branchExists, branchMerged, deleteBranch, pruneWorktree } from './worktree.js';
 import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, type Limits, type ModelInfo, type TaskType, type UsageRecord } from './types.js';
 import { refreshQuotas } from './quota.js';
-import { formatTokens, readLedger, recordUsage } from './usage.js';
+import { formatTokens, readLedger, recordUsage, typicalLatency } from './usage.js';
+
+/** A typical answer time as people read it: "4.2 s", "38 s", or "-" when there is none yet. */
+function seconds(ms: number | undefined): string {
+  // the same form as the router's "typical 4.2 s"
+  return ms === undefined ? '-' : `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0).replace(/\.0$/, '')} s`;
+}
 import { detect } from './init.js';
 import { budgetFor, estimateCost, fingerprint, loadTeam, officialHost, parseTeam, periodStart, personSpend, readShared, reviewCode, shareRecord, teamAccounts, unpricedModels, type TeamFile } from './team.js';
 import { VERSION } from './version.js';
@@ -338,7 +344,9 @@ program
     const stats = loadStats();
     // the name column fits the longest name, so a long one never runs into the scores
     const width = Math.max(44, ...acc.models.map((m) => m.id.length + 2));
-    console.log('model'.padEnd(width) + 'code reas writ long vis  speed  scores     Claude accepted');
+    // typical answer time from this computer's usage, so a user can see which models are quick
+    const typical = typicalLatency(readLedger(Date.now() - 31 * 24 * 3600_000));
+    console.log('model'.padEnd(width) + 'code reas writ long vis  speed  typical  scores     Claude accepted');
     for (const m of acc.models) {
       const s = m.skills;
       // verdicts fade over 30 days, so the counts are rounded
@@ -350,7 +358,7 @@ program
         all += c.ok + c.bad;
       }
       const rated = Math.round(all) ? `${Math.round(ok)} of ${Math.round(all)} rated jobs` : 'no rated jobs';
-      console.log(`${m.id.padEnd(width)}${[s.coding, s.reasoning, s.writing, s.longContext, s.vision, s.speed].map((n) => String(n).padEnd(5)).join('')}  ${basisOf(m).padEnd(11)}${rated}`);
+      console.log(`${m.id.padEnd(width)}${[s.coding, s.reasoning, s.writing, s.longContext, s.vision, s.speed].map((n) => String(n).padEnd(5)).join('')}  ${seconds(typical[`${acc.id}/${m.id}`]).padEnd(9)}${basisOf(m).padEnd(11)}${rated}`);
     }
     console.log('\nScores: "untested" means no information, "estimated" a guess from the name or from what the server reports, "manual" set with "omnitrix model".');
     console.log('They are starting points; the router also follows how often Claude accepted each model\'s work.');
@@ -458,10 +466,11 @@ program
   .option('--use <account[/model]>', 'force an account or model')
   .addOption(new Option('--effort <level>', 'how hard a reasoning model should think').choices([...EFFORTS]))
   .option('--repo <path>', 'git repo for code tasks')
+  .option('--fast', 'prefer models that answered quickly before')
   .action(async (words: string[], o) => {
     const engine = new Engine();
     const prompt = words.join(' ');
-    const [job] = engine.dispatch([{ title: prompt.slice(0, 60), type: o.type as TaskType, prompt, privacy: o.privacy, use: o.use, effort: o.effort, repo: o.repo ? path.resolve(o.repo) : undefined }]);
+    const [job] = engine.dispatch([{ title: prompt.slice(0, 60), type: o.type as TaskType, prompt, privacy: o.privacy, use: o.use, effort: o.effort, fast: o.fast, repo: o.repo ? path.resolve(o.repo) : undefined }]);
     // wait a moment first so the chosen account is printed before the answer arrives
     let done = await engine.wait([job!.id], 1);
     if (done[0]?.accountId) process.stderr.write(`-> ${done[0].accountId}/${done[0].model}\n`);
@@ -481,8 +490,9 @@ program
   .description('show which account and model would get a task, without running it')
   .addOption(new Option('--type <type>', 'task type').choices([...TASK_TYPES]).default('writing'))
   .addOption(new Option('--privacy <level>').choices(['public', 'private', 'secret']))
+  .option('--fast', 'prefer models that answered quickly before')
   .action((words: string[], o) => {
-    const { candidates, rejected } = new Engine().preview({ title: 'preview', type: o.type, prompt: words.join(' '), privacy: o.privacy });
+    const { candidates, rejected } = new Engine().preview({ title: 'preview', type: o.type, prompt: words.join(' '), privacy: o.privacy, fast: o.fast });
     if (!candidates.length) console.log('nobody can take this task');
     const shown = candidates.slice(0, 8);
     const width = Math.max(46, ...shown.map((c) => `${c.accountId}/${c.model}`.length));

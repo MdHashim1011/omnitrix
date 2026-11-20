@@ -83,6 +83,8 @@ Three further adjustments multiply that score. Each adjustment that applies is l
 
 Together these adjustments can raise a score by about 44% or lower it by 25%, so they can change the order of models whose fit for the task is similar. A pin adds a large fixed amount, so in practice pinned accounts rank above all others, but the adjustments can change the order among pinned accounts.
 
+omnitrix also notes how long each answer took. A model's typical answer time is the median of its last 20 successful answers in the last 30 days, once it has at least 3, and `omnitrix models <id>` shows it in the "typical" column. A task that sets `fast` to `true`, or `omnitrix run --fast` and `omnitrix route --fast`, prefers quick models: the model with the quickest typical time keeps its score, and one ten times slower loses about half of it. A model without a typical time yet is judged by its speed score, a little below the quickest measured model, so that a guess does not beat a measurement. Without `fast`, answer times do not affect routing.
+
 Code tasks go only to agent CLIs that can edit files. Each task runs on a new branch in its own git worktree, so two workers never share a checkout. Other tasks that name a repository and go to an agent CLI run in a temporary copy of the repository that is removed afterwards, so a reviewing worker does not work in your checkout. The copy is taken at the last commit, and the files that the task lists are copied into the prompt from your working tree, including changes that are not committed.
 
 After a code task, omnitrix checks the branch itself rather than relying on the worker's report. It lists the files that the worker changed and, when the task named its files, the changed files that the task did not name. When the task gives a `test` command, such as `["npm", "test"]`, omnitrix runs it in the job's worktree after the worker finishes and reports whether it passed, its exit code and the end of its output, without terminal colour codes. The worktree is a fresh copy without installed packages, so for a Node.js project use `["npm", "install-test"]`, which installs them before it runs the tests. `get_results` waits for the test, and the dashboard shows the result on each job as "Checked by omnitrix". The test runs the worker's code on your computer, without keys in its environment, with an empty home folder of its own and with its own time limit, equal to the job limit but at most one hour; `cancel_job` stops it when it runs in the same omnitrix process. When two finished jobs in the same repository changed the same file and neither started from the other's result, `get_results` lists the other job under `also_changed` for each of them, because copying one job's files over the other's would silently lose work; the two changes have to be combined, for example with a merge. Rejected jobs and jobs whose branch was deleted are left out. omnitrix never merges anything: Claude still reviews the work, and you decide what to keep.
@@ -212,7 +214,7 @@ omnitrix runs as an MCP server and gives Claude the following tools:
 | `rate_result` | Accepts or rejects a result so that the router can learn from it, and can send a rejected task to another model |
 | `cancel_job`, `list_jobs` | Cancels a job, its pending check or its running test, or lists the 20 most recent jobs (at most 100) |
 
-Each task has a `title` of at most 200 characters, a `type`, a `prompt` and optionally an `acceptance` line, a `privacy` level, `files`, a `repo`, a `size` (`small`, `medium` or `large`), `use` to force an account or model, `effort`, `check`, `copies` and `follow_up_of` for tasks other than code and, for code tasks, `test`. `route_preview` accepts up to 30 tasks.
+Each task has a `title` of at most 200 characters, a `type`, a `prompt` and optionally an `acceptance` line, a `privacy` level, `files`, a `repo`, a `size` (`small`, `medium` or `large`), `use` to force an account or model, `effort`, `fast`, `check`, `copies` and `follow_up_of` for tasks other than code and, for code tasks, `test`. `route_preview` accepts up to 30 tasks.
 
 The `pool_status`, `dispatch` and `get_results` tools declare output schemas, and their structured data contains everything their text shows. `list_jobs` also lists jobs that other omnitrix processes started, and `cancel_job` can cancel them.
 
@@ -244,8 +246,8 @@ omnitrix enable|disable <id>    enable or disable an account
 omnitrix remove <id>            remove an account (--purge also deletes its login)
 omnitrix models <id>            show model scores and rated jobs (--refresh queries the provider again)
 omnitrix model <id> <model>     set scores or prices, or --add or --remove a model
-omnitrix route <prompt>         show which model would receive a task (--type, --privacy)
-omnitrix run <prompt>           run one task and print the answer (--type, --privacy, --use, --repo, --effort)
+omnitrix route <prompt>         show which model would receive a task (--type, --privacy, --fast)
+omnitrix run <prompt>           run one task and print the answer (--type, --privacy, --use, --repo, --effort, --fast)
 omnitrix settings               set the mode, private protection, pins, bans, the job time limit and the preview length
 omnitrix dashboard              open the live dashboard on 127.0.0.1:4590, which runs in the background (--stop, --port, --no-open, --serve)
 omnitrix setup-claude           register with Claude Code (--scope user|project|local, --no-statusline, --dry-run)
