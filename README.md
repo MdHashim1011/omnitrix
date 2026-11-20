@@ -13,6 +13,25 @@ omnitrix is built for the frontier-model subscriptions and API keys you already 
 
 You can monitor the pool without leaving Claude Code. The status line shows up to four accounts with their remaining quota or status, and omnitrix instructs Claude to check the same data before it assigns work. Claude reads short results instead of performing every step itself, which uses less of your Claude usage limit.
 
+## How omnitrix compares
+
+Several projects connect Claude Code or other tools to many models. They solve different problems, so the right choice depends on what you need. This comparison is based on each project's own documentation as of November 2026.
+
+| | omnitrix | [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi) | [PAL MCP](https://github.com/BeehiveInnovations/pal-mcp-server) | [OpenRouter](https://openrouter.ai) |
+|---|---|---|---|---|
+| What it is | MCP server: Claude plans, other models do typed tasks, Claude reviews | Self-hosted gateway: one OpenAI- and Anthropic-compatible endpoint over many free tiers | MCP server: Claude calls other models through tools such as chat, consensus and code review | Hosted gateway: one paid API for many models |
+| Claude stays the lead | Yes | No: Claude Code itself can run on the free models | Yes | Not applicable |
+| ChatGPT plan through Codex, API keys and local models in one pool | Yes | API keys and local models | Yes, the CLIs through its clink tool | API models only |
+| Remaining quota measured, with forecasts and reset-aware routing | Yes | Usage counted per key against free-tier limits | No | Credits on your OpenRouter account |
+| Code edits in their own git worktree, with omnitrix's own test run | Yes | No | No | No |
+| Several independent answers, a second-model check, retries with the reason | Yes | Combines several models into one answer | Consensus across models | Fallback to another model on errors |
+| Learns from the results that Claude accepts or rejects | Yes | No | No | No |
+| Privacy levels per task, including work that may only go to local models | Yes | No | No | Provider filters by data policy |
+| Installation | One npm command, also on Windows | Install script with Docker, or a desktop app | Python and uv, with a WSL setup guide for Windows | Nothing to install |
+| Where prompts go | From your computer straight to each provider | Through your own gateway to the providers | From your computer to each provider | Through OpenRouter |
+
+omnitrix is not a gateway. If you need one OpenAI-compatible endpoint for other applications, FreeLLMAPI or OpenRouter fits that job better. omnitrix is for keeping Claude in charge of your work while your other accounts do the parts they handle well, with every result checked before you rely on it.
+
 ## Installation
 
 omnitrix requires Node.js 20 or later.
