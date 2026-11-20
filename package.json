@@ -1,6 +1,6 @@
 {
   "name": "omnitrix",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Delegate tasks from Claude Code to the AI accounts you already pay for. Claude plans the work, and omnitrix routes each task to Codex, Gemini, DeepSeek, Kimi, GLM, a local model or any OpenAI- or Anthropic-compatible API while tracking each account's usage.",
   "main": "dist/index.js",
   "scripts": {
@@ -12,15 +12,24 @@
     "prepack": "npm run build"
   },
   "keywords": [
+    "claude",
     "claude-code",
+    "anthropic",
     "mcp",
+    "mcp-server",
     "llm",
+    "llm-router",
     "ai-agents",
+    "multi-agent",
     "orchestration",
-    "router",
+    "codex",
+    "gemini",
     "deepseek",
+    "openrouter",
+    "groq",
     "ollama",
-    "codex"
+    "free-llm",
+    "local-llm"
   ],
   "author": "Mohamed Hashim",
   "license": "Apache-2.0",

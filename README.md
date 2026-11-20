@@ -37,6 +37,12 @@ omnitrix is not a gateway. If you need one OpenAI-compatible endpoint for other 
 omnitrix requires Node.js 20 or later.
 
 ```bash
+npm install -g omnitrix
+```
+
+The same package is attached to each GitHub release, so you can also install it from there:
+
+```bash
 npm install -g https://github.com/MdHashim1011/omnitrix/releases/latest/download/omnitrix.tgz
 ```
 
