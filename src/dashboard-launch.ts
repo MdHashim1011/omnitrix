@@ -90,6 +90,46 @@ export async function runningDashboard(): Promise<string | null> {
   return null;
 }
 
+/** True when version `a` ("0.1.26") comes before version `b`. */
+export function olderVersion(a: string, b: string): boolean {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    if (x !== y) return x < y;
+  }
+  return false;
+}
+
+/**
+ * Replace each background dashboard from this omnitrix home that runs an older version, without opening a
+ * tab; open pages reconnect by themselves. Installing an update does not stop the old server, so this runs
+ * when omnitrix starts. A newer dashboard is left alone, so an older omnitrix cannot turn it back.
+ */
+export async function upgradeDashboards(opts: { cli?: string } = {}): Promise<number[]> {
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(homeDir()).filter((n) => /^dashboard-\d+\.json$/.test(n));
+  } catch {
+    return [];
+  }
+  const upgraded: number[] = [];
+  for (const name of names) {
+    const port = Number(/\d+/.exec(name)![0]);
+    const p = await ours(port);
+    if (!p || !olderVersion(p.version, VERSION)) continue;
+    try {
+      await ensureDashboard({ port, cli: opts.cli, open: false });
+      upgraded.push(port);
+    } catch {
+      // the old one keeps serving; `omnitrix dashboard` reports what is wrong
+    }
+  }
+  return upgraded;
+}
+
 export interface EnsureOptions {
   port?: number;
   /** the omnitrix program to start; the one running now by default */

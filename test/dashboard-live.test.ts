@@ -195,6 +195,26 @@ describe('after review', () => {
     return { port, child };
   }
 
+  it('replaces an older background dashboard when omnitrix starts after an update, and opens no tab', async () => {
+    // seen in real use: a dashboard started by 0.1.26 kept running through five updates
+    writeConfig([]);
+    const old = await impostor('0.0.1');
+    writeJson(path.join(home, `dashboard-${old.port}.json`), { pid: old.child.pid, port: old.port, version: '0.0.1' });
+    cleanups.push(() => stopDashboard(old.port));
+    const { upgradeDashboards } = await import('../src/dashboard-launch.js');
+    expect(await upgradeDashboards({ cli })).toEqual([old.port]);
+    expect((await ping(old.port))?.version).not.toBe('0.0.1');
+  }, 30_000);
+
+  it('leaves a newer dashboard alone, so an older omnitrix cannot turn it back', async () => {
+    writeConfig([]);
+    const newer = await impostor('99.0.0');
+    writeJson(path.join(home, `dashboard-${newer.port}.json`), { pid: newer.child.pid, port: newer.port, version: '99.0.0' });
+    const { upgradeDashboards } = await import('../src/dashboard-launch.js');
+    expect(await upgradeDashboards({ cli })).toEqual([]);
+    expect((await ping(newer.port))?.version).toBe('99.0.0');
+  }, 30_000);
+
   it('replaces an older dashboard even when its record is missing', async () => {
     writeConfig([]);
     const old = await impostor('0.0.1');
