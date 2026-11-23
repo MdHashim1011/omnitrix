@@ -245,6 +245,8 @@ export interface Job {
   /** the job that retried this one, after Claude rejected it */
   retriedAs?: string;
   check?: JobCheck;
+  /** when omnitrix last moved the branch onto a newer HEAD, and which commit that was */
+  rebased?: { at: number; onto: string };
   /** the job whose result this job checks */
   checkOf?: string;
 }

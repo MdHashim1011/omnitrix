@@ -12,6 +12,7 @@ import { DEFAULT_PORT, ensureDashboard, stopDashboard } from './dashboard-launch
 import { discoverModels, runDriver } from './drivers/index.js';
 import { CLI_TOOLS, loginCli, providerTool, resolveCommand } from './drivers/cli.js';
 import { Engine } from './engine.js';
+import { verifySummary } from './verify.js';
 import { describeAccount } from './mcp.js';
 import { localModels } from './drivers/ollama.js';
 import { basisOf, isChatModel, makeModel, statsKey } from './models.js';
@@ -812,6 +813,22 @@ program
       if (d.jobs) console.log(`\n${describeDelegated(d)}.`);
     }
     console.log('\nCosts are those reported by the provider, or estimated from model prices where they are known.');
+  });
+
+program
+  .command('rebase <job>')
+  .description("move a finished code job's branch onto the repository's current HEAD and check it again")
+  .option('--json', 'machine-readable output')
+  .action(async (id: string, o: { json?: boolean }) => {
+    if (!JOB_ID.test(id)) die(`"${id}" is not a job id`);
+    const out = await new Engine().rebase(id);
+    if (o.json) console.log(JSON.stringify(out, null, 2));
+    else if (out.status === 'rebased') console.log(`rebased onto ${out.onto.slice(0, 10)}; ${verifySummary(out.verify)}`);
+    else if (out.status === 'up_to_date') console.log('already starts from the current HEAD; nothing to do');
+    else if (out.status === 'conflict') console.log(`conflict in ${out.files.join(', ')}; nothing was changed. Merge this job by hand, or retry it from the current HEAD.`);
+    else console.log(`cannot rebase: ${out.reason}`);
+    if (out.status === 'conflict' || out.status === 'not_possible') process.exitCode = 1;
+    process.exit();
   });
 
 program

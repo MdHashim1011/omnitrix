@@ -66,6 +66,20 @@ describe('the report of past jobs', () => {
     expect(text).toMatch(/fewer than 5 rated jobs/);
   });
 
+  it('takes the median of the times in order, times only the successful run, and prints minutes from 60 seconds on', () => {
+    const t0 = NOW - 3600_000;
+    const r = buildReport([
+      job({ seconds: 300 }),
+      job({ seconds: 90 }),
+      job({ seconds: 120, attempts: [{ accountId: 'codex', model: 'default', startedAt: t0, endedAt: t0 + 120_000, ok: true }, { accountId: 'codex', model: 'default', startedAt: t0, endedAt: t0 + 1000, ok: false }] }),
+      job({ type: 'review', seconds: 30 }),
+    ], NOW - 30 * 86400_000);
+    expect(r.rows.map((x) => x.medianSeconds)).toEqual([120, 30]);
+    const text = formatReport(r, 30);
+    expect(text).toMatch(/code\s+3\s.*\s2 min\s/);
+    expect(text).toMatch(/review\s+1\s.*\s30 s\s/);
+  });
+
   it('says so when there is nothing to report', () => {
     expect(formatReport(buildReport([], 0), 30)).toMatch(/No finished jobs in the last 30 days/);
   });

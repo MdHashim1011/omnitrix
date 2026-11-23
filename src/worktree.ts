@@ -161,3 +161,97 @@ export function pruneWorktree(dir: string): boolean {
   fs.rmSync(dir, { recursive: true, force: true });
   return true;
 }
+
+function tryGit(cwd: string, args: string[]): { ok: boolean; out: string } {
+  const r = spawnSync('git', ['-c', 'core.fsmonitor=false', ...args], { cwd, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  return { ok: r.status === 0, out: (r.stdout ?? '').trim() };
+}
+
+/**
+ * How far the repository's HEAD has moved past the commit a job's branch started from, and which files
+ * changed there. Undefined when the branch is gone or already merged.
+ */
+export function behind(repo: string, branch: string): { commits: number; files: string[] } | undefined {
+  const base = tryGit(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}~1`]);
+  if (!base.ok || branchMerged(repo, branch)) return undefined;
+  const count = tryGit(repo, ['rev-list', '--count', `${base.out}..HEAD`]);
+  if (!count.ok) return undefined;
+  const commits = Number(count.out) || 0;
+  if (!commits) return { commits: 0, files: [] };
+  const diff = tryGit(repo, ['diff', '--name-only', '--no-renames', '-z', base.out, 'HEAD']);
+  return { commits, files: diff.ok ? diff.out.split('\0').filter(Boolean) : [] };
+}
+
+export type RebaseOutcome =
+  | { status: 'rebased'; path: string; gitDir: string; root: string; onto: string; diffStat: string }
+  | { status: 'up_to_date' }
+  | { status: 'conflict'; files: string[] }
+  | { status: 'not_possible'; reason: string };
+
+function dropCheckout(root: string, dir: string): boolean {
+  // from the repository, never from inside the checkout, whose .git the worker could have changed
+  spawnSync('git', ['worktree', 'remove', '--force', dir], { cwd: root, windowsHide: true });
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  } catch {
+    // reported below
+  }
+  spawnSync('git', ['worktree', 'prune'], { cwd: root, windowsHide: true });
+  return !fs.existsSync(dir);
+}
+
+/**
+ * Moves a job's one commit onto the repository's current HEAD. The rebase runs in a new checkout made for
+ * it, without hooks, because the job's own checkout was in the worker's hands. On a conflict it is undone
+ * and nothing changes; on success the branch moves and the new checkout takes the old one's place.
+ */
+export function rebaseBranch(repo: string, jobId: string, branch: string, oldPath: string): RebaseOutcome {
+  const root = git(repo, ['rev-parse', '--show-toplevel']);
+  const onto = git(root, ['rev-parse', 'HEAD']);
+  const tip = git(root, ['rev-parse', `refs/heads/${branch}`]);
+  const base = git(root, ['rev-parse', `refs/heads/${branch}~1`]);
+  if (base === onto) return { status: 'up_to_date' };
+  // a new name for each run, so two runs never share a checkout and a checkout that could not be moved
+  // back (and so became the job's own) is never removed by the next run as if it were left over
+  const tmp = path.join(files.worktrees(), `${jobId}.rebase-${Date.now().toString(36)}`);
+  // The checkout and the rebase write the worker's files, so its .gitattributes and .lfsconfig apply: Git LFS
+  // must not download from an address the worker chose, and no submodule it names is fetched.
+  const noFetch = ['-c', 'filter.lfs.process=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false', '-c', 'submodule.recurse=false'];
+  const env = { ...process.env, GIT_LFS_SKIP_SMUDGE: '1' };
+  const run = (cwd: string, args: string[]) => spawnSync('git', [...noFetch, ...args], { cwd, encoding: 'utf8', windowsHide: true, env });
+  const add = run(root, ['worktree', 'add', '--detach', tmp, tip]);
+  if (add.status !== 0) {
+    dropCheckout(root, tmp);
+    return { status: 'not_possible', reason: `a checkout for the rebase could not be made: ${(add.stderr || '').trim().slice(0, 300)}` };
+  }
+  const safe = workerGit(tmp, undefined);
+  const hasIdentity = tryGit(tmp, ['config', 'user.email']).out !== '';
+  const identity = hasIdentity ? [] : ['-c', 'user.name=omnitrix', '-c', 'user.email=omnitrix@localhost'];
+  const r = run(tmp, [...safe, ...identity, 'rebase', '--quiet', onto]);
+  if (r.status !== 0) {
+    const conflicts = tryGit(tmp, ['diff', '--name-only', '--diff-filter=U', '-z']).out.split('\0').filter(Boolean);
+    // removing the temporary checkout also drops the stopped rebase, which lives in that checkout's own git folder
+    dropCheckout(root, tmp);
+    if (!conflicts.length) return { status: 'not_possible', reason: `git rebase failed: ${(r.stderr || r.stdout || '').trim().slice(0, 300)}` };
+    return { status: 'conflict', files: conflicts };
+  }
+  const newTip = git(tmp, ['rev-parse', 'HEAD']);
+  if (!dropCheckout(root, oldPath)) {
+    dropCheckout(root, tmp);
+    return { status: 'not_possible', reason: `the job's checkout ${oldPath} could not be removed; a program may still have files open in it` };
+  }
+  // moves the branch only if nothing else moved it meanwhile, for example a second rebase of the same job
+  if (tryGit(root, ['update-ref', `refs/heads/${branch}`, newTip, tip]).ok === false) {
+    dropCheckout(root, tmp);
+    run(root, ['worktree', 'add', oldPath, branch]);
+    return { status: 'not_possible', reason: `the branch ${branch} changed while it was being rebased; it was left as it is` };
+  }
+  // From here on the branch holds the rebased commit, so the result is reported even if a step below fails:
+  // the checkout may then stay detached or under its temporary name.
+  run(tmp, [...safe, 'switch', '-q', branch]);
+  let where = tmp;
+  if (spawnSync('git', ['worktree', 'move', tmp, oldPath], { cwd: root, windowsHide: true }).status === 0) where = oldPath;
+  const gitDir = tryGit(where, ['rev-parse', '--absolute-git-dir']).out || path.join(root, '.git', 'worktrees', path.basename(where));
+  const diffStat = tryGit(where, ['diff', '--no-ext-diff', '--no-textconv', '--stat', 'HEAD~1', 'HEAD']).out;
+  return { status: 'rebased', path: where, gitDir, root, onto, diffStat };
+}

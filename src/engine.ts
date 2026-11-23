@@ -14,13 +14,13 @@ import { route, effectivePrivacy, fit, modelHealthKey, type Candidate, type Reje
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
-import { DriverError, type Account, type AccountHealth, type Config, type Job, type JobCheck, type TaskSpec, type TaskType, type UsageRecord } from './types.js';
+import { DriverError, type Account, type AccountHealth, type Config, type Job, type JobCheck, type JobVerify, type TaskSpec, type TaskType, type UsageRecord } from './types.js';
 import { statsKey } from './models.js';
 import { compactLedger, headroom, LedgerTail, recordUsage, summarize, typicalLatency, type UsageSummary } from './usage.js';
 import { diffLock, isLockfile } from './lockfile.js';
 import { outsideFiles, runTest } from './verify.js';
 import { delegated, type Delegated } from './value.js';
-import { branchExists, changedFiles, createScratch, createWorktree, discardWorktree, fileText, fileVersion, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
+import { behind, branchExists, branchMerged, changedFiles, createScratch, createWorktree, discardWorktree, fileText, fileVersion, finishWorktree, isGitRepo, rebaseBranch, removeScratch, type RebaseOutcome } from './worktree.js';
 
 const MAX_ATTEMPTS = 3;
 // A model the provider no longer serves (or gives this plan no allowance for) is dropped from the account,
@@ -433,7 +433,11 @@ export class Engine {
     // ids reach here from Claude and from files; only a real job id may become a path
     if (typeof id !== 'string' || !JOB_ID.test(id)) return undefined;
     const mine = this.jobs.get(id);
-    if (mine && isMine(mine)) return mine;
+    if (mine && isMine(mine)) {
+      // a finished job can still change on disk: Claude's verdict, a retry or a rebase from another process
+      if (ended(mine)) this.mergeDisk(mine);
+      return mine;
+    }
     // Our copy of another process's job is a snapshot from startup; its file has the current state.
     const disk = readJson<Job | null>(path.join(files.jobs(), `${id}.json`), null);
     // a file whose id does not match its name was not written by omnitrix for this job
@@ -467,6 +471,65 @@ export class Engine {
       if (files.length) found.push({ jobId: other.id, files });
     }
     return found;
+  }
+
+  /** How far the repository moved on since a finished code job started, and which of the job's own files changed there. */
+  behind(job: Job): { commits: number; files: string[] } | undefined {
+    if (job.status !== 'done' || !job.worktree || !job.task.repo) return undefined;
+    const b = behind(path.resolve(job.task.repo), job.worktree.branch);
+    if (!b) return undefined;
+    const mine = job.verify?.files ?? [];
+    return { commits: b.commits, files: b.files.filter((f) => mine.includes(f)) };
+  }
+
+  /**
+   * Moves a finished code job's branch onto the repository's current HEAD, so Claude reviews and tests the
+   * code it would merge, then checks the result again: changed files, lockfiles and the task's test.
+   */
+  async rebase(id: string): Promise<{ status: 'rebased'; onto: string; verify: JobVerify } | { status: 'up_to_date' } | { status: 'conflict'; files: string[] } | { status: 'not_possible'; reason: string }> {
+    const job = this.getJob(id);
+    if (!job) return { status: 'not_possible', reason: `no job "${id}"` };
+    if (job.status !== 'done' || !job.worktree || !job.task.repo) return { status: 'not_possible', reason: 'only a finished code job with its own branch can be rebased' };
+    const repo = path.resolve(job.task.repo);
+    const { branch } = job.worktree;
+    // the job file is read back from disk, so its branch and checkout must be the ones omnitrix made for it
+    const where = path.resolve(job.worktree.path);
+    const name = path.basename(where);
+    if (branch !== `omnitrix/${job.id}` || path.dirname(where) !== path.resolve(files.worktrees()) || (name !== job.id && !name.startsWith(`${job.id}.rebase-`))) {
+      return { status: 'not_possible', reason: 'its branch or checkout is not the one omnitrix made for it' };
+    }
+    if (!branchExists(repo, branch)) return { status: 'not_possible', reason: `its branch ${branch} is gone` };
+    if (branchMerged(repo, branch)) return { status: 'not_possible', reason: `its branch ${branch} is already merged` };
+    let out: RebaseOutcome;
+    try {
+      out = rebaseBranch(repo, job.id, branch, where);
+    } catch (err) {
+      return { status: 'not_possible', reason: err instanceof Error ? err.message : String(err) };
+    }
+    if (out.status !== 'rebased') return out;
+    const changed = changedFiles(out.path, out.gitDir);
+    const verify: JobVerify = { files: changed, outside: outsideFiles(changed, job.task, out.root) };
+    const locks = changed.filter(isLockfile).map((f) => diffLock(f, fileText(out.path, 'HEAD~1', f, out.gitDir), fileText(out.path, 'HEAD', f, out.gitDir)));
+    if (locks.length) verify.lockfiles = locks;
+    if (job.task.test) {
+      const limit = Math.min(this.config().settings.jobTimeoutSec, 3600) * 1000;
+      try {
+        verify.test = await runTest(job.task.test, out.path, limit);
+      } catch (err) {
+        verify.test = { command: job.task.test.join(' '), status: 'error', output: `the test could not run: ${err instanceof Error ? err.message : err}` };
+      }
+    }
+    this.mergeDisk(job);
+    job.verify = verify;
+    job.worktree = { ...job.worktree, path: out.path, diffStat: out.diffStat };
+    job.rebased = { at: Date.now(), onto: out.onto };
+    // a check looked at the code before the rebase
+    delete job.check;
+    job.updatedAt = Date.now();
+    this.jobs.set(job.id, job);
+    this.saveJob(job);
+    this.notify();
+    return { status: 'rebased', onto: out.onto, verify };
   }
 
   /** Newest first. Other processes' jobs come from disk, since our copies are startup snapshots and miss new ones. */
@@ -730,6 +793,13 @@ export class Engine {
       job.verdictNote = disk.verdictNote;
     }
     if (disk.retriedAs && !job.retriedAs) job.retriedAs = disk.retriedAs;
+    // `omnitrix rebase` runs in its own process and saves the moved branch and its new check
+    if (disk.rebased && disk.rebased.at > (job.rebased?.at ?? 0)) {
+      job.rebased = disk.rebased;
+      job.verify = disk.verify;
+      job.worktree = disk.worktree;
+      job.check = disk.check;
+    }
   }
 
   /** Writes only the check, over the latest copy on disk, so a verdict saved by another process survives. */
