@@ -90,6 +90,24 @@ shasum -a 256 omnitrix.tgz
 
 The first command is for Windows and the second for macOS and Linux. The value it prints must match the one in `omnitrix.tgz.sha256`. Then install the file you checked with `npm install -g ./omnitrix.tgz`.
 
+### In other MCP apps
+
+omnitrix is an ordinary MCP server, so other apps that run local MCP servers can use it as well. `omnitrix mcp-config` prints the entry to add, with the full paths of Node.js and omnitrix on your computer, so the app needs neither your PATH nor the npm command shim. On a Mac with Node.js from nodejs.org, it looks like this:
+
+```json
+{
+  "mcpServers": {
+    "omnitrix": {
+      "type": "stdio",
+      "command": "/usr/local/bin/node",
+      "args": ["/usr/local/lib/node_modules/omnitrix/dist/cli.js", "mcp"]
+    }
+  }
+}
+```
+
+Cursor reads this entry from `~/.cursor/mcp.json`, or from `.cursor/mcp.json` inside a project. The GitHub Copilot agent in VS Code reads the same shape from `~/.copilot/mcp-config.json`, while the older `.vscode/mcp.json` file uses the key `servers` instead of `mcpServers`. Other apps keep the file elsewhere, so check their MCP documentation. These apps have not been tested yet; only Claude Code and T3 Code have. In another app, its own model takes Claude's place as the lead, and the figures for Claude's own limit are not available, because they come from the Claude Code status line.
+
 ## Quick start
 
 ```bash
@@ -326,6 +344,7 @@ omnitrix run <prompt>           run one task and print the answer (--type, --pri
 omnitrix settings               set the mode, private protection, pins, bans, the job time limit and the preview length
 omnitrix dashboard              open the live dashboard on 127.0.0.1:4590, which runs in the background (--stop, --port, --no-open, --serve)
 omnitrix setup-claude           register with Claude Code (--scope user|project|local, --no-statusline, --dry-run)
+omnitrix mcp-config             print the MCP server entry for other apps, such as Cursor or VS Code
 omnitrix team                   join, review or leave a team file, and show your spending (join --as, --yes; leave; status)
 omnitrix usage                  requests, tokens and cost for the last 30 days (--by person|account|model, --days, --team)
 omnitrix lockcheck [files]      show which packages a regenerated lockfile added, changed or removed (--base, --repo, --json)

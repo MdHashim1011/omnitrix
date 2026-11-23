@@ -51,3 +51,26 @@ describe('reading the answer of an agent CLI', () => {
     expect(r).toMatchObject({ text: 'gemini answer', inputTokens: 10, outputTokens: 5 });
   });
 });
+
+describe('omnitrix mcp-config', () => {
+  it('prints a server entry other MCP apps can use, with this node and this omnitrix, that really starts the server', async () => {
+    const { execFileSync, spawn } = await import('node:child_process');
+    const p = await import('node:path');
+    const cliPath = p.resolve(__dirname, '..', 'dist', 'cli.js');
+    const out = execFileSync(process.execPath, [cliPath, 'mcp-config'], { encoding: 'utf8' });
+    const entry = JSON.parse(out).mcpServers.omnitrix;
+    expect(entry).toEqual({ type: 'stdio', command: process.execPath, args: [cliPath, 'mcp'] });
+    // the printed command must answer an MCP initialize request
+    const child = spawn(entry.command, entry.args, { stdio: ['pipe', 'pipe', 'ignore'] });
+    const reply = await new Promise<string>((resolve) => {
+      let buf = '';
+      child.stdout.on('data', (d) => {
+        buf += d;
+        if (buf.includes('\n')) resolve(buf);
+      });
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } }) + '\n');
+    });
+    child.kill();
+    expect(JSON.parse(reply).result.serverInfo.name).toBe('omnitrix');
+  }, 30_000);
+});

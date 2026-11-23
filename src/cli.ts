@@ -812,6 +812,15 @@ program
   });
 
 program
+  .command('mcp-config')
+  .description('print the MCP server entry for other apps, such as Cursor or VS Code, with the paths on this computer')
+  .action(() => {
+    // the full paths of node and of this file, so the app needs neither PATH nor the npm shim
+    const entry = { type: 'stdio', command: process.execPath, args: [fileURLToPath(import.meta.url), 'mcp'] };
+    console.log(JSON.stringify({ mcpServers: { omnitrix: entry } }, null, 2));
+  });
+
+program
   .command('setup-claude')
   .description('register omnitrix in Claude Code and add the status line')
   .addOption(new Option('--scope <scope>', 'where to register the MCP server').choices(['user', 'project', 'local']).default('user'))
