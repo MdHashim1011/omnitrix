@@ -9,6 +9,7 @@ import { ensureHome, homeDir, writeJson } from './store.js';
 import type { Job } from './types.js';
 import { verifySummary } from './verify.js';
 import { ICON_SVG } from './icon.js';
+import { leadOut, loadLeadQuota } from './lead.js';
 import { VERSION } from './version.js';
 
 /** The newest jobs for the page. A second check is shown on the job it checks, not as a job of its own. */
@@ -54,7 +55,7 @@ export function startDashboard(port: number): { url: string; server: http.Server
   let slowAt = 0;
   let openedAt = 0;
 
-  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine), delegated: engine.delegated(7) });
+  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine), delegated: engine.delegated(7), lead: leadOut(loadLeadQuota()) });
   // Quota reads and local server probes run in the background and are throttled; the page never waits for them.
   const slowChecks = () => {
     if (Date.now() - slowAt < SLOW_MS) return;
@@ -133,7 +134,7 @@ export function startDashboard(port: number): { url: string; server: http.Server
     }
     if (req.url === '/api/status') {
       slowChecks();
-      json(res, { version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine), delegated: engine.delegated(7) });
+      json(res, { version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine), delegated: engine.delegated(7), lead: leadOut(loadLeadQuota()) });
       return;
     }
     if (req.url === '/api/ping') {
@@ -330,6 +331,7 @@ var ago=function(t){var s=Math.round((Date.now()-t)/1000);return s<60?s+' s ago'
 function icon(name){
   var p={terminal:'<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 9l3 3-3 3M12 15h5"/>',
     cloud:'<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.5 1.5A3.75 3.75 0 0 1 17.5 18z"/>',
+    lead:'<path d="M12 3l2.2 5.6L20 10l-5.8 1.4L12 17l-2.2-5.6L4 10l5.8-1.4z"/><path d="M18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z"/>',
     chip:'<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>'}[name];
   return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
 }
@@ -380,6 +382,18 @@ function cardHtml(a,open){
     +(u.stale&&u.updatedAt?'<div class="note warn">omnitrix could not read these numbers again. They are from '+esc(clock(u.updatedAt))+' and may be out of date.</div>':'')
     +modelHtml+'</article>';
 }
+// Claude itself, from the figures the Claude Code status line saved; drawn only when there are some
+function leadHtml(l){
+  if(!l||!l.windows||!l.windows.length)return '';
+  var high=l.windows.some(function(w){return w.used_percent>=70});
+  var wins=l.windows.map(function(w){return windowHtml({name:w.name,unit:'percent',remaining:100-w.used_percent,resetsAt:w.resets_at})}).join('');
+  var notes=l.stale?'<div class="note warn">These figures are from '+esc(clock(l.seen_at))+'. They update only while a Claude Code session is open, so they may be out of date.</div>':'';
+  if(high)notes+='<div class="note warn">'+(l.stale?'Claude was running low when last seen.':'Claude is running low.')+' omnitrix asks it to hand more work to the other accounts.</div>';
+  return '<article class="card" aria-label="Claude, the lead">'
+    +'<div class="head"><div class="title">'+icon('lead')+'<div><h3>Claude</h3><div class="sub">The lead: plans the work and checks every result</div></div></div><span class="state s-busy"><i aria-hidden="true"></i>Lead</span></div>'
+    +'<div>'+wins+'</div>'+notes
+    +'<div class="stats"><span class="prov">From the Claude Code status line'+(l.stale?'':', updated '+esc(ago(l.seen_at)))+'</span></div></article>';
+}
 var JOB={done:['Done','s-ok'],running:['Running','s-busy'],queued:['Waiting','s-idle'],failed:['Failed','s-bad'],cancelled:['Cancelled','s-idle']};
 function jobHtml(j,open){
   var st=JOB[j.status]||[j.status,'s-idle'];
@@ -429,8 +443,8 @@ function draw(d){
     +(function(g){g=g||{jobs:0,tokens:0,accepted:0};return '<div class="kpi"><span>Done by other accounts, 7 days</span><b>'+g.jobs+' job'+(g.jobs===1?'':'s')+'</b><small>'+esc(fmt(g.tokens))+' tokens'+(g.accepted?', '+g.accepted+' accepted':'')+'</small></div>'})(d.delegated)
     +'<div class="kpi"><span>Known cost, last 24 h</span><b>'+esc(money(sum('costToday')))+'</b></div>';
   document.getElementById('acc-sub').textContent=acc.length?acc.length+' connected':'';
-  document.getElementById('accounts').innerHTML=acc.length?acc.map(function(a){return cardHtml(a,open)}).join('')
-    :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix init --apply</code> connects the AI tools, API keys and local models it finds on this PC</li><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>';
+  document.getElementById('accounts').innerHTML=leadHtml(d.lead)+(acc.length?acc.map(function(a){return cardHtml(a,open)}).join('')
+    :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix init --apply</code> connects the AI tools, API keys and local models it finds on this PC</li><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>');
   document.getElementById('jobs').innerHTML=d.jobs.length?'<ul class="jobs">'+d.jobs.map(function(j){return jobHtml(j,open)}).join('')+'</ul>'
     :'<div class="empty"><h3>No jobs yet</h3>Ask Claude to hand out a task, and it shows up here.</div>';
   if(focusKey){var again=document.querySelector('details[data-key="'+focusKey+'"] summary');if(again)again.focus({preventScroll:true})}

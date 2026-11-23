@@ -327,3 +327,27 @@ describe('the omnitrix icon in the dashboard', () => {
     expect(page).toMatch(/<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml">/);
   }, 20_000);
 });
+
+describe("Claude's own limit on the dashboard", () => {
+  it('sends the reading the status line saved, in the status and the live stream, and null without one', async () => {
+    writeConfig([]);
+    const port = await serve();
+    let status = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
+    expect(status.lead).toBeNull();
+    const resets = Date.now() + 3600_000;
+    writeJson(files.lead(), { seenAt: Date.now(), windows: [{ name: '5 hours', usedPercent: 72, resetsAt: resets }] });
+    status = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
+    expect(status.lead).toMatchObject({ windows: [{ name: '5 hours', used_percent: 72, resets_at: resets }], stale: false });
+    const live = listen(port);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(live.snapshots[0].lead.windows[0].used_percent).toBe(72);
+  }, 20_000);
+
+  it('the page draws a card for it', async () => {
+    writeConfig([]);
+    const port = await serve();
+    const page = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    expect(page).toMatch(/function leadHtml\(/);
+    expect(page).toMatch(/leadHtml\(d\.lead\)/);
+  }, 20_000);
+});
