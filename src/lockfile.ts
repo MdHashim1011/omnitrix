@@ -192,12 +192,22 @@ function git(cwd: string, args: string[]): { ok: boolean; out: string } {
 export function checkLockfiles(repo: string, rev = 'HEAD', named?: string[]): LockDiff[] {
   const top = git(repo, ['rev-parse', '--show-toplevel']);
   if (!top.ok) throw new Error(`${repo} is not inside a git repository`);
-  const root = path.resolve(top.out.trim());
+  // real paths on both sides: git prints the long, resolved form, while the folder given may be a Windows
+  // short name (RUNNER~1) or go through a link (/var and /private/var on macOS)
+  const real = (p: string) => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const root = real(top.out.trim());
   if (!git(root, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]).ok) throw new Error(`there is no commit "${rev}" in ${root}`);
   let targets: string[];
   if (named?.length) {
+    const from = real(repo);
     targets = named.map((f) => {
-      const rel = path.relative(root, path.resolve(repo, f));
+      const rel = path.relative(root, path.resolve(from, f));
       if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`${f} is outside the repository ${root}`);
       return rel.replace(/\\/g, '/');
     });

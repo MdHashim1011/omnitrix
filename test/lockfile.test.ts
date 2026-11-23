@@ -158,6 +158,16 @@ describe('checking a lockfile against a git revision', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('accepts a repository reached through a folder link or another spelling of its path', () => {
+    const { dir } = repo();
+    const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-locklink-')), 'repo');
+    fs.symlinkSync(dir, link, 'junction');
+    fs.writeFileSync(path.join(dir, 'package-lock.json'), npm3({ a: '1.0.0', b: '1.0.0' }));
+    expect(checkLockfiles(link, 'HEAD', ['package-lock.json'])[0]).toMatchObject({ file: 'package-lock.json', added: ['b@1.0.0'] });
+    fs.rmSync(path.dirname(link), { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('refuses a revision that does not exist', () => {
     const { dir } = repo();
     expect(() => checkLockfiles(dir, 'no-such-branch')).toThrow(/no-such-branch/);
