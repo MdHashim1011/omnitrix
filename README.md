@@ -21,9 +21,15 @@ The recording below replays one real run in Claude Code, with the waiting shown 
 
 <img src="assets/demo.gif" width="100%" alt="A recorded run in Claude Code. The request is to add two coupon codes to a small shop project, review cart.js for bugs and draft a changelog entry. Claude sends three tasks to omnitrix: Codex on a ChatGPT Plus plan writes the coupon code in 56 seconds, Gemini reviews the cart in 9 seconds and a local Ollama model drafts the changelog in 10 seconds. Gemini then checks the code and reports PASS. The results show that the tests passed and that Gemini found a real bug on line 11, where removing a missing item deletes the last one. Claude accepts all three results, merges the branch, and the four tests pass.">
 
+One run proves little, so `omnitrix report` adds up every job on your own accounts: per model and task type, how many jobs finished or failed, how many Claude accepted or rejected, the median time and the tokens used. In my own use over the 30 days to 23 November 2026, Codex on a ChatGPT Plus plan finished 10 code jobs, and Claude accepted all 8 of those it rated, with a median time of 1.2 minutes per job. Gemini's free models usually answered reviews and drafts within seconds, but Claude accepted only 6 of the 13 Gemini reviews it rated. These are small samples from one person, and the report says so when a rate rests on fewer than five rated jobs.
+
 ## Who it is for
 
 omnitrix suits you if you work in Claude Code, have other AI accounts that sit idle (a ChatGPT plan, free or paid API keys, local models), and want Claude to hand work to them and check the results instead of switching between tools yourself. It is a weaker fit if you prefer to drive several agents by hand in one window, which an app such as [T3 Code](https://github.com/pingdotgg/t3code) does well (omnitrix also works inside it, see [Inside T3 Code](#inside-t3-code)), or if you need one OpenAI-compatible endpoint for other applications, which a gateway such as FreeLLMAPI or OpenRouter provides.
+
+### Why not Claude Code's own subagents?
+
+Claude Code can already split work across subagents, including cheaper ones such as Haiku. Every subagent is still Claude, however, so all of that work comes out of the same Claude usage limit. omnitrix sends the work to accounts outside that limit: a ChatGPT plan through Codex, API keys from other providers and models on your own computer. It also does the bookkeeping that subagents leave to you. It reads how much quota each account has left and routes around the ones that are running out, runs your tests on code changes itself, can have a second model check a result, and learns from the results Claude accepts or rejects. Subagents remain the better choice for work that needs Claude itself.
 
 ## How omnitrix compares
 
@@ -347,6 +353,7 @@ omnitrix setup-claude           register with Claude Code (--scope user|project|
 omnitrix mcp-config             print the MCP server entry for other apps, such as Cursor or VS Code
 omnitrix team                   join, review or leave a team file, and show your spending (join --as, --yes; leave; status)
 omnitrix usage                  requests, tokens and cost for the last 30 days (--by person|account|model, --days, --team)
+omnitrix report                 what the workers did: jobs, how many Claude accepted, median time and tokens per model and task type (--days, --json)
 omnitrix lockcheck [files]      show which packages a regenerated lockfile added, changed or removed (--base, --repo, --json)
 omnitrix clean                  delete finished jobs and worktrees older than 14 days (--days, --dry-run, --branches)
 omnitrix doctor                 check the setup, including whether each account's last request worked; it sends nothing
@@ -385,7 +392,9 @@ The tests check every driver's flags and how it reads the documented answer form
 
 ## Tested with real accounts
 
-Besides the automated tests, version 0.2.0 was checked in real use on Windows with three kinds of account: a ChatGPT Plus plan through Codex, a free Gemini API key, and Ollama with two small local models. On a sample project, omnitrix ran code jobs on Codex in their own worktrees with its own test run, reviews on Gemini, a retry that went to another model with the reason attached, a cancelled code job that freed its slot, a secret task and a picture-reading task that stayed on the local models, and a second-model check that reported itself unavailable when no account was strong enough. The live dashboard, quota readings, `omnitrix clean` and every other command were used on the same accounts. Other providers and agent CLIs are covered by the automated tests only.
+Besides the automated tests, version 0.2.0 was checked in real use on Windows with three kinds of account: a ChatGPT Plus plan through Codex, a free Gemini API key, and Ollama with two small local models. On a sample project, omnitrix ran code jobs on Codex in their own worktrees with its own test run, reviews on Gemini, a retry that went to another model with the reason attached, a cancelled code job that freed its slot, a secret task and a picture-reading task that stayed on the local models, and a second-model check that reported itself unavailable when no account was strong enough. The live dashboard, quota readings, `omnitrix clean` and every other command were used on the same accounts. Other providers and agent CLIs are covered by the automated tests only. The same three were checked again in November 2026 with `omnitrix test --all`, and `omnitrix providers` marks them as tested with a real account.
+
+Providers change their APIs without notice. When an account that worked before fails three times in a row with errors that are not rate limits, sign-in problems or network trouble, `omnitrix doctor` says so and suggests running `omnitrix test` on it, because that pattern usually means the provider changed something.
 
 ## Current limitations
 

@@ -21,6 +21,8 @@ export interface ProviderSpec {
   note?: string;
   /** the provider has a free tier, free credits or a free allowance (local servers are free anyway) */
   free?: boolean;
+  /** when it was last run with a real account; providers without it are covered by the automated tests only */
+  tested?: string;
   /** for a provider whose address holds the user's own id: the address to pass with --base-url */
   baseUrlHint?: string;
 }
@@ -31,7 +33,7 @@ export interface ProviderSpec {
  */
 export const PROVIDERS: ProviderSpec[] = [
   // Agent CLIs that sign in with a subscription. They run on this machine and can edit files.
-  { id: 'codex', name: 'ChatGPT / Codex CLI', driver: 'cli', cli: 'codex', signup: 'https://chatgpt.com', note: 'Uses your ChatGPT plan through the official Codex CLI.' },
+  { id: 'codex', name: 'ChatGPT / Codex CLI', tested: 'November 2026', driver: 'cli', cli: 'codex', signup: 'https://chatgpt.com', note: 'Uses your ChatGPT plan through the official Codex CLI.' },
   { id: 'claude-code', name: 'Claude Code CLI', driver: 'cli', cli: 'claude', signup: 'https://claude.com', note: 'Only use your own subscription. Anthropic does not allow account sharing.' },
   { id: 'qwen-code', name: 'Qwen Code CLI', driver: 'cli', cli: 'qwen', signup: 'https://github.com/QwenLM/qwen-code' },
   { id: 'gemini-cli', free: true, name: 'Gemini CLI (API key)', driver: 'cli', cli: 'gemini', keyEnv: 'GEMINI_API_KEY', trainsOnData: true, signup: 'https://aistudio.google.com/apikey', note: 'Since June 18, 2026, Google offers Gemini CLI mainly with Code Assist licences and needs an API key here; free and Google One users moved to the Antigravity CLI.' },
@@ -47,7 +49,7 @@ export const PROVIDERS: ProviderSpec[] = [
   { id: 'qwen', name: 'Alibaba Qwen (Model Studio)', driver: 'openai', baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', keyEnv: 'DASHSCOPE_API_KEY', signup: 'https://www.alibabacloud.com/product/modelstudio' },
   { id: 'xai', name: 'xAI Grok', driver: 'openai', baseUrl: 'https://api.x.ai/v1', keyEnv: 'XAI_API_KEY', signup: 'https://console.x.ai' },
   { id: 'mistral', free: true, name: 'Mistral', driver: 'openai', baseUrl: 'https://api.mistral.ai/v1', keyEnv: 'MISTRAL_API_KEY', trainsOnData: true, signup: 'https://console.mistral.ai' },
-  { id: 'gemini', free: true, name: 'Google Gemini API', driver: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', keyEnv: 'GEMINI_API_KEY', trainsOnData: true, signup: 'https://aistudio.google.com/apikey', note: 'The free tier may use prompts to improve Google products outside the EEA/UK/CH.' },
+  { id: 'gemini', free: true, tested: 'November 2026', name: 'Google Gemini API', driver: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', keyEnv: 'GEMINI_API_KEY', trainsOnData: true, signup: 'https://aistudio.google.com/apikey', note: 'The free tier may use prompts to improve Google products outside the EEA/UK/CH.' },
   { id: 'groq', free: true, name: 'Groq', driver: 'openai', baseUrl: 'https://api.groq.com/openai/v1', keyEnv: 'GROQ_API_KEY', limits: { requestsPerMinute: 30, requestsPerDay: 1000 }, signup: 'https://console.groq.com', note: 'Free limits are per organization, so extra keys in the same org add nothing.' },
   { id: 'openrouter', free: true, name: 'OpenRouter', driver: 'openai', baseUrl: 'https://openrouter.ai/api/v1', keyEnv: 'OPENROUTER_API_KEY', signup: 'https://openrouter.ai/keys', note: ':free models allow 20 requests/min and 50/day (1000/day after buying $10 of credits).' },
   { id: 'cerebras', free: true, name: 'Cerebras', driver: 'openai', baseUrl: 'https://api.cerebras.ai/v1', keyEnv: 'CEREBRAS_API_KEY', signup: 'https://cloud.cerebras.ai' },
@@ -65,7 +67,7 @@ export const PROVIDERS: ProviderSpec[] = [
   { id: 'anthropic', name: 'Anthropic API', driver: 'anthropic', baseUrl: 'https://api.anthropic.com', keyEnv: 'ANTHROPIC_API_KEY', signup: 'https://console.anthropic.com' },
 
   // Models running on your own machine. Nothing leaves the computer.
-  { id: 'ollama', name: 'Ollama (local)', driver: 'openai', baseUrl: 'http://localhost:11434/v1', local: true, signup: 'https://ollama.com' },
+  { id: 'ollama', name: 'Ollama (local)', tested: 'November 2026', driver: 'openai', baseUrl: 'http://localhost:11434/v1', local: true, signup: 'https://ollama.com' },
   { id: 'lmstudio', name: 'LM Studio (local)', driver: 'openai', baseUrl: 'http://localhost:1234/v1', local: true, signup: 'https://lmstudio.ai' },
   { id: 'llamacpp', name: 'llama.cpp server (local)', driver: 'openai', baseUrl: 'http://localhost:8080/v1', local: true },
   { id: 'vllm', name: 'vLLM (local)', driver: 'openai', baseUrl: 'http://localhost:8000/v1', local: true },

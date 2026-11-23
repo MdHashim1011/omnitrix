@@ -33,6 +33,8 @@ function seconds(ms: number | undefined): string {
 }
 import { detect } from './init.js';
 import { budgetFor, estimateCost, fingerprint, loadTeam, officialHost, parseTeam, periodStart, personSpend, readShared, reviewCode, shareRecord, teamAccounts, unpricedModels, type TeamFile } from './team.js';
+import { buildReport, formatReport } from './report.js';
+import { driftHint } from './drift.js';
 import { VERSION } from './version.js';
 
 const program = new Command();
@@ -102,10 +104,11 @@ program
       console.log(`\n${title}`);
       for (const p of shown) {
         const pad = `\n  ${''.padEnd(17)} `;
-        console.log(`  ${p.id.padEnd(17)} ${p.name}${p.signup ? `${pad}${p.signup}` : ''}${p.note ? `${pad}${p.note}` : ''}`);
+        console.log(`  ${p.id.padEnd(17)} ${p.name}${p.tested ? ` (tested with a real account, ${p.tested})` : ''}${p.signup ? `${pad}${p.signup}` : ''}${p.note ? `${pad}${p.note}` : ''}`);
       }
     }
-    console.log('\nAdd one with: omnitrix add <provider> --key-env NAME   (or --key, --base-url, --model)');
+    console.log('\nOnly the providers marked as tested were run with a real account; the others are covered by the automated tests.');
+    console.log('Add one with: omnitrix add <provider> --key-env NAME   (or --key, --base-url, --model)');
   });
 
 limitOptions(
@@ -812,6 +815,28 @@ program
   });
 
 program
+  .command('report')
+  .description('what the workers did: jobs, acceptance by Claude, time and tokens per model and task type')
+  .option('--days <n>', 'how far back', int, 30)
+  .option('--json', 'machine-readable output')
+  .action((o: { days: number; json?: boolean }) => {
+    const since = Date.now() - o.days * 24 * 3600_000;
+    const jobs: Job[] = [];
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(files.jobs()).filter((f) => f.endsWith('.json'));
+    } catch {
+      // no jobs yet
+    }
+    for (const name of names) {
+      const j = readJson<Job | null>(path.join(files.jobs(), name), null);
+      if (j && typeof j.createdAt === 'number' && j.createdAt >= since && j.task && Array.isArray(j.attempts)) jobs.push(j);
+    }
+    const r = buildReport(jobs, since);
+    console.log(o.json ? JSON.stringify(r, null, 2) : formatReport(r, o.days));
+  });
+
+program
   .command('mcp-config')
   .description('print the MCP server entry for other apps, such as Cursor or VS Code, with the paths on this computer')
   .action(() => {
@@ -977,7 +1002,8 @@ program
     const cfg = loadConfig();
     ok(cfg.accounts.length > 0, `${cfg.accounts.length} accounts`);
     const health = loadHealth();
-    const answered = new Set(readLedger(Date.now() - 32 * 24 * 3600_000).filter((r) => r.ok).map((r) => r.accountId));
+    const ledger = readLedger(Date.now() - 32 * 24 * 3600_000);
+    const answered = new Set(ledger.filter((r) => r.ok).map((r) => r.accountId));
     for (const a of cfg.accounts) {
       if (a.driver === 'cli') {
         const tool = CLI_TOOLS[providerTool(a.provider)];
@@ -992,6 +1018,8 @@ program
       const h = health[a.id];
       const broken = h && (h.state === 'auth_error' || h.state === 'disabled' || ((h.state === 'offline' || h.state === 'exhausted') && (h.until ?? Infinity) > Date.now()));
       if (broken) ok(false, `${a.id}: last request failed: ${(h.reason ?? h.state).slice(0, 160)}`);
+      const drift = driftHint(a.id, ledger.filter((r) => r.accountId === a.id));
+      if (drift) console.log(`note  ${drift}`);
       else if (!answered.has(a.id)) console.log(`note  ${a.id}: no request has been sent yet; "omnitrix test ${a.id}" sends one`);
     }
     if (cfg.accounts.some((a) => a.apiKey?.startsWith('env:'))) {
