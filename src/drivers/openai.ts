@@ -36,7 +36,8 @@ export async function runOpenAI(req: DriverRequest): Promise<DriverResult> {
   });
 
   const body: Record<string, unknown> = { model: req.model, messages, stream: false };
-  if (req.maxOutputTokens) body.max_tokens = req.maxOutputTokens;
+  // OpenAI's reasoning models refuse max_tokens; most other compatible APIs know only max_tokens
+  if (req.maxOutputTokens) body[account.provider === 'openai' ? 'max_completion_tokens' : 'max_tokens'] = req.maxOutputTokens;
   // OpenAI, Gemini and other compatible APIs read this; it is sent only when a task asks for it
   if (req.effort) body.reasoning_effort = req.effort;
 

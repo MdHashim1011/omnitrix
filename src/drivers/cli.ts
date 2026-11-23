@@ -80,7 +80,8 @@ export const CLI_TOOLS: Record<string, CliTool> = {
       for (const e of events) {
         if (e.type === 'turn.completed' && e.usage) {
           inputTokens += Number(e.usage.input_tokens ?? 0);
-          outputTokens += Number(e.usage.output_tokens ?? 0) + Number(e.usage.reasoning_output_tokens ?? 0);
+          // reasoning_output_tokens is the part of output_tokens spent thinking, not an addition to it
+          outputTokens += Number(e.usage.output_tokens ?? 0);
         }
         if (e.type === 'turn.failed') error = e.error?.message ?? 'turn failed';
         if (e.type === 'error') error = e.message ?? 'error';
@@ -338,8 +339,9 @@ export function classifyCliError(text: string): ErrorKind {
   if (/(context length|context window|too many tokens|prompt is too long|maximum.{0,20}tokens)/.test(t)) return 'bad_request';
   // "rate limit exceeded" is a short wait, not a used-up plan, so it is checked first
   if (/(rate limit|rate-limit|too many requests|\b429\b)/.test(t)) return 'rate_limit';
-  // "insufficient permissions" is a login problem, not a used-up plan
-  if (/(not logged in|login|unauthori[sz]ed|\b401\b|\b403\b|authenticat|api key|permission)/.test(t)) return 'auth';
+  // "insufficient permissions" is a login problem, not a used-up plan. A bare "permission denied" or a file
+  // called login.ts is not: an agent that could not write a file must not take the account out of the pool.
+  if (/(not logged in|log ?in again|run \S*login|please (log ?in|sign in)|unauthori[sz]ed|\b401\b|\b403\b|authenticat|(invalid|incorrect|missing|no) api key|api key (is )?(invalid|missing|not valid)|insufficient permissions)/.test(t)) return 'auth';
   if (/(usage limit|quota|exceeded|out of credits|insufficient|limit reached|hit your limit)/.test(t)) return 'quota';
   return 'unknown';
 }
@@ -348,6 +350,8 @@ const MAX_OUTPUT = 20 * 1024 * 1024;
 
 export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverResult> {
   const { account } = req;
+  // an abort listener added now would never fire for a job that was already cancelled
+  if (req.signal?.aborted) throw new DriverError('cancelled', 'cancelled');
   const tool = CLI_TOOLS[providerTool(account.provider)];
   if (!tool) throw new DriverError(`unknown CLI tool for provider ${account.provider}`, 'bad_request');
   if (req.model && !SAFE_ARG.test(req.model)) throw new DriverError(`unsafe model name: ${req.model}`, 'bad_request');
@@ -404,7 +408,9 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d: string) => {
-      if (stdout.length < MAX_OUTPUT) stdout += d;
+      // the tools write their result and token counts last, so a very long output keeps its end
+      stdout += d;
+      if (stdout.length > 2 * MAX_OUTPUT) stdout = stdout.slice(-MAX_OUTPUT);
     });
     child.stderr.on('data', (d: string) => {
       if (stderr.length < 200_000) stderr += d;

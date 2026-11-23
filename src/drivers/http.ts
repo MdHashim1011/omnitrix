@@ -20,11 +20,15 @@ export function missingKey(account: Account): string {
 export function classifyStatus(status: number, body: string): ErrorKind {
   const text = body.toLowerCase();
   if (status === 401 || status === 403) return 'auth';
+  // Gemini answers a wrong key with 400; the key is the problem, not the task
+  if (status === 400 && /(api_key_invalid|api key not valid|invalid api key)/.test(text)) return 'auth';
   if (status === 402) return 'quota';
   if (status === 429) {
     // "limit: 0" means the plan includes no allowance for this model at all (Gemini's free tier and Pro
     // models, for example). That is the model's problem, not a sign that the whole account is used up.
     if (/limit: 0(?![\d.])/.test(text)) return 'model_gone';
+    // Gemini says "you exceeded your current quota" for its per-minute limits too; those pass in a minute
+    if (/perminute/.test(text) && !/perday/.test(text)) return 'rate_limit';
     // some providers use 429 for "you are out of credits" as well as "slow down"
     return /(quota|insufficient|exceeded your current|billing|credit|balance)/.test(text) ? 'quota' : 'rate_limit';
   }
@@ -35,6 +39,12 @@ export function classifyStatus(status: number, body: string): ErrorKind {
   if ((status === 404 || status === 400) && retiredModel(text)) return 'model_gone';
   if (status >= 400) return 'bad_request';
   return 'unknown';
+}
+
+/** Gemini gives its wait in the answer (`"retryDelay": "37s"`) rather than in a Retry-After header. */
+export function retryDelayInBody(body: string): number | undefined {
+  const m = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(body);
+  return m ? Math.min(Number(m[1]) * 1000, MAX_WAIT) : undefined;
 }
 
 function retiredModel(text: string): boolean {
@@ -148,6 +158,8 @@ export function errorMessage(text: string): string {
 }
 
 export async function postJson(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number, signal?: AbortSignal) {
+  // an abort listener added now would never fire for a job that was already cancelled
+  if (signal?.aborted) throw new DriverError('cancelled', 'cancelled');
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(new Error('timeout')), timeoutMs);
   const onAbort = () => ctrl.abort(new Error('cancelled'));
@@ -164,7 +176,7 @@ export async function postJson(url: string, headers: Record<string, string>, bod
     const text = await readCapped(res, MAX_ANSWER);
     if (!res.ok) {
       const kind = classifyStatus(res.status, text);
-      throw new DriverError(`HTTP ${res.status}: ${redact(errorMessage(text).slice(0, 400))}`, kind, res.status, retryAfterMs(res.headers));
+      throw new DriverError(`HTTP ${res.status}: ${redact(errorMessage(text).slice(0, 400))}`, kind, res.status, retryAfterMs(res.headers) ?? retryDelayInBody(text));
     }
     let json: any;
     try {
