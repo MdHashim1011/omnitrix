@@ -27,6 +27,23 @@ import { formatTokens, readLedger, recordUsage, typicalLatency } from './usage.j
 import { describeDelegated } from './value.js';
 import { checkLockfiles, describeLock } from './lockfile.js';
 import { ownerAlive } from './owner.js';
+import { claudeProjectsDir, formatOverhead, measureOverhead, resultTokens } from './overhead.js';
+
+/** The job records created since the given time, for report and overhead. */
+function jobsSince(since: number): Job[] {
+  const jobs: Job[] = [];
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(files.jobs()).filter((f) => f.endsWith('.json'));
+  } catch {
+    // no jobs yet
+  }
+  for (const name of names) {
+    const j = readJson<Job | null>(path.join(files.jobs(), name), null);
+    if (j && typeof j.createdAt === 'number' && j.createdAt >= since && j.task && Array.isArray(j.attempts)) jobs.push(j);
+  }
+  return jobs;
+}
 
 /** A typical answer time as people read it: "4.2 s", "38 s", or "-" when there is none yet. */
 function seconds(ms: number | undefined): string {
@@ -839,19 +856,22 @@ program
   .option('--json', 'machine-readable output')
   .action((o: { days: number; json?: boolean }) => {
     const since = Date.now() - o.days * 24 * 3600_000;
-    const jobs: Job[] = [];
-    let names: string[] = [];
-    try {
-      names = fs.readdirSync(files.jobs()).filter((f) => f.endsWith('.json'));
-    } catch {
-      // no jobs yet
-    }
-    for (const name of names) {
-      const j = readJson<Job | null>(path.join(files.jobs(), name), null);
-      if (j && typeof j.createdAt === 'number' && j.createdAt >= since && j.task && Array.isArray(j.attempts)) jobs.push(j);
-    }
-    const r = buildReport(jobs, since);
+    const r = buildReport(jobsSince(since), since);
     console.log(o.json ? JSON.stringify(r, null, 2) : formatReport(r, o.days));
+  });
+
+program
+  .command('overhead')
+  .description("how much of Claude's own work went into running omnitrix, read from Claude Code's session files on this computer")
+  .option('--days <n>', 'how far back', int, 30)
+  .option('--json', 'machine-readable output')
+  .action(async (o: { days: number; json?: boolean }) => {
+    const since = Date.now() - o.days * 24 * 3600_000;
+    const claude = await measureOverhead(claudeProjectsDir(), since);
+    const { tokens, acceptedTokens } = buildReport(jobsSince(since), since).totals;
+    const workers = { tokens, acceptedTokens };
+    if (o.json) console.log(JSON.stringify({ days: o.days, claude: { ...claude, resultTokens: resultTokens(claude) }, workers }, null, 2));
+    else console.log(formatOverhead(claude, workers, o.days));
   });
 
 program
