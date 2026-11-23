@@ -134,7 +134,9 @@ describe('retired models', () => {
       account({ id: 'off', baseUrl: bad.url, local: true, enabled: false }),
     ]);
     const r = await runCli(['test', '--all']);
-    expect(r.out).toMatch(/testing good\/.* ok in/);
+    // progress goes to stdout and errors to stderr, which a captured run may interleave in any order
+    expect(r.out).toMatch(/testing good\//);
+    expect(r.out).toMatch(/ok in \d/);
     expect(r.out).toMatch(/testing bad\/.* failed/);
     expect(r.out).not.toMatch(/testing off\//);
     expect(r.out).toMatch(/1 of 2 accounts answered; failed: bad/);
