@@ -148,7 +148,17 @@ export function withLock<T>(file: string, fn: () => T): T {
 export function writeJson(file: string, data: unknown, mode?: number): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { mode });
+  // flushed to disk before the rename, so a power cut cannot leave the renamed file empty
+  const fd = fs.openSync(tmp, 'w', mode);
+  try {
+    fs.writeSync(fd, JSON.stringify(data, null, 2) + '\n');
+    fs.fsyncSync(fd);
+  } catch (err) {
+    fs.closeSync(fd);
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+  fs.closeSync(fd);
   // Windows refuses the rename while a virus scanner or indexer has the target open. That clears within
   // moments, so wait and retry. Writing the target in place instead would let other processes read it empty.
   for (let attempt = 1; ; attempt++) {

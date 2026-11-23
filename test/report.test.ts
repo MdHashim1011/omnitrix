@@ -42,7 +42,7 @@ describe('the report of past jobs', () => {
       { account: 'codex', model: 'default', type: 'code', jobs: 4, failed: 0, accepted: 2, rejected: 1, medianSeconds: 25, tokens: 4000, checksPassed: 0, checksFailed: 0 },
       { account: 'gemini', model: 'flash', type: 'review', jobs: 1, failed: 0, accepted: 1, rejected: 0, medianSeconds: 5, tokens: 1000, checksPassed: 0, checksFailed: 0 },
     ]);
-    expect(r.totals).toEqual({ jobs: 5, failed: 0, accepted: 3, rejected: 1, tokens: 5000 });
+    expect(r.totals).toEqual({ jobs: 5, failed: 0, accepted: 3, rejected: 1, tokens: 5000, acceptedTokens: 3000, rejectedTokens: 1000, failedTokens: 0 });
   });
 
   it('counts failed jobs, leaves out running ones, old ones and checks, and counts check verdicts on the checked job', () => {
@@ -56,6 +56,20 @@ describe('the report of past jobs', () => {
     ], NOW - 30 * 86400_000);
     expect(r.rows).toEqual([{ account: 'codex', model: 'default', type: 'code', jobs: 3, failed: 1, accepted: 0, rejected: 0, medianSeconds: 10, tokens: 2000, checksPassed: 1, checksFailed: 1 }]);
     expect(r.totals.jobs).toBe(3);
+  });
+
+  it('splits the tokens by outcome, so wasted work shows: accepted, rejected, failed and not rated', () => {
+    const r = buildReport([
+      job({ verdict: 'accepted', tokens: 3000 }),
+      job({ verdict: 'rejected', tokens: 2000 }),
+      // a failed job that Claude also rejected counts once, as failed
+      job({ status: 'failed', verdict: 'rejected', tokens: 500 }),
+      job({ tokens: 1500 }),
+    ], NOW - 30 * 86400_000);
+    expect(r.totals).toMatchObject({ tokens: 7000, acceptedTokens: 3000, rejectedTokens: 2000, failedTokens: 500 });
+    expect(formatReport(r, 30)).toContain('Of those tokens, 3k went to work Claude accepted, 2k to work it rejected, 500 to failed jobs and 2k to work not rated yet.');
+    // no tokens recorded, no split
+    expect(formatReport(buildReport([job({ usage: undefined, verdict: 'accepted' })], 0), 30)).not.toContain('Of those tokens');
   });
 
   it('prints a table that says how many rated jobs each rate rests on', () => {

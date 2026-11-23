@@ -26,6 +26,7 @@ import { refreshQuotas } from './quota.js';
 import { formatTokens, readLedger, recordUsage, typicalLatency } from './usage.js';
 import { describeDelegated } from './value.js';
 import { checkLockfiles, describeLock } from './lockfile.js';
+import { ownerAlive } from './owner.js';
 
 /** A typical answer time as people read it: "4.2 s", "38 s", or "-" when there is none yet. */
 function seconds(ms: number | undefined): string {
@@ -957,6 +958,9 @@ program
       // a record that is not omnitrix's own for this file name could point anywhere, so it is left alone
       if (!job || `${job.id}.json` !== name || !JOB_ID.test(job.id)) continue;
       if (job.updatedAt > cutoff || job.status === 'queued' || job.status === 'running') continue;
+      // a finished job whose test or check is still running is in use: its process saves the record again later
+      const unsettled = job.verify?.test?.status === 'running' || job.check?.status === 'pending';
+      if (unsettled && ownerAlive(job.owner, job.pid)) continue;
       jobs++;
       // only a worktree inside omnitrix's own folder is ever deleted
       const tree = job.worktree && path.resolve(job.worktree.path) !== path.resolve(files.worktrees()) && inside(job.worktree.path, files.worktrees()) ? job.worktree.path : undefined;
@@ -995,8 +999,24 @@ program
       trees++;
       if (!o.dryRun) pruneWorktree(dir);
     }
+    // temp files of a save that a crash interrupted; a young one may belong to a save happening right now
+    let temps = 0;
+    const tempCutoff = Math.min(cutoff, Date.now() - 10 * 60_000);
+    for (const dir of [homeDir(), files.jobs()]) {
+      for (const name of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
+        if (!/\.\d+\.\d+\.tmp$/.test(name)) continue;
+        const file = path.join(dir, name);
+        try {
+          if (!fs.statSync(file).isFile() || fs.statSync(file).mtimeMs >= tempCutoff) continue;
+          if (!o.dryRun) fs.rmSync(file);
+          temps++;
+        } catch {
+          // gone already, or held open by another program
+        }
+      }
+    }
     const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-    console.log(`${o.dryRun ? 'would remove' : 'removed'} ${count(jobs, 'old job', 'old jobs')} and ${count(trees, 'worktree', 'worktrees')}`);
+    console.log(`${o.dryRun ? 'would remove' : 'removed'} ${count(jobs, 'old job', 'old jobs')} and ${count(trees, 'worktree', 'worktrees')}${temps ? `, and ${count(temps, 'leftover temp file', 'leftover temp files')}` : ''}`);
     if (o.branches) {
       // Work copied with "git checkout <branch> -- <file>" never counts as merged, so a kept branch is named:
       // only the user knows whether it is still needed.

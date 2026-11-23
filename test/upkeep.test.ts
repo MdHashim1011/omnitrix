@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Engine } from '../src/engine.js';
 import { makeModel } from '../src/models.js';
 import { files, loadHealth, writeJson } from '../src/store.js';
@@ -242,6 +242,68 @@ describe('omnitrix clean safeguards', () => {
     expect(r.stdout).toMatch(/could not delete 1/);
     expect(fs.existsSync(path.join(files.jobs(), 'jbusy.json'))).toBe(true);
   }, 30_000);
+
+  it('keeps a finished job whose test or check is still running in a live process, even with --days 0', () => {
+    const live = { pid: process.pid };
+    const dead = { owner: `${2 ** 30}.gone`, pid: 2 ** 30 };
+    const testing = { verify: { files: [], test: { command: 'npm test', status: 'running' as const } } };
+    const checking = { check: { status: 'pending' as const, jobId: 'jchecker' } };
+    job('jtestlive', os.tmpdir(), { ...live, ...testing });
+    job('jchecklive', os.tmpdir(), { ...live, ...checking });
+    job('jtestdead', os.tmpdir(), { ...dead, ...testing });
+    job('jcheckdead', os.tmpdir(), { ...dead, ...checking });
+    job('jsettled', os.tmpdir(), { ...live, verify: { files: [], test: { command: 'npm test', status: 'passed' } }, check: { status: 'pass' } });
+    run('--days', '0');
+    const left = (id: string) => fs.existsSync(path.join(files.jobs(), `${id}.json`));
+    expect(left('jtestlive')).toBe(true);
+    expect(left('jchecklive')).toBe(true);
+    // a test or check whose process is gone will never finish, so its job goes like any other
+    expect(left('jtestdead')).toBe(false);
+    expect(left('jcheckdead')).toBe(false);
+    expect(left('jsettled')).toBe(false);
+  }, 30_000);
+
+  it('removes temp files that an interrupted save left behind, but not one being written now', () => {
+    fs.mkdirSync(files.jobs(), { recursive: true });
+    const put = (file: string, at: number) => {
+      fs.writeFileSync(file, '{');
+      fs.utimesSync(file, new Date(at), new Date(at));
+      return file;
+    };
+    const oldJob = put(path.join(files.jobs(), 'jx.json.123.456.tmp'), old);
+    const oldHome = put(path.join(files.jobs(), '..', 'health.json.123.456.tmp'), old);
+    const young = put(path.join(files.jobs(), 'jy.json.123.789.tmp'), Date.now() - 60_000);
+    const other = put(path.join(files.jobs(), '..', 'notes.tmp'), old);
+    const dry = run('--days', '0', '--dry-run');
+    expect(dry.stdout).toMatch(/would remove .*2 leftover temp files/);
+    expect(fs.existsSync(oldJob)).toBe(true);
+    const r = run('--days', '0');
+    expect(r.stdout).toMatch(/removed .*2 leftover temp files/);
+    expect(fs.existsSync(oldJob)).toBe(false);
+    expect(fs.existsSync(oldHome)).toBe(false);
+    // ten minutes old at least, whatever --days says: a younger one may be a save in progress
+    expect(fs.existsSync(young)).toBe(true);
+    // only the names omnitrix's own saves use
+    expect(fs.existsSync(other)).toBe(true);
+  }, 30_000);
+});
+
+describe('saving a file', () => {
+  it('flushes it to disk before the rename, so a power cut cannot leave it empty', () => {
+    const fsync = vi.spyOn(fs, 'fsyncSync');
+    const rename = vi.spyOn(fs, 'renameSync');
+    try {
+      const file = path.join(files.jobs(), 'jflush.json');
+      writeJson(file, { a: 1 });
+      expect(fsync).toHaveBeenCalledTimes(1);
+      expect(fsync.mock.invocationCallOrder[0]!).toBeLessThan(rename.mock.invocationCallOrder[0]!);
+      expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ a: 1 });
+      expect(fs.readdirSync(files.jobs()).filter((n) => n.endsWith('.tmp'))).toEqual([]);
+    } finally {
+      fsync.mockRestore();
+      rename.mockRestore();
+    }
+  });
 });
 
 describe('tables in the terminal', () => {

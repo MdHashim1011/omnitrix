@@ -21,7 +21,11 @@ export interface ReportRow {
 
 export interface Report {
   rows: ReportRow[];
-  totals: { jobs: number; failed: number; accepted: number; rejected: number; tokens: number };
+  totals: {
+    jobs: number; failed: number; accepted: number; rejected: number; tokens: number;
+    /** the tokens of jobs that Claude accepted, that it rejected, and of failed jobs; the rest are not rated yet */
+    acceptedTokens: number; rejectedTokens: number; failedTokens: number;
+  };
 }
 
 /** Below this many rated jobs, an acceptance rate says little; the table says so. */
@@ -37,6 +41,7 @@ function median(values: number[]): number | null {
 /** Finished and failed jobs created since the given time. Checks are counted on the job they checked, not as jobs. */
 export function buildReport(jobs: Job[], since: number): Report {
   const groups = new Map<string, { row: ReportRow; times: number[] }>();
+  const spent = { acceptedTokens: 0, rejectedTokens: 0, failedTokens: 0 };
   for (const j of jobs) {
     if (j.checkOf || j.createdAt < since || (j.status !== 'done' && j.status !== 'failed')) continue;
     const last = j.attempts[j.attempts.length - 1];
@@ -54,7 +59,11 @@ export function buildReport(jobs: Job[], since: number): Report {
     if (j.status === 'failed') r.failed++;
     if (j.verdict === 'accepted') r.accepted++;
     if (j.verdict === 'rejected') r.rejected++;
-    if (j.usage) r.tokens += j.usage.inputTokens + j.usage.outputTokens;
+    const used = j.usage ? j.usage.inputTokens + j.usage.outputTokens : 0;
+    r.tokens += used;
+    if (j.status === 'failed') spent.failedTokens += used;
+    else if (j.verdict === 'accepted') spent.acceptedTokens += used;
+    else if (j.verdict === 'rejected') spent.rejectedTokens += used;
     if (j.check?.status === 'pass') r.checksPassed++;
     if (j.check?.status === 'fail') r.checksFailed++;
     // the run's own start and end: a job's updatedAt also moves when Claude rates it later
@@ -63,7 +72,7 @@ export function buildReport(jobs: Job[], since: number): Report {
   }
   const rows = [...groups.values()].map(({ row, times }) => ({ ...row, medianSeconds: median(times) }));
   rows.sort((a, b) => b.jobs - a.jobs || a.account.localeCompare(b.account) || a.model.localeCompare(b.model) || a.type.localeCompare(b.type));
-  const totals = { jobs: 0, failed: 0, accepted: 0, rejected: 0, tokens: 0 };
+  const totals = { jobs: 0, failed: 0, accepted: 0, rejected: 0, tokens: 0, ...spent };
   for (const r of rows) {
     totals.jobs += r.jobs;
     totals.failed += r.failed;
@@ -88,7 +97,13 @@ export function formatReport(r: Report, days: number): string {
   const t = r.totals;
   if (!t.jobs) return `No finished jobs in the last ${days} days.`;
   const unrated = t.jobs - t.failed - t.accepted - t.rejected;
-  const lines = [`Last ${days} days: ${t.jobs} jobs, ${t.accepted} accepted, ${t.rejected} rejected, ${Math.max(0, unrated)} not rated, ${t.failed} failed; ${tokens(t.tokens)} tokens on the workers' accounts`, ''];
+  const lines = [`Last ${days} days: ${t.jobs} jobs, ${t.accepted} accepted, ${t.rejected} rejected, ${Math.max(0, unrated)} not rated, ${t.failed} failed; ${tokens(t.tokens)} tokens on the workers' accounts`];
+  // where the workers' tokens went: work Claude kept, and work it threw away or that failed
+  if (t.tokens) {
+    const unratedTokens = t.tokens - t.acceptedTokens - t.rejectedTokens - t.failedTokens;
+    lines.push(`Of those tokens, ${tokens(t.acceptedTokens)} went to work Claude accepted, ${tokens(t.rejectedTokens)} to work it rejected, ${tokens(t.failedTokens)} to failed jobs and ${tokens(Math.max(0, unratedTokens))} to work not rated yet.`);
+  }
+  lines.push('');
   const table = [['model', 'type', 'jobs', 'accepted', 'failed', 'median time', 'tokens', 'check pass/fail']];
   let small = false;
   for (const x of r.rows) {
