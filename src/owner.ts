@@ -8,8 +8,10 @@ import { files, processAlive } from './store.js';
 
 export const OWNER = `${process.pid}.${randomUUID().slice(0, 8)}`;
 
-// Generous next to the one-second beat, so a process busy with a long synchronous step is not declared dead.
-const STALE_MS = 30_000;
+// The heartbeat only decides when the pid is still in use, which after a crash means Windows gave it to
+// another program. It is generous, because git commands on a large repository can hold up the one-second
+// beat for minutes, and a live owner declared dead has its running jobs marked failed by other processes.
+const STALE_MS = 10 * 60_000;
 
 /** Called every second by each Engine. */
 export function beat(): void {

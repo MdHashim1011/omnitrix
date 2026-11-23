@@ -519,15 +519,18 @@ export class Engine {
         verify.test = { command: job.task.test.join(' '), status: 'error', output: `the test could not run: ${err instanceof Error ? err.message : err}` };
       }
     }
-    this.mergeDisk(job);
-    job.verify = verify;
-    job.worktree = { ...job.worktree, path: out.path, diffStat: out.diffStat };
-    job.rebased = { at: Date.now(), onto: out.onto };
+    // The test can take up to an hour, and meanwhile Claude may have rated or retried the job in the MCP
+    // server. The rebase therefore changes only its own fields, on the latest copy from disk.
+    const disk = readJson<Job | null>(path.join(files.jobs(), `${job.id}.json`), null);
+    const latest = disk && disk.id === job.id ? disk : job;
+    latest.verify = verify;
+    latest.worktree = { ...job.worktree, path: out.path, diffStat: out.diffStat };
+    latest.rebased = { at: Date.now(), onto: out.onto };
     // a check looked at the code before the rebase
-    delete job.check;
-    job.updatedAt = Date.now();
-    this.jobs.set(job.id, job);
-    this.saveJob(job);
+    delete latest.check;
+    latest.updatedAt = Date.now();
+    this.jobs.set(job.id, latest);
+    this.saveJob(latest);
     this.notify();
     return { status: 'rebased', onto: out.onto, verify };
   }

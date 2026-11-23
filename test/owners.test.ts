@@ -56,9 +56,13 @@ describe('job owners', () => {
     expect(fs.existsSync(path.join(files.jobs(), `${job.id}.cancel`))).toBe(true);
   });
 
-  it('counts an owner with a stale heartbeat as gone', () => {
+  it('counts an owner with a stale heartbeat as gone, but not one held up by a long step', () => {
     const owner = `${process.pid}.cafe0002`;
+    // a live process blocked for a minute by a git command on a large repository
     heartbeat(owner, 60_000);
+    expect(ownerAlive(owner, process.pid)).toBe(true);
+    // a reused pid: the heartbeat stopped long ago
+    heartbeat(owner, 11 * 60_000);
     expect(ownerAlive(owner, process.pid)).toBe(false);
     heartbeat(owner);
     expect(ownerAlive(owner, process.pid)).toBe(true);

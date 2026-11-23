@@ -170,6 +170,22 @@ describe('a job whose repository moved on', () => {
     fs.rmSync(outside, { recursive: true, force: true });
   }, 40_000);
 
+  it('keeps a verdict that Claude gave while the rebase was running the test', async () => {
+    const r = makeRepo();
+    // the first run (in the worker's checkout) passes at once; after the rebase it waits for a second
+    const slow = [process.execPath, '-e', "if(require('fs').readFileSync('README.md','utf8').includes('v2'))setTimeout(()=>{},3000)"];
+    const { engine, job } = await codeJob(r.dir, slow);
+    engine.verdict(job.id, true, 'looked fine');
+    r.commit('README.md', 'v2');
+    const running = new Engine().rebase(job.id);
+    await new Promise((res) => setTimeout(res, 1500));
+    expect(engine.verdict(job.id, false, 'second look: wrong')!.verdict).toBe('rejected');
+    expect((await running).status).toBe('rebased');
+    const saved = JSON.parse(fs.readFileSync(path.join(files.jobs(), `${job.id}.json`), 'utf8'));
+    expect(saved.verdict).toBe('rejected');
+    expect(saved.rebased).toBeDefined();
+  }, 60_000);
+
   it('refuses jobs that cannot be rebased', async () => {
     const r = makeRepo();
     const { engine, job } = await codeJob(r.dir);
