@@ -15,6 +15,12 @@ omnitrix is built for the frontier-model subscriptions and API keys you already 
 
 You can monitor the pool without leaving Claude Code. The status line shows up to four accounts with their remaining quota or status, and omnitrix instructs Claude to check the same data before it assigns work. Claude reads short results instead of performing every step itself, which uses less of your Claude usage limit.
 
+## A real run
+
+The recording below replays one real run in Claude Code, with the waiting shown six times faster. Claude splits a request into three tasks. Codex writes the code on its own git branch, and omnitrix runs the project's tests on it. Gemini reviews a file and then checks the work Codex did. A local Ollama model drafts the changelog. Claude reviews each result before it merges the branch. The three workers used 137,597 tokens on their own accounts, while Claude read fewer than 3,000 characters of their results.
+
+<img src="assets/demo.gif" width="100%" alt="A recorded run in Claude Code. The request is to add two coupon codes to a small shop project, review cart.js for bugs and draft a changelog entry. Claude sends three tasks to omnitrix: Codex on a ChatGPT Plus plan writes the coupon code in 56 seconds, Gemini reviews the cart in 9 seconds and a local Ollama model drafts the changelog in 10 seconds. Gemini then checks the code and reports PASS. The results show that the tests passed and that Gemini found a real bug on line 11, where removing a missing item deletes the last one. Claude accepts all three results, merges the branch, and the four tests pass.">
+
 ## Who it is for
 
 omnitrix suits you if you work in Claude Code, have other AI accounts that sit idle (a ChatGPT plan, free or paid API keys, local models), and want Claude to hand work to them and check the results instead of switching between tools yourself. It is a weaker fit if you prefer to drive several agents by hand in one window, which an app such as [T3 Code](https://github.com/pingdotgg/t3code) does well (omnitrix also works inside it, see [Inside T3 Code](#inside-t3-code)), or if you need one OpenAI-compatible endpoint for other applications, which a gateway such as FreeLLMAPI or OpenRouter provides.
