@@ -2,6 +2,8 @@
 
 # omnitrix
 
+[![MdHashim1011/omnitrix MCP server](https://glama.ai/mcp/servers/MdHashim1011/omnitrix/badges/score.svg)](https://glama.ai/mcp/servers/MdHashim1011/omnitrix)
+
 Claude plans the work, and your other AI accounts carry it out.
 
 <picture>
