@@ -12,6 +12,7 @@ import { describeDelegated } from './value.js';
 import { VERSION } from './version.js';
 import { runningDashboard, refreshDashboards } from './dashboard-launch.js';
 import { JOB_ID } from './store.js';
+import { describeLead, leadOut, loadLeadQuota } from './lead.js';
 import { isLockfile } from './lockfile.js';
 
 // a job id from Claude becomes a file name, so nothing else is accepted
@@ -21,7 +22,7 @@ const JOB_ID_ARG = z.string().regex(JOB_ID, 'not a job id');
 export const INSTRUCTIONS = `omnitrix gives you a team of other AI models (ChatGPT/Codex, DeepSeek, Kimi, GLM, Qwen, Groq, OpenRouter, local Ollama models and more) that run on the user's own accounts. You are the lead: you plan, they do the heavy work, you check it.
 
 How to work:
-1. Call pool_status to see which accounts are ready and how much quota is left. When the user asks to see the pool and your client can draw visual widgets, show its structured data as a panel: one card per account with a meter for each window, its reset time and any paused models.
+1. Call pool_status to see which accounts are ready and how much quota is left. When the user's status line reports it, pool_status also shows how much of your own Claude limit is used; when that runs low, delegate more and read less yourself. When the user asks to see the pool and your client can draw visual widgets, show its structured data as a panel: one card per account with a meter for each window, its reset time and any paused models.
 2. Split the job into small, independent tasks. Give each one a clear title, a type (code, code_snippet, review, reasoning, long_context, bulk, writing, vision), a precise prompt and an "acceptance" line that says what done means. Tasks that edit files need type "code" and the repo path; each runs in its own git worktree and branch, so give parallel tasks separate files.
 3. Call dispatch with all independent tasks at once. Use route_preview first if you want to see who would get them. Set check true to have a different account check a result against its acceptance line before you read it; get_results shows that verdict. It is advice: review the result yourself before accepting it. For an important review or question, set copies (2 to 5) to have that many different models answer it independently: a finding that several of them report is more likely real, and one that only one reports needs checking. To ask a worker more about its answer, dispatch a task with follow_up_of set to that job's id: the same model gets its earlier task and answer, so you need not repeat them.
 4. Call get_results to collect them. Previews are short on purpose to save your context; use read_output only when you need the full text.
@@ -84,6 +85,11 @@ const poolOut = z.object({
   dashboard: z.string().nullable().describe('address of the live dashboard when it runs; a client with a browser can open it for the user'),
   delegated: z.object({ days: z.number(), jobs: z.number(), accepted: z.number(), rejected: z.number(), tokens: z.number() }).optional()
     .describe('work other accounts did instead of Claude in the last days: jobs answered, how many Claude accepted or rejected, and their tokens'),
+  lead: z.object({
+    windows: z.array(z.object({ name: z.string(), used_percent: z.number(), resets_at: z.number().nullable() })),
+    seen_at: z.number(),
+    stale: z.boolean(),
+  }).nullable().optional().describe("Claude's own plan usage as the Claude Code status line last saw it; null when it has not reported any"),
 });
 
 
@@ -232,9 +238,11 @@ export function buildServer(engine: Engine): McpServer {
       const pool = engine.pool();
       const team = engine.teamSummary();
       const dashboard = await runningDashboard();
-      if (!pool.length) return text('No accounts yet. The user can add some with: omnitrix init --apply, or omnitrix add <provider> (run "omnitrix providers" for the list).', { ready: 0, total: 0, accounts: [], dashboard });
+      const leadQuota = loadLeadQuota();
+      const lead = leadOut(leadQuota);
+      if (!pool.length) return text(`No accounts yet. The user can add some with: omnitrix init --apply, or omnitrix add <provider> (run "omnitrix providers" for the list).\n${describeLead(leadQuota)}`, { ready: 0, total: 0, accounts: [], dashboard, lead });
       const ready = pool.filter((a) => a.state === 'ready' || a.state === 'busy').length;
-      const lines = [`${ready}/${pool.length} accounts available`, ...(team ? [describeTeam(team)] : []), ...pool.map(describeAccount)];
+      const lines = [`${ready}/${pool.length} accounts available`, describeLead(leadQuota), ...(team ? [describeTeam(team)] : []), ...pool.map(describeAccount)];
       const accounts = pool.map((a) => ({
         id: a.id,
         label: a.label,
@@ -261,7 +269,7 @@ export function buildServer(engine: Engine): McpServer {
       if (dashboard) lines.push(`live dashboard: ${dashboard}`);
       const delegated = engine.delegated(7);
       if (delegated.jobs) lines.push(describeDelegated(delegated));
-      return text(lines.join('\n'), { ready, total: pool.length, accounts, ...(team ? { team } : {}), dashboard, delegated });
+      return text(lines.join('\n'), { ready, total: pool.length, accounts, ...(team ? { team } : {}), dashboard, delegated, lead });
     },
   );
 

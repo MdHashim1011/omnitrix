@@ -418,55 +418,76 @@ program
     console.log(`${id}/${modelId}: ${JSON.stringify(m.skills)}`);
   });
 
-program
-  .command('test <id>')
-  .description('send a tiny request to check that an account works')
-  .option('--model <id>')
-  .action(async (id: string, o) => {
-    const cfg = loadConfig();
-    const acc = findAccount(cfg, id) ?? die(`no account "${id}"`);
-    // try the listed models in order until one answers; a provider may still list models it has retired
-    // a code-completion or scoring model in the list would fail a chat test for reasons of its own
-    const chat = acc.models.map((m) => m.id).filter(isChatModel);
-    const queue = o.model ? [o.model] : chat.length ? chat : acc.models.length ? acc.models.map((m) => m.id) : ['default'];
-    for (const model of queue) {
-      const t0 = Date.now();
-      process.stdout.write(`testing ${id}/${model} ... `);
-      try {
-        const r = await runDriver({ account: acc, model, prompt: 'Reply with the single word OK.', timeoutMs: 180_000, maxOutputTokens: 64 });
-        const ms = Date.now() - t0;
-        // an empty answer means the model cannot do chat work as it is, so it is not counted as a success
-        if (!r.text.trim()) {
-          console.log(`answered in ${(ms / 1000).toFixed(1)}s, but the answer was empty`);
-          if (!o.model) continue;
-          fail(`${model} gave an empty answer; it may need more output room, or it may not suit chat tasks`);
-          return;
-        }
-        const costUsd = r.costUsd ?? estimateCost(acc.models.find((m) => m.id === model), r.inputTokens, r.outputTokens);
-        const rec = { ts: Date.now(), accountId: id, model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ok: true, latencyMs: ms, costUsd };
-        // a test on a team account spends the team's money like any other request
-        const team = acc.team && cfg.settings.team ? loadTeam(cfg.settings.team) : undefined;
-        const tagged = team?.team ? { ...rec, user: team.membership.user, team: team.team.name } : rec;
-        recordUsage(tagged);
-        if (team?.team?.auditDir) shareRecord(team.team.auditDir, team.membership.user, tagged);
-        saveHealth({ [id]: { state: 'ready', measured: r.rate ? { ...r.rate, at: Date.now(), source: 'response headers' } : undefined } });
-        console.log(`ok in ${(ms / 1000).toFixed(1)}s: "${r.text.trim().slice(0, 60)}"`);
-        if (r.rate?.remainingRequests !== undefined) console.log(`provider says ${r.rate.remainingRequests} requests left in this window`);
-        return;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.log('failed');
-        if (err instanceof DriverError && err.kind === 'model_gone' && !o.model) {
-          dropModel(id, model);
-          console.log(`  ${model} is no longer available, so it was removed from ${id}; trying the next model`);
-          continue;
-        }
-        if (err instanceof DriverError && err.kind === 'auth') saveHealth({ [id]: { state: 'auth_error', reason: msg.slice(0, 160) } });
-        fail(redact(msg));
-        return;
+/** Sends a tiny request to one account, trying its models in order; true when one answered. */
+async function testAccount(id: string, o: { model?: string }): Promise<boolean> {
+  const cfg = loadConfig();
+  const acc = findAccount(cfg, id);
+  if (!acc) {
+    fail(`no account "${id}"`);
+    return false;
+  }
+  // try the listed models in order until one answers; a provider may still list models it has retired
+  // a code-completion or scoring model in the list would fail a chat test for reasons of its own
+  const chat = acc.models.map((m) => m.id).filter(isChatModel);
+  const queue = o.model ? [o.model] : chat.length ? chat : acc.models.length ? acc.models.map((m) => m.id) : ['default'];
+  for (const model of queue) {
+    const t0 = Date.now();
+    process.stdout.write(`testing ${id}/${model} ... `);
+    try {
+      const r = await runDriver({ account: acc, model, prompt: 'Reply with the single word OK.', timeoutMs: 180_000, maxOutputTokens: 64 });
+      const ms = Date.now() - t0;
+      // an empty answer means the model cannot do chat work as it is, so it is not counted as a success
+      if (!r.text.trim()) {
+        console.log(`answered in ${(ms / 1000).toFixed(1)}s, but the answer was empty`);
+        if (!o.model) continue;
+        fail(`${model} gave an empty answer; it may need more output room, or it may not suit chat tasks`);
+        return false;
       }
+      const costUsd = r.costUsd ?? estimateCost(acc.models.find((m) => m.id === model), r.inputTokens, r.outputTokens);
+      const rec = { ts: Date.now(), accountId: id, model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, ok: true, latencyMs: ms, costUsd };
+      // a test on a team account spends the team's money like any other request
+      const team = acc.team && cfg.settings.team ? loadTeam(cfg.settings.team) : undefined;
+      const tagged = team?.team ? { ...rec, user: team.membership.user, team: team.team.name } : rec;
+      recordUsage(tagged);
+      if (team?.team?.auditDir) shareRecord(team.team.auditDir, team.membership.user, tagged);
+      saveHealth({ [id]: { state: 'ready', measured: r.rate ? { ...r.rate, at: Date.now(), source: 'response headers' } : undefined } });
+      console.log(`ok in ${(ms / 1000).toFixed(1)}s: "${r.text.trim().slice(0, 60)}"`);
+      if (r.rate?.remainingRequests !== undefined) console.log(`provider says ${r.rate.remainingRequests} requests left in this window`);
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log('failed');
+      if (err instanceof DriverError && err.kind === 'model_gone' && !o.model) {
+        dropModel(id, model);
+        console.log(`  ${model} is no longer available, so it was removed from ${id}; trying the next model`);
+        continue;
+      }
+      if (err instanceof DriverError && err.kind === 'auth') saveHealth({ [id]: { state: 'auth_error', reason: msg.slice(0, 160) } });
+      fail(redact(msg));
+      return false;
     }
-    fail(`no model on ${id} answered`);
+  }
+  fail(`no model on ${id} answered`);
+  return false;
+}
+
+program
+  .command('test [id]')
+  .description('send a tiny request to check that an account works; --all checks every enabled account')
+  .option('--model <id>')
+  .option('--all', 'check every enabled account, one after another, and exit with 1 when any fails')
+  .action(async (id: string | undefined, o: { model?: string; all?: boolean }) => {
+    if (!id === !o.all) die('name an account, or use --all');
+    if (o.all && o.model) die('--model names a model of one account; leave it out with --all');
+    if (id) {
+      await testAccount(id, o);
+      return;
+    }
+    const ids = loadConfig().accounts.filter((a) => a.enabled).map((a) => a.id);
+    const failed: string[] = [];
+    for (const each of ids) if (!(await testAccount(each, o))) failed.push(each);
+    console.log(`${ids.length - failed.length} of ${ids.length} accounts answered${failed.length ? `; failed: ${failed.join(', ')}` : ''}`);
+    // a failed account has already set the exit code to 1
   });
 
 program

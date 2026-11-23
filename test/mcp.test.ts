@@ -44,6 +44,18 @@ describe('MCP server (real stdio process)', () => {
     });
   });
 
+  it("shows Claude its own limit next to the pool, once the status line has reported it", async () => {
+    let status: any = await client.callTool({ name: 'pool_status', arguments: {} });
+    expect(status.structuredContent.lead).toBeNull();
+    expect(status.content[0].text).toMatch(/usage not reported yet/);
+    const resets = Date.now() + 3600_000;
+    writeJson(files.lead(), { seenAt: Date.now(), windows: [{ name: '5 hours', usedPercent: 82, resetsAt: resets }] });
+    status = await client.callTool({ name: 'pool_status', arguments: {} });
+    expect(status.structuredContent.lead).toMatchObject({ windows: [{ name: '5 hours', used_percent: 82, resets_at: resets }], stale: false });
+    expect(status.content[0].text).toMatch(/Claude \(you, the lead\): 5 hours 82% used .*delegate more/);
+    fs.rmSync(files.lead());
+  });
+
   it('lists the tools and gives instructions', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(['cancel_job', 'dispatch', 'get_results', 'list_jobs', 'pool_status', 'rate_result', 'read_output', 'route_preview']);
@@ -120,7 +132,8 @@ describe('MCP server with no accounts', () => {
     try {
       const status: any = await client.callTool({ name: 'pool_status', arguments: {} });
       expect(status.isError).toBeFalsy();
-      expect(status.structuredContent).toEqual({ ready: 0, total: 0, accounts: [], dashboard: null });
+      expect(status.structuredContent).toEqual({ ready: 0, total: 0, accounts: [], dashboard: null, lead: null });
+      expect(status.content[0].text).toMatch(/Claude \(you, the lead\): usage not reported yet/);
     } finally {
       await client.close();
     }

@@ -124,6 +124,46 @@ describe('retired models', () => {
     expect(r.code).toBe(0);
   }, 30_000);
 
+  it('omnitrix test --all checks every enabled account and exits with 1 when one fails', async () => {
+    const good = await mockProvider(() => ({ json: chatReply('OK') }));
+    const bad = await mockProvider(() => ({ status: 500, json: { error: { message: 'boom' } } }));
+    closers.push(good.close, bad.close);
+    writeConfig([
+      account({ id: 'bad', baseUrl: bad.url, local: true }),
+      account({ id: 'good', baseUrl: good.url, local: true }),
+      account({ id: 'off', baseUrl: bad.url, local: true, enabled: false }),
+    ]);
+    const r = await runCli(['test', '--all']);
+    expect(r.out).toMatch(/testing good\/.* ok in/);
+    expect(r.out).toMatch(/testing bad\/.* failed/);
+    expect(r.out).not.toMatch(/testing off\//);
+    expect(r.out).toMatch(/1 of 2 accounts answered; failed: bad/);
+    expect(bad.calls.length).toBeGreaterThan(0);
+    expect(r.code).toBe(1);
+  }, 30_000);
+
+  it('omnitrix test --all exits with 0 when every account answers', async () => {
+    const good = await mockProvider(() => ({ json: chatReply('OK') }));
+    closers.push(good.close);
+    writeConfig([account({ id: 'a', baseUrl: good.url, local: true }), account({ id: 'b', baseUrl: good.url, local: true })]);
+    const r = await runCli(['test', '--all']);
+    expect(r.out).toMatch(/2 of 2 accounts answered/);
+    expect(r.code).toBe(0);
+  }, 30_000);
+
+  it('omnitrix test asks for an account or --all', async () => {
+    writeConfig([account({ id: 'a', local: true })]);
+    const r = await runCli(['test']);
+    expect(r.out).toMatch(/name an account, or use --all/);
+    expect(r.code).toBe(1);
+    const both = await runCli(['test', 'a', '--all']);
+    expect(both.out).toMatch(/name an account, or use --all/);
+    expect(both.code).toBe(1);
+    const model = await runCli(['test', '--all', '--model', 'x']);
+    expect(model.out).toMatch(/leave it out with --all/);
+    expect(model.code).toBe(1);
+  }, 30_000);
+
   it('omnitrix test exits with code 1, and no crash, when the request fails', async () => {
     const p = await mockProvider(() => ({ status: 500, json: { error: { message: 'boom' } } }));
     closers.push(p.close);

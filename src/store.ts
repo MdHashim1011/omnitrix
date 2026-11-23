@@ -15,6 +15,7 @@ export const files = {
   ledger: () => path.join(homeDir(), 'usage.jsonl'),
   health: () => path.join(homeDir(), 'health.json'),
   quota: () => path.join(homeDir(), 'quota.json'),
+  lead: () => path.join(homeDir(), 'lead-quota.json'),
   stats: () => path.join(homeDir(), 'stats.json'),
   jobs: () => path.join(homeDir(), 'jobs'),
   outputs: () => path.join(homeDir(), 'outputs'),

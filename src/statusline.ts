@@ -1,3 +1,4 @@
+import { readLeadInput, saveLeadQuota } from './lead.js';
 import { loadQuotas } from './quota.js';
 import { loadConfig, loadHealth } from './store.js';
 import { headroom, readLedger, summarize } from './usage.js';
@@ -52,6 +53,11 @@ export function renderStatusLine(stdinJson: string, now = Date.now()): string {
   try {
     if (stdinJson.trim()) {
       const j = JSON.parse(stdinJson);
+      try {
+        saveLeadQuota(readLeadInput(j), now);
+      } catch {
+        /* the line matters more than the saved copy */
+      }
       const five = j?.rate_limits?.five_hour?.used_percentage;
       const week = j?.rate_limits?.seven_day?.used_percentage;
       const bits: string[] = [];
