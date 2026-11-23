@@ -80,6 +80,23 @@ describe('a job whose repository moved on', () => {
     expect(behindNote({ commits: 1, files: [] }, job.id)).toMatch(/1 newer commit since this job started; none of this job's files changed there/);
   }, 40_000);
 
+  it('shows on the dashboard when a job is out of date, reading git at most once in a while', async () => {
+    const { behindReader, recentJobs } = await import('../src/dashboard.js');
+    const r = makeRepo();
+    const { engine, job } = await codeJob(r.dir);
+    const row = (read: ReturnType<typeof behindReader>) => recentJobs(engine, 30, read).find((x) => x.id === job.id)!;
+    expect(row(behindReader(engine, 0)).behind).toBeUndefined();
+    const cached = behindReader(engine, 60_000);
+    expect(row(cached).behind).toBeUndefined();
+    r.commit('hello.txt', 'upstream');
+    // the cached reading stands until it is old; a fresh reader sees the new commit and the job's own file
+    expect(row(cached).behind).toBeUndefined();
+    expect(row(behindReader(engine, 0)).behind).toEqual({ commits: 1, files: ['hello.txt'], more: 0 });
+    // a rejected job will not be merged, so it is not shown as out of date
+    engine.verdict(job.id, false, 'no');
+    expect(row(behindReader(engine, 0)).behind).toBeUndefined();
+  }, 40_000);
+
   it('rebases onto the current HEAD and runs the test again on the result', async () => {
     const r = makeRepo();
     const { engine, job } = await codeJob(r.dir, needsV2);

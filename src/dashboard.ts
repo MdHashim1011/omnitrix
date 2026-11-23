@@ -12,8 +12,33 @@ import { ICON_SVG } from './icon.js';
 import { leadOut, loadLeadQuota } from './lead.js';
 import { VERSION } from './version.js';
 
+type Behind = { commits: number; files: string[] };
+
+/**
+ * How far the repository moved past each finished code job, read with git at most once per `ttlMs` for each
+ * job, because the page is rebuilt every second. Rejected jobs are left out: nobody will merge them.
+ */
+export function behindReader(engine: Engine, ttlMs = 30_000): (j: Job) => Behind | undefined {
+  const cache = new Map<string, { at: number; value: Behind | undefined }>();
+  return (j) => {
+    if (j.status !== 'done' || !j.worktree || !j.task.repo || j.verdict === 'rejected') return undefined;
+    const hit = cache.get(j.id);
+    if (hit && Date.now() - hit.at < ttlMs) return hit.value;
+    let value: Behind | undefined;
+    try {
+      value = engine.behind(j);
+    } catch {
+      value = undefined;
+    }
+    cache.set(j.id, { at: Date.now(), value });
+    // jobs fall off the page; their readings go too
+    if (cache.size > 200) cache.delete(cache.keys().next().value!);
+    return value;
+  };
+}
+
 /** The newest jobs for the page. A second check is shown on the job it checks, not as a job of its own. */
-export function recentJobs(engine: Engine, limit = 30): Record<string, unknown>[] {
+export function recentJobs(engine: Engine, limit = 30, behindOf?: (j: Job) => Behind | undefined): Record<string, unknown>[] {
   return engine.listJobs(limit * 2).filter((j) => !j.checkOf).slice(0, limit).map((j) => ({
     id: j.id,
     status: j.status,
@@ -28,7 +53,14 @@ export function recentJobs(engine: Engine, limit = 30): Record<string, unknown>[
     // omnitrix's own check of a code job, as one line; a failed test or files outside the task stand out
     verify: j.verify ? { summary: verifySummary(j.verify), warn: !!j.verify.outside?.length || (!!j.verify.test && j.verify.test.status !== 'passed' && j.verify.test.status !== 'running') } : undefined,
     check: j.check ? { status: j.check.status, by: j.check.by, note: j.check.note?.slice(0, 400) } : undefined,
+    behind: moved(behindOf?.(j)),
+    rebased: !!j.rebased,
   }));
+}
+
+function moved(b: Behind | undefined): { commits: number; files: string[]; more: number } | undefined {
+  if (!b?.commits) return undefined;
+  return { commits: b.commits, files: b.files.slice(0, 5), more: Math.max(0, b.files.length - 5) };
 }
 
 /** Where the dashboard on a port writes its process id, so it can be found, checked and stopped. */
@@ -55,7 +87,8 @@ export function startDashboard(port: number): { url: string; server: http.Server
   let slowAt = 0;
   let openedAt = 0;
 
-  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine), delegated: engine.delegated(7), lead: leadOut(loadLeadQuota()) });
+  const behindOf = behindReader(engine);
+  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf), delegated: engine.delegated(7), lead: leadOut(loadLeadQuota()) });
   // Quota reads and local server probes run in the background and are throttled; the page never waits for them.
   const slowChecks = () => {
     if (Date.now() - slowAt < SLOW_MS) return;
@@ -264,7 +297,7 @@ h2 small{font-size:13px;font-weight:400;color:var(--ink-3)}
 .s-warn{background:var(--warn-bg);color:var(--warn)}.s-bad{background:var(--bad-bg);color:var(--bad)}.s-idle{background:var(--idle-bg);color:var(--idle)}
 .note{font-size:13.5px;border-radius:var(--r-sm);padding:9px 11px;background:var(--tile);color:var(--ink-2)}
 .note.warn{background:var(--warn-bg);color:var(--warn)}.note.bad{background:var(--bad-bg);color:var(--bad)}
-.note code,.empty code{font:12.5px var(--mono);background:var(--surface);color:var(--ink);padding:1px 6px;border-radius:5px;border:1px solid var(--line)}
+.note code,.empty code,.job .vf code{font:12.5px var(--mono);background:var(--surface);color:var(--ink);padding:1px 6px;border-radius:5px;border:1px solid var(--line)}
 .win+.win{margin-top:10px}
 .row{display:flex;justify-content:space-between;gap:10px;font-size:13.5px}
 .row span:first-child{color:var(--ink-2)}.row b{font-weight:600;font-variant-numeric:tabular-nums}
@@ -403,7 +436,15 @@ function jobHtml(j,open){
   return '<li class="job"><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span>'
     +'<div><div class="t">'+esc(j.task.title)+'</div><div class="m">'+esc(j.task.type)+(j.accountId?' · '+esc(j.accountId)+(j.model?' / '+esc(j.model):''):'')+'</div></div>'
     +'<div class="r">'+[tokens,ago(j.createdAt)].filter(Boolean).join(' · ')+(verdict?'<div>'+verdict+'</div>':'')+'</div>'+err
-    +(j.verify?'<div class="vf'+(j.verify.warn?' warn':'')+'">Checked by omnitrix: '+esc(j.verify.summary)+'</div>':'')+checkHtml(j.check)+'</li>';
+    +(j.verify?'<div class="vf'+(j.verify.warn?' warn':'')+'">Checked by omnitrix'+(j.rebased?' after a rebase':'')+': '+esc(j.verify.summary)+'</div>':'')+behindHtml(j)+checkHtml(j.check)+'</li>';
+}
+// the repository moved on after the job started; when its own files changed there, its check is out of date
+function behindHtml(j){
+  var b=j.behind;if(!b)return '';
+  var n=b.commits+' newer commit'+(b.commits===1?'':'s');
+  if(!b.files.length)return '<div class="vf">The repository has '+n+' since this job started; none of its files changed there.</div>';
+  var f=b.files.map(esc).join(', ')+(b.more?' and '+b.more+' more':'');
+  return '<div class="vf warn">Out of date: the repository has '+n+', and '+f+' changed there too. Run <code>omnitrix rebase '+esc(j.id)+'</code> before you review it.</div>';
 }
 // the second model's check, on the job it checks; a check that could not run is not a failure of the job
 function checkHtml(c){
