@@ -1,3 +1,5 @@
+import type { LockDiff } from './lockfile.js';
+
 export type DriverKind = 'openai' | 'anthropic' | 'cli';
 
 /** What a piece of work is about. The router uses this to pick a model. */
@@ -188,6 +190,8 @@ export interface JobVerify {
   files: string[];
   /** changed files that the task did not name; unset when the task named no files */
   outside?: string[];
+  /** for each changed lockfile, which packages the job added, changed or removed */
+  lockfiles?: LockDiff[];
   test?: {
     command: string;
     status: 'running' | 'passed' | 'failed' | 'error' | 'interrupted';

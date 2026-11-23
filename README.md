@@ -9,11 +9,15 @@ Claude plans the work, and your other AI accounts carry it out.
   <img alt="An example job, 'add rate limiting to the public API', split by Claude into six tasks in two rounds. First, Gemini reads the exported issues, Codex writes the middleware on its own git branch, Groq drafts the changelog and a local Ollama model checks the .env file for leaked keys. Then DeepSeek reviews the middleware diff, and the edge-case task moves to GLM because Kimi is rate limited. Claude checks each result and merges the accepted branch." src="assets/job-v3-light.svg" width="100%">
 </picture>
 
-I built omnitrix because I repeatedly ran out of Claude credits while the ChatGPT Plus and Gemini subscriptions that my friends and I pay for remained largely unused.
+I built omnitrix because I repeatedly ran out of Claude credits while my ChatGPT Plus plan and my Gemini key remained largely unused.
 
 omnitrix is built for the frontier-model subscriptions and API keys you already pay for, and it runs inside your existing Claude Code session. Claude remains in charge: it divides the job into tasks and reviews the results. omnitrix sends each task to an account that suits the work and still has quota available. For example, it can use Codex on your ChatGPT plan for code edits, Gemini for reading very large logs, DeepSeek or Kimi for reasoning and review, or a local model for private work. It also supports any service that implements the OpenAI Chat Completions format or the Anthropic Messages format, through `custom-openai` and `custom-anthropic`.
 
 You can monitor the pool without leaving Claude Code. The status line shows up to four accounts with their remaining quota or status, and omnitrix instructs Claude to check the same data before it assigns work. Claude reads short results instead of performing every step itself, which uses less of your Claude usage limit.
+
+## Who it is for
+
+omnitrix suits you if you work in Claude Code, have other AI accounts that sit idle (a ChatGPT plan, free or paid API keys, local models), and want Claude to hand work to them and check the results instead of switching between tools yourself. It is a weaker fit if you prefer to drive several agents by hand in one window, which an app such as [T3 Code](https://github.com/pingdotgg/t3code) does well (omnitrix also works inside it, see [Inside T3 Code](#inside-t3-code)), or if you need one OpenAI-compatible endpoint for other applications, which a gateway such as FreeLLMAPI or OpenRouter provides.
 
 ## How omnitrix compares
 
@@ -49,6 +53,17 @@ omnitrix is also a Claude Code plugin. In Claude Code 2.1.275 or later, this com
 ```
 
 From a terminal, `claude plugin marketplace add MdHashim1011/omnitrix` followed by `claude plugin install omnitrix@omnitrix` does the same. The plugin starts the latest omnitrix from npm with `npx`, so it needs Node.js 20 or later as well. It registers the MCP server only: add your accounts with `npx omnitrix init --apply`, or install the package globally with the command above to have the `omnitrix` command itself.
+
+The plugin also adds four commands that you can type in Claude Code:
+
+| Command | What Claude does |
+|---|---|
+| `/omnitrix:delegate <work>` | Splits the work into tasks, sends them to your other accounts, checks every result and merges what it accepts |
+| `/omnitrix:review [files or range]` | Has three different models review the code independently, checks each finding against the code and reports the ones that hold up, noting which reviewers found them |
+| `/omnitrix:second-opinion [question]` | Asks another model to find what is wrong with an answer or plan, by default Claude's last one, and reports where it agrees and disagrees |
+| `/omnitrix:pool` | Shows each account's state, remaining quota and reset times |
+
+Without the plugin, you can ask Claude for the same things in your own words.
 
 ### Inside T3 Code
 
@@ -128,7 +143,11 @@ On a computer with an NVIDIA graphics card, omnitrix reads the card's memory onc
 
 Code tasks go only to agent CLIs that can edit files. Each task runs on a new branch in its own git worktree, so two workers never share a checkout. Other tasks that name a repository and go to an agent CLI run in a temporary copy of the repository that is removed afterwards, so a reviewing worker does not work in your checkout. The copy is taken at the last commit, and the files that the task lists are copied into the prompt from your working tree, including changes that are not committed.
 
-After a code task, omnitrix checks the branch itself rather than relying on the worker's report. It lists the files that the worker changed and, when the task named its files, the changed files that the task did not name. When the task gives a `test` command, such as `["npm", "test"]`, omnitrix runs it in the job's worktree after the worker finishes and reports whether it passed, its exit code and the end of its output, without terminal colour codes. The worktree is a fresh copy without installed packages, so for a Node.js project use `["npm", "install-test"]`, which installs them before it runs the tests. `get_results` waits for the test, and the dashboard shows the result on each job as "Checked by omnitrix". The test runs the worker's code on your computer, without keys in its environment, with an empty home folder of its own and with its own time limit, equal to the job limit but at most one hour; `cancel_job` stops it when it runs in the same omnitrix process. When two finished jobs in the same repository changed the same file and neither started from the other's result, `get_results` lists the other job under `also_changed` for each of them, because copying one job's files over the other's would silently lose work; the two changes have to be combined, for example with a merge. Rejected jobs and jobs whose branch was deleted are left out. omnitrix never merges anything: Claude still reviews the work, and you decide what to keep.
+After a code task, omnitrix checks the branch itself rather than relying on the worker's report. It lists the files that the worker changed and, when the task named its files, the changed files that the task did not name. When the task gives a `test` command, such as `["npm", "test"]`, omnitrix runs it in the job's worktree after the worker finishes and reports whether it passed, its exit code and the end of its output, without terminal colour codes. The worktree is a fresh copy without installed packages, so for a Node.js project use `["npm", "install-test"]`, which installs them before it runs the tests. `get_results` waits for the test, and the dashboard shows the result on each job as "Checked by omnitrix". The test runs the worker's code on your computer, without keys in its environment, with an empty home folder of its own and with its own time limit, equal to the job limit but at most one hour; `cancel_job` stops it when it runs in the same omnitrix process. When two finished jobs in the same repository changed the same file and neither started from the other's result, `get_results` lists the other job under `also_changed` for each of them, because copying one job's files over the other's would silently lose work; the two changes have to be combined, for example with a merge. Rejected jobs and jobs whose branch was deleted are left out.
+
+Lockfiles such as `package-lock.json`, `Cargo.lock` or `go.sum` get their own check, because two jobs that each add a package both change the lockfile, and combining lockfiles by hand rarely works. For every lockfile a job changed, `get_results` lists under `lockfiles` the packages the job added, changed (an existing version replaced by another) and removed, and says whether it only added. omnitrix reads `package-lock.json`, `npm-shrinkwrap.json`, `Cargo.lock`, `poetry.lock`, `uv.lock`, `go.sum`, `composer.lock` and `Pipfile.lock`; other lockfiles, such as `yarn.lock` or `pnpm-lock.yaml`, are flagged for review by hand. When two jobs changed the same lockfile, omnitrix asks Claude not to combine it, but to merge the other files, run the package manager once to regenerate the lockfile, and then run `omnitrix lockcheck`. That command compares each changed lockfile with `HEAD`, or with the revision given by `--base`, prints what was added, changed or removed, and exits with code 1 when an existing package changed or was removed, or when a lockfile could not be checked. A regenerated lockfile should normally only add packages, so any change it lists deserves a look before you commit.
+
+omnitrix never merges anything: Claude still reviews the work, and you decide what to keep.
 
 An account's concurrency limit applies to all omnitrix processes that share the same data folder, such as the MCP server, the dashboard and the command line. It is 1 by default for agent CLIs and local models and 2 for APIs, and `omnitrix set <id> --concurrency` changes it. When the best account is full, the job goes to the next eligible account that has a free slot, and it waits in the queue only when every eligible account is full. The limit does not apply across different computers, and `omnitrix test` does not count towards it.
 
@@ -273,6 +292,10 @@ For an important review or question, a task can set `copies` to a number from 2 
 
 To ask a worker more about its answer, a task can set `follow_up_of` to the id of a finished job. omnitrix sends it to the same model with that job's task, at most 8,000 characters, and the model's own answer, at most 20,000 characters, before the new prompt, so Claude does not need to repeat them and the worker continues where it stopped. A follow-up without a `privacy` level keeps the earlier task's level, and one with a level gets the stricter of the two, so a follow-up is never less private than the task it continues. If that model is not available, the follow-up fails rather than going to a model that never saw the conversation; Claude can then send a new task. Code jobs cannot be followed up, because their work is on their branch, not in their answer.
 
+### How Claude stays fair when it judges other models
+
+Claude makes the final decision about every result, so it could favour answers that look like its own. omnitrix gives it evidence that is not its own opinion. Each task can carry an `acceptance` line written before the work starts, so results are judged against what done means rather than against a preferred style. For code tasks, omnitrix runs the tests itself and lists the changed files, and a passing or failing test does not depend on anyone's taste. A `check` asks a different account, at most slightly weaker at that kind of task, to judge the result against the acceptance line, and `copies` asks several models the same question, so that a finding several of them report independently counts for more than any single view, Claude's included. This does not remove judgment from the process, but it makes Claude overrule tests and other models openly rather than quietly prefer its own style.
+
 By default, previews are limited to 1,500 characters to keep Claude's token usage low; `omnitrix settings --preview-chars` changes the limit. Full outputs remain on disk.
 
 ## Commands
@@ -296,6 +319,7 @@ omnitrix dashboard              open the live dashboard on 127.0.0.1:4590, which
 omnitrix setup-claude           register with Claude Code (--scope user|project|local, --no-statusline, --dry-run)
 omnitrix team                   join, review or leave a team file, and show your spending (join --as, --yes; leave; status)
 omnitrix usage                  requests, tokens and cost for the last 30 days (--by person|account|model, --days, --team)
+omnitrix lockcheck [files]      show which packages a regenerated lockfile added, changed or removed (--base, --repo, --json)
 omnitrix clean                  delete finished jobs and worktrees older than 14 days (--days, --dry-run, --branches)
 omnitrix doctor                 check the setup, including whether each account's last request worked; it sends nothing
 omnitrix mcp                    run the MCP server (Claude Code starts this itself)

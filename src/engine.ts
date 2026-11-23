@@ -17,9 +17,10 @@ import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loa
 import { DriverError, type Account, type AccountHealth, type Config, type Job, type JobCheck, type TaskSpec, type TaskType, type UsageRecord } from './types.js';
 import { statsKey } from './models.js';
 import { compactLedger, headroom, LedgerTail, recordUsage, summarize, typicalLatency, type UsageSummary } from './usage.js';
+import { diffLock, isLockfile } from './lockfile.js';
 import { outsideFiles, runTest } from './verify.js';
 import { delegated, type Delegated } from './value.js';
-import { branchExists, changedFiles, createScratch, createWorktree, discardWorktree, fileVersion, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
+import { branchExists, changedFiles, createScratch, createWorktree, discardWorktree, fileText, fileVersion, finishWorktree, isGitRepo, removeScratch } from './worktree.js';
 
 const MAX_ATTEMPTS = 3;
 // A model the provider no longer serves (or gives this plan no allowance for) is dropped from the account,
@@ -896,6 +897,9 @@ export class Engine {
         // facts for Claude's review, found by omnitrix itself rather than reported by the worker
         const changed = fin.changed ? changedFiles(worktree.path, worktree.gitDir) : [];
         job.verify = { files: changed, outside: outsideFiles(changed, job.task, worktree.root) };
+        const wt = worktree;
+        const locks = changed.filter(isLockfile).map((f) => diffLock(f, fileText(wt.path, 'HEAD~1', f, wt.gitDir), fileText(wt.path, 'HEAD', f, wt.gitDir)));
+        if (locks.length) job.verify.lockfiles = locks;
         if (job.task.test?.length) job.verify.test = { command: job.task.test.join(' '), status: 'running' };
       }
       const outFile = path.join(files.outputs(), `${job.id}.md`);

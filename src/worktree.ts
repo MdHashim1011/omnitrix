@@ -124,6 +124,12 @@ export function discardWorktree(repoRoot: string, dir: string, branch: string): 
   }
 }
 
+/** A file's text at a revision of the worker's branch, or undefined when it does not exist there. */
+export function fileText(dir: string, rev: string, file: string, gitDir?: string): string | undefined {
+  const out = spawnSync('git', [...workerGit(dir, gitDir), 'cat-file', 'blob', `${rev}:${file}`], { cwd: dir, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024 * 1024 });
+  return out.status === 0 ? out.stdout : undefined;
+}
+
 /** The git object id of a file at a revision, or '' when the file or the revision does not exist there. */
 export function fileVersion(repo: string, rev: string, file: string): string {
   const out = spawnSync('git', ['rev-parse', '--verify', '--quiet', `${rev}:${file}`], { cwd: repo, encoding: 'utf8', windowsHide: true });

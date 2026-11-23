@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { childEnv, killTree, launch, resolveCommand, stripTerminalCodes, type Resolved } from './drivers/cli.js';
 import { redact } from './store.js';
+import { describeLock } from './lockfile.js';
 import type { JobVerify, TaskSpec } from './types.js';
 
 const MAX_OUTPUT = 4000;
@@ -130,6 +131,7 @@ export function verifySummary(v: JobVerify): string {
   const n = v.files.length;
   const parts = [n ? `changed ${n} file${n === 1 ? '' : 's'}` : 'changed no files'];
   if (v.outside) parts[0] += v.outside.length ? `; ${v.outside.length} not named in the task: ${v.outside.slice(0, 5).join(', ')}${v.outside.length > 5 ? ', ...' : ''}` : n ? ', all named in the task' : '';
+  for (const lock of v.lockfiles ?? []) parts.push(describeLock(lock));
   const t = v.test;
   if (t) {
     const took = t.durationMs !== undefined ? `, ${testSeconds(t.durationMs)} s` : '';

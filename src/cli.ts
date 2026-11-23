@@ -24,6 +24,7 @@ import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, 
 import { refreshQuotas } from './quota.js';
 import { formatTokens, readLedger, recordUsage, typicalLatency } from './usage.js';
 import { describeDelegated } from './value.js';
+import { checkLockfiles, describeLock } from './lockfile.js';
 
 /** A typical answer time as people read it: "4.2 s", "38 s", or "-" when there is none yet. */
 function seconds(ms: number | undefined): string {
@@ -837,6 +838,27 @@ program
       }
     }
     console.log('Restart Claude Code, then ask it to "use omnitrix" for big jobs.');
+  });
+
+program
+  .command('lockcheck [files...]')
+  .description('after regenerating a lockfile, show which packages were added, changed or removed compared with a git revision')
+  .option('--base <rev>', 'the revision to compare with', 'HEAD')
+  .option('--repo <dir>', 'the repository folder', '.')
+  .option('--json', 'print the full result as JSON')
+  .action((names: string[], o) => {
+    let results;
+    try {
+      results = checkLockfiles(path.resolve(o.repo), o.base, names);
+    } catch (e) {
+      fail((e as Error).message);
+      return;
+    }
+    if (o.json) console.log(JSON.stringify(results, null, 2));
+    else if (!results.length) console.log(`no lockfile differs from ${o.base}`);
+    else for (const r of results) console.log(describeLock(r));
+    // exit code 1 when anything needs a person's review: a changed or removed package, or a file that could not be checked
+    if (results.some((r) => r.additiveOnly !== true)) process.exitCode = 1;
   });
 
 program

@@ -27,6 +27,7 @@ process.stdin.on('data',d=>stdin+=d);process.stdin.on('end',()=>{
   const cwd=args[args.indexOf('-C')+1];
   fs.writeFileSync(path.join(cwd,'hello.txt'),'hi');
   if(stdin.includes('EXTRA')) fs.writeFileSync(path.join(cwd,'extra.txt'),'x');
+  if(stdin.includes('LOCK')) fs.writeFileSync(path.join(cwd,'package-lock.json'),JSON.stringify({lockfileVersion:3,packages:{'node_modules/a':{version:'2.0.0'},'node_modules/b':{version:'1.0.0'}}}));
   if(stdin.includes('MOVE')){fs.mkdirSync(path.join(cwd,'src'),{recursive:true});fs.renameSync(path.join(cwd,'secret','x.txt'),path.join(cwd,'src','x.txt'))}
   fs.writeFileSync(args[args.indexOf('-o')+1],'done');
   console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_tokens:1}}));
@@ -69,6 +70,28 @@ describe('the check omnitrix makes of a code job', () => {
     expect(done!.verify!.outside).toEqual(['extra.txt']);
     expect(verifySummary(done!.verify!)).toMatch(/changed 2 files; 1 not named in the task: extra\.txt/);
   }, 40_000);
+
+  it('reports which packages a changed lockfile added, changed or removed', async () => {
+    const engine = setup();
+    const r = repo();
+    fs.writeFileSync(path.join(r, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages: { 'node_modules/a': { version: '1.0.0' } } }));
+    spawnSync('git', ['add', '-A'], { cwd: r });
+    spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'lock'], { cwd: r });
+    const [job] = engine.dispatch([{ title: 'add hello', type: 'code', prompt: 'write hello.txt LOCK', repo: r }]);
+    const [done] = await engine.wait([job!.id], 30);
+    expect(done!.verify!.files).toContain('package-lock.json');
+    expect(done!.verify!.lockfiles).toEqual([
+      { file: 'package-lock.json', supported: true, added: ['b@1.0.0'], changed: [{ name: 'a', from: '1.0.0', to: '2.0.0' }], removed: [], additiveOnly: false },
+    ]);
+    expect(verifySummary(done!.verify!)).toContain('package-lock.json: 1 added, 1 changed (a 1.0.0 -> 2.0.0)');
+  });
+
+  it('leaves the lockfile check out when a job changes no lockfile', async () => {
+    const engine = setup();
+    const [job] = engine.dispatch([{ title: 'add hello', type: 'code', prompt: 'write hello.txt', repo: repo() }]);
+    const [done] = await engine.wait([job!.id], 30);
+    expect(done!.verify!.lockfiles).toBeUndefined();
+  });
 
   it('makes no claim about scope when the task names no files', async () => {
     const engine = setup();
