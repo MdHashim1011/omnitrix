@@ -79,7 +79,7 @@ Without the plugin, you can ask Claude for the same things in your own words.
 
 ### Inside T3 Code
 
-[T3 Code](https://github.com/pingdotgg/t3code) runs Claude Code with its normal configuration, so once omnitrix is registered with Claude Code, Claude threads in T3 Code can use it with no extra setup. This was checked in November 2026 with T3 Code 0.1.11 and Claude Code 2.1.328 on Windows: a Claude thread in T3 Code found all eight omnitrix tools, read the pool, sent a task that omnitrix routed to a free Gemini key, and collected and rated the result. Code tasks and Codex as the lead in T3 Code have not been tested yet.
+[T3 Code](https://github.com/pingdotgg/t3code) runs Claude Code with its normal configuration, so once omnitrix is registered with Claude Code, Claude threads in T3 Code can use it with no extra setup. This was checked in November 2026 with T3 Code 0.1.11 and Claude Code 2.1.328 on Windows: a Claude thread in T3 Code found all eight omnitrix tools, read the pool, sent a task that omnitrix routed to a free Gemini key, and collected and rated the result. A code task was checked on 23 November 2026 with Claude Code 2.1.330: the Claude thread sent omnitrix a change to a CSV parser with a test command, Codex wrote it on its own branch, omnitrix reported that only the two named files had changed and that all 20 tests passed, and Claude read the change and accepted it. Codex as the lead in T3 Code has not been tested yet.
 
 The same package is attached to each GitHub release, so you can also install it from there:
 
