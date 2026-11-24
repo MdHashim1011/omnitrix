@@ -10,6 +10,7 @@ import type { Job } from './types.js';
 import { verifySummary } from './verify.js';
 import { ICON_SVG } from './icon.js';
 import { leadOut, loadLeadQuota } from './lead.js';
+import { claudeProjectsDir, measureOverhead, resultTokens, type Overhead } from './overhead.js';
 import { VERSION } from './version.js';
 
 type Behind = { commits: number; files: string[] };
@@ -33,6 +34,40 @@ export function behindReader(engine: Engine, ttlMs = 30_000): (j: Job) => Behind
     cache.set(j.id, { at: Date.now(), value });
     // jobs fall off the page; their readings go too
     if (cache.size > 200) cache.delete(cache.keys().next().value!);
+    return value;
+  };
+}
+
+export interface OverheadFigures {
+  calls: number;
+  outputTokens: number;
+  resultTokens: number;
+}
+
+/**
+ * Claude's own work on omnitrix over the last 7 days, for the page. Reading the session files takes seconds,
+ * so it runs in the background at most once per `ttlMs`, one run at a time, and the page shows the last figures.
+ */
+export function overheadReader(ttlMs = 10 * 60_000, measure: (dir: string, since: number) => Promise<Overhead> = measureOverhead, clock = Date.now): () => OverheadFigures | undefined {
+  let value: OverheadFigures | undefined;
+  let startedAt = -Infinity;
+  let running = false;
+  return () => {
+    const now = clock();
+    if (!running && now - startedAt >= ttlMs) {
+      running = true;
+      startedAt = now;
+      measure(claudeProjectsDir(), now - 7 * 24 * 3600_000)
+        .then((o) => {
+          value = o.calls ? { calls: o.calls, outputTokens: o.outputTokens, resultTokens: resultTokens(o) } : undefined;
+        })
+        .catch(() => {
+          // keep the last figures; the next period tries again
+        })
+        .finally(() => {
+          running = false;
+        });
+    }
     return value;
   };
 }
@@ -88,7 +123,8 @@ export function startDashboard(port: number): { url: string; server: http.Server
   let openedAt = 0;
 
   const behindOf = behindReader(engine);
-  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf), delegated: engine.delegated(7), lead: leadOut(loadLeadQuota()) });
+  const overheadOf = overheadReader();
+  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
   // Quota reads and local server probes run in the background and are throttled; the page never waits for them.
   const slowChecks = () => {
     if (Date.now() - slowAt < SLOW_MS) return;
@@ -167,7 +203,7 @@ export function startDashboard(port: number): { url: string; server: http.Server
     }
     if (req.url === '/api/status') {
       slowChecks();
-      json(res, { version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine), delegated: engine.delegated(7), lead: leadOut(loadLeadQuota()) });
+      json(res, { version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
       return;
     }
     if (req.url === '/api/ping') {
@@ -237,7 +273,7 @@ export function serveDashboard(port: number): void {
 // The page is one self-contained file: no fonts, scripts or images from other hosts, so it works offline
 // and sends nothing anywhere. The script below avoids backticks and backslashes because it lives in a
 // template literal.
-const PAGE = /* html */ `<!doctype html>
+export const PAGE = /* html */ `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -481,7 +517,10 @@ function draw(d){
     +[['Requests, last 24 h',String(sum('requestsToday'))]]
     .map(function(k){return '<div class="kpi"><span>'+k[0]+'</span><b>'+esc(k[1])+'</b></div>'}).join('')
     // the work other accounts did instead of Claude, counted from the usage log
-    +(function(g){g=g||{jobs:0,tokens:0,accepted:0};return '<div class="kpi"><span>Done by other accounts, 7 days</span><b>'+g.jobs+' job'+(g.jobs===1?'':'s')+'</b><small>'+esc(fmt(g.tokens))+' tokens'+(g.accepted?', '+g.accepted+' accepted':'')+'</small></div>'})(d.delegated)
+    +(function(g,o){g=g||{jobs:0,tokens:0,accepted:0};return '<div class="kpi"><span>Done by other accounts, 7 days</span><b>'+g.jobs+' job'+(g.jobs===1?'':'s')+'</b><small>'+esc(fmt(g.tokens))+' tokens'+(g.accepted?', '+g.accepted+' accepted':'')+'</small>'
+      // Claude's own part, from Claude Code's session files (omnitrix overhead); absent until measured
+      +(o?'<small title="Output tokens of Claude&#39;s replies that called omnitrix, and an estimate of the omnitrix results it read, over the same 7 days">Claude: '+esc(fmt(o.outputTokens))+' written, '+esc(fmt(o.resultTokens))+' read</small>':'')
+      +'</div>'})(d.delegated,d.overhead)
     +'<div class="kpi"><span>Known cost, last 24 h</span><b>'+esc(money(sum('costToday')))+'</b></div>';
   document.getElementById('acc-sub').textContent=acc.length?acc.length+' connected':'';
   document.getElementById('accounts').innerHTML=leadHtml(d.lead)+(acc.length?acc.map(function(a){return cardHtml(a,open)}).join('')

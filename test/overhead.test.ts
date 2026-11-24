@@ -90,6 +90,65 @@ describe("Claude's own work on omnitrix", () => {
     expect(claudeProjectsDir({})).toBe(path.join(os.homedir(), '.claude', 'projects'));
   });
 
+  it('measures for the dashboard in the background, one run at a time, at most once per period', async () => {
+    const { overheadReader } = await import('../src/dashboard.js');
+    let runs = 0;
+    let finish: (v: unknown) => void = () => {};
+    const measure = () => {
+      runs++;
+      return new Promise<any>((resolve) => {
+        finish = resolve;
+      });
+    };
+    let now = 1_000_000;
+    const read = overheadReader(10 * 60_000, measure, () => now);
+    // the page never waits: nothing yet, and one measurement started
+    expect(read()).toBeUndefined();
+    expect(read()).toBeUndefined();
+    expect(runs).toBe(1);
+    finish({ found: true, files: 1, unreadable: 0, sessions: 1, calls: 3, byTool: {}, outputTokens: 1200, resultChars: 4000 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(read()).toEqual({ calls: 3, outputTokens: 1200, resultTokens: 1000 });
+    now += 9 * 60_000;
+    read();
+    expect(runs).toBe(1);
+    // after the period, the old figures stay on the page while a new run goes
+    now += 2 * 60_000;
+    expect(read()).toEqual({ calls: 3, outputTokens: 1200, resultTokens: 1000 });
+    expect(runs).toBe(2);
+    // even with no waiting period, a run still going is never started twice
+    let slow = 0;
+    const eager = overheadReader(0, () => {
+      slow++;
+      return new Promise<any>(() => {});
+    }, () => now);
+    eager();
+    eager();
+    expect(slow).toBe(1);
+    // a failed run keeps the last figures and does not retry until the next period
+    const failing = overheadReader(60_000, () => Promise.reject(new Error('x')), () => now);
+    failing();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(failing()).toBeUndefined();
+  });
+
+  it("keeps the dashboard page's script valid JavaScript", async () => {
+    // seen while building this: a quote escaped for TypeScript lost its escape in the page and broke it
+    const { PAGE } = await import('../src/dashboard.js');
+    const scripts = [...PAGE.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const s of scripts) expect(() => new Function(s)).not.toThrow();
+    expect(PAGE).toContain(`>Claude: '+esc(fmt(o.outputTokens))+' written, '+esc(fmt(o.resultTokens))+' read<`);
+  });
+
+  it('shows nothing on the dashboard when Claude made no omnitrix calls', async () => {
+    const { overheadReader } = await import('../src/dashboard.js');
+    const read = overheadReader(60_000, async () => ({ found: true, files: 2, unreadable: 0, sessions: 0, calls: 0, byTool: {}, outputTokens: 0, resultChars: 0 }));
+    read();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(read()).toBeUndefined();
+  });
+
   it('runs as omnitrix overhead, next to the workers\' accepted tokens, and as JSON', () => {
     session('p/s.jsonl', [assistant('m1', 's1', [{ name: 'mcp__omnitrix__dispatch', id: 't' }], 300), result('t', 'r'.repeat(4000))]);
     writeJson(path.join(files.jobs(), 'jdone0001.json'), {
