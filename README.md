@@ -116,7 +116,23 @@ omnitrix is an ordinary MCP server, so other apps that run local MCP servers can
 }
 ```
 
-Cursor reads this entry from `~/.cursor/mcp.json`, or from `.cursor/mcp.json` inside a project. The GitHub Copilot agent in VS Code reads the same shape from `~/.copilot/mcp-config.json`, while the older `.vscode/mcp.json` file uses the key `servers` instead of `mcpServers`. Other apps keep the file elsewhere, so check their MCP documentation. These apps have not been tested yet; only Claude Code and T3 Code have. In another app, its own model takes Claude's place as the lead, and the figures for Claude's own limit are not available, because they come from the Claude Code status line.
+Cursor reads this entry from `~/.cursor/mcp.json`, or from `.cursor/mcp.json` inside a project. The GitHub Copilot agent in VS Code reads the same shape from `~/.copilot/mcp-config.json`, while the older `.vscode/mcp.json` file uses the key `servers` instead of `mcpServers`. Other apps keep the file elsewhere, so check their MCP documentation. Cursor and VS Code have not been tested yet.
+
+[OpenCode](https://opencode.ai) uses a different shape: add omnitrix under `mcp` in `opencode.json`, in the project or in `~/.config/opencode/`, with the command and its arguments in one list:
+
+```json
+{
+  "mcp": {
+    "omnitrix": {
+      "type": "local",
+      "command": ["/usr/local/bin/node", "/usr/local/lib/node_modules/omnitrix/dist/cli.js", "mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+This was checked on 24 November 2026 with OpenCode 1.19.6 on Windows: `opencode mcp list` showed omnitrix as connected, and with OpenCode's free DeepSeek V4.1 Flash model as the lead, `opencode run` read the pool, dispatched a task that omnitrix routed to a local Ollama model, collected the answer and rated it, and the rating was saved in omnitrix's job record. The lead model has to handle tool calls well; a 3B local model as the lead printed its tool calls as text instead of making them. In another app, its own model takes Claude's place as the lead, and the figures for Claude's own limit are not available, because they come from the Claude Code status line.
 
 ## Quick start
 
