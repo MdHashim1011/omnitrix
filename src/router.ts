@@ -137,7 +137,9 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
   const pins = settings.pins[task.type] ?? [];
   const [forcedAccount, forcedModel] = task.use ? splitUse(task.use) : [undefined, undefined];
   // a route changes how this task is ranked; it never loosens privacy or quota
-  const via = task.route ? routeDef(task.route, settings) : undefined;
+  // an escalating task tries the cheap route first, and its stronger attempt names the deep route
+  const routeName = task.route ?? (task.escalate ? 'cheap' : undefined);
+  const via = routeName ? routeDef(routeName, settings) : undefined;
   const mode = via?.mode ?? settings.mode;
   const fast = !!(task.fast || via?.fast);
 
@@ -154,8 +156,8 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
     if (account.team && ctx.blocked?.[account.id]) { reject(ctx.blocked[account.id]!); continue; }
     if (task.textOnly && account.driver === 'cli') { reject('this task runs without tools, so agent CLIs are not used'); continue; }
     if (!account.enabled) { reject('disabled'); continue; }
-    if (via?.use && !via.use.some((u) => u === account.id || u.startsWith(`${account.id}/`))) { reject(`not in route "${task.route}"`); continue; }
-    if (via?.local && !(account.local && loopback(account.baseUrl))) { reject(`route "${task.route}": models on this computer only`); continue; }
+    if (via?.use && !via.use.some((u) => u === account.id || u.startsWith(`${account.id}/`))) { reject(`not in route "${routeName}"`); continue; }
+    if (via?.local && !(account.local && loopback(account.baseUrl))) { reject(`route "${routeName}": models on this computer only`); continue; }
     if (settings.bannedProviders.includes(account.provider)) { reject('provider is banned in settings'); continue; }
 
     const h = ctx.health[account.id];
@@ -187,7 +189,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
 
     for (const model of models) {
       if (task.avoid?.includes(`${account.id}/${model.id}`)) { reject('avoided for this task', model.id); continue; }
-      if (via?.use && !via.use.includes(account.id) && !via.use.includes(`${account.id}/${model.id}`)) { reject(`not in route "${task.route}"`, model.id); continue; }
+      if (via?.use && !via.use.includes(account.id) && !via.use.includes(`${account.id}/${model.id}`)) { reject(`not in route "${routeName}"`, model.id); continue; }
       // an agent edits files through tool calls, which this model cannot make
       if (task.type === 'code' && account.driver === 'openai' && model.tools === false) { reject('this model cannot call tools, so it cannot edit files', model.id); continue; }
       const paused = ctx.health[modelHealthKey(account.id, model.id)];

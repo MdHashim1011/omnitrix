@@ -192,6 +192,8 @@ export interface TaskSpec {
   fast?: boolean;
   /** a named route: fast, deep, cheap, local, or one the user defined in settings.routes */
   route?: string;
+  /** try the cheap route first; when the check fails, or the test of a code task fails, run the task once more on the deep route */
+  escalate?: boolean;
   /** only models without tools (API drivers); set on checks, whose prompt holds another worker's output */
   textOnly?: boolean;
   /** models whose fit for this task type is lower are not used; set on checks, so a checker is not much weaker than the worker */
@@ -271,6 +273,10 @@ export interface Job {
   retryOf?: string;
   /** the job that retried this one, after Claude rejected it */
   retriedAs?: string;
+  /** the cheap attempt whose failed check or test sent this task to a stronger model */
+  escalatedFrom?: string;
+  /** the stronger attempt that omnitrix started after this job's check or test failed */
+  escalatedTo?: string;
   check?: JobCheck;
   /** when omnitrix last moved the branch onto a newer HEAD, and which commit that was */
   rebased?: { at: number; onto: string };

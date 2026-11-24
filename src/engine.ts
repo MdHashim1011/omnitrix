@@ -427,12 +427,14 @@ export class Engine {
   }
 
   /** Throws before queuing anything if a task can never run. */
-  dispatch(tasks: TaskSpec[], links: Pick<Job, 'checkOf' | 'retryOf'> = {}): Job[] {
+  dispatch(tasks: TaskSpec[], links: Pick<Job, 'checkOf' | 'retryOf' | 'escalatedFrom'> = {}): Job[] {
     const settings = this.config().settings;
     for (const t of tasks) {
       knownRoute(t, settings);
       // without a repo the agent would edit a temp folder that is deleted afterwards
       if (t.type === 'code' && !t.repo) throw new Error(`task "${t.title}": code tasks need "repo", the absolute path of a git repository`);
+      if (t.escalate && !t.check && !(t.type === 'code' && t.test?.length)) throw new Error(`task "${t.title}": escalate needs "check" with an acceptance line, or "test" for a code task, so that omnitrix can tell when the cheap attempt failed`);
+      if (t.escalate && (t.use || t.route || t.copies !== undefined || t.followUpOf)) throw new Error(`task "${t.title}": escalate chooses the models itself, so it cannot be combined with use, route, copies or follow_up_of`);
       if (t.check && !t.acceptance?.trim()) throw new Error(`task "${t.title}": a check needs "acceptance", the line the result is checked against`);
       if (t.copies !== undefined && (!Number.isInteger(t.copies) || t.copies < 2 || t.copies > 5)) throw new Error(`task "${t.title}": "copies" is a whole number from 2 to 5`);
       if (t.copies !== undefined && t.type === 'code') throw new Error(`task "${t.title}": a code task cannot have copies, because they would change the same files`);
@@ -601,12 +603,16 @@ export class Engine {
   /** Wait until all given jobs are finished or the time is up. */
   async wait(ids: string[], waitSec: number): Promise<Job[]> {
     const deadline = Date.now() + Math.max(0, waitSec) * 1000;
-    const done = () => ids.every((id) => {
+    const settled = (id: string, follow: boolean): boolean => {
       this.resolveCheck(id);
       this.resolveVerify(id);
       const j = this.getJob(id);
-      return !j || (ended(j) && j.check?.status !== 'pending' && j.verify?.test?.status !== 'running');
-    });
+      if (!j) return true;
+      if (!ended(j) || j.check?.status === 'pending' || j.verify?.test?.status === 'running') return false;
+      // a job that escalated is finished only when the stronger attempt is
+      return !follow || !j.escalatedTo || settled(j.escalatedTo, false);
+    };
+    const done = () => ids.every((id) => settled(id, true));
     while (!done() && Date.now() < deadline) {
       await new Promise<void>((resolve) => {
         const t = setTimeout(finish, Math.min(1000, Math.max(10, deadline - Date.now())));
@@ -810,9 +816,42 @@ export class Engine {
   private settleCheck(check: Job): void {
     const job = this.getJob(check.checkOf!);
     if (job?.check?.status !== 'pending') return;
-    this.setCheck(job, check.status === 'done'
+    const result: JobCheck = check.status === 'done'
       ? { ...readVerdict(this.readOutput(check.id) ?? check.preview ?? ''), jobId: check.id, by: `${check.accountId}/${check.model}` }
-      : { status: 'unavailable', jobId: check.id, note: (check.error ?? check.status).slice(0, 400) });
+      : { status: 'unavailable', jobId: check.id, note: (check.error ?? check.status).slice(0, 400) };
+    this.setCheck(job, result);
+    // only a clear FAIL escalates: an unclear or missing check says nothing about the result
+    if (result.status === 'fail') this.escalate(job, `A second model checked the result against the acceptance criteria and found that it fails them: ${result.note ?? 'no reason given'}`);
+  }
+
+  /**
+   * After the cheap attempt of an escalating task fails its check or test, run the task once more on the
+   * deep route, avoiding the model that failed. Like a retry, the new worker sees why the attempt failed
+   * but not the failed answer. The failed job keeps no verdict: the check is advice, and Claude decides.
+   */
+  private escalate(job: Job, why: string): void {
+    if (!job.task.escalate || job.status !== 'done' || !job.accountId || !job.model || !isMine(job)) return;
+    this.mergeDisk(job);
+    if (job.escalatedTo || job.retriedAs) return;
+    const { escalate: _cheapFirst, route: _route, ...task } = job.task;
+    let again: Job | undefined;
+    try {
+      [again] = this.dispatch([{
+        ...task,
+        route: 'deep',
+        avoid: [...(task.avoid ?? []), `${job.accountId}/${job.model}`],
+        prompt: `${task.prompt}\n\n## An earlier attempt did not pass\n${redact(why)}`,
+      }], { escalatedFrom: job.id });
+    } catch (err) {
+      process.stderr.write(`omnitrix: could not escalate job ${job.id}: ${err instanceof Error ? err.message : err}\n`);
+      return;
+    }
+    if (!again) return;
+    job.escalatedTo = again.id;
+    job.updatedAt = Date.now();
+    this.jobs.set(job.id, job);
+    this.saveJob(job);
+    this.notify();
   }
 
   /**
@@ -838,6 +877,7 @@ export class Engine {
       job.verdictNote = disk.verdictNote;
     }
     if (disk.retriedAs && !job.retriedAs) job.retriedAs = disk.retriedAs;
+    if (disk.escalatedTo && !job.escalatedTo) job.escalatedTo = disk.escalatedTo;
     // `omnitrix rebase` runs in its own process and saves the moved branch and its new check
     if (disk.rebased && disk.rebased.at > (job.rebased?.at ?? 0)) {
       job.rebased = disk.rebased;
@@ -1112,6 +1152,9 @@ export class Engine {
       job.updatedAt = Date.now();
       this.saveJob(job);
       this.notify();
+      // a test that could not run says nothing about the worker's code, so only a failed one escalates
+      const t = job.verify.test;
+      if (t.status === 'failed') this.escalate(job, `The test \`${t.command}\` failed${t.exitCode !== undefined ? ` with exit code ${t.exitCode}` : ''}. The end of what it printed, which comes from the earlier attempt's code:\n${(t.output ?? '').slice(-1500)}`);
     }
   }
 
