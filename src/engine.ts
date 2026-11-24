@@ -11,7 +11,7 @@ import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
 import { reachable } from './init.js';
 import { budgetBlocks, budgetFor, estimateCost, loadTeam, periodStart, personSpend, readShared, shareRecord, type Reserved, type TeamSummary } from './team.js';
 import { loadQuotas, refreshQuotas } from './quota.js';
-import { route, effectivePrivacy, fit, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
+import { route, routeDef, routeList, effectivePrivacy, fit, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
@@ -99,6 +99,11 @@ export interface PoolAccountView {
   pausedModels: string[];
   /** the provider may train on prompts, so only public tasks go here */
   trainsOnData: boolean;
+}
+
+/** An unknown route is a mistake to report, not a reason to route the task some other way. */
+function knownRoute(t: TaskSpec, settings: Config['settings']): void {
+  if (t.route !== undefined && !routeDef(t.route, settings)) throw new Error(`task "${t.title}": route "${t.route}" is not known; the routes are ${routeList(settings).map((r) => r.name).join(', ')}`);
 }
 
 export class Engine {
@@ -366,6 +371,7 @@ export class Engine {
 
   preview(task: TaskSpec): { candidates: Candidate[]; rejected: Rejected[] } {
     const cfg = this.config();
+    knownRoute(task, cfg.settings);
     return route(task, this.routeContext(cfg));
   }
 
@@ -422,7 +428,9 @@ export class Engine {
 
   /** Throws before queuing anything if a task can never run. */
   dispatch(tasks: TaskSpec[], links: Pick<Job, 'checkOf' | 'retryOf'> = {}): Job[] {
+    const settings = this.config().settings;
     for (const t of tasks) {
+      knownRoute(t, settings);
       // without a repo the agent would edit a temp folder that is deleted afterwards
       if (t.type === 'code' && !t.repo) throw new Error(`task "${t.title}": code tasks need "repo", the absolute path of a git repository`);
       if (t.check && !t.acceptance?.trim()) throw new Error(`task "${t.title}": a check needs "acceptance", the line the result is checked against`);

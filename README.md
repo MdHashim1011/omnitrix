@@ -189,6 +189,8 @@ Together these adjustments can raise a score by about 44% or lower it by 25%, so
 
 omnitrix also notes how long each answer took. A model's typical answer time is the median of its last 20 successful answers in the last 30 days, once it has at least 3, and `omnitrix models <id>` shows it in the "typical" column. A task that sets `fast` to `true`, or `omnitrix run --fast` and `omnitrix route --fast`, prefers quick models: the model with the quickest typical time keeps its score, and one ten times slower loses about half of it. A model without a typical time yet is judged by its speed score, a little below the quickest measured model, so that a guess does not beat a measurement. Without `fast`, answer times do not affect routing.
 
+A task can also name a route, which changes how that one task is routed without changing your settings. There are four built-in routes: `fast` ranks as a fast task does, `deep` ranks as quality mode does, `cheap` ranks as saver mode does, and `local` uses only models on this computer. `omnitrix routes add review --description "second opinions" --use deepseek,home/qwen3 --mode quality` adds a route of your own that uses only the accounts and models it names; a route of your own with the name of a built-in route replaces it. `pool_status` lists every route with its description, so Claude can choose one by what it is for. A route never loosens privacy: a private task still skips providers that train on prompts, and an unknown route name is refused instead of being ignored. `omnitrix run --route` and `omnitrix route --route` use a route from the command line.
+
 On a computer with an NVIDIA graphics card, omnitrix reads the card's memory once with `nvidia-smi` and reads the size of each Ollama model every time it checks the local server. A local model larger than the card's memory runs mostly on the processor, which is many times slower, so its score is multiplied by 0.4 and the reasons say so, for example "about 19 GB, more than this computer's 4 GB of GPU memory". Other graphics cards and Apple's shared memory are not read, so nothing changes for them.
 
 Code tasks go to agent CLIs that can edit files, and to API accounts when [OpenCode](https://opencode.ai) is installed (`npm install -g opencode-ai`). For a code task on an API account, omnitrix runs OpenCode as the agent and gives it a configuration that names only that account's endpoint and the chosen model, so no other provider receives the task, and titles and summaries go to the same model. The key reaches OpenCode in an environment variable of its own and is not written into the configuration, and OpenCode runs with a home folder of its own inside omnitrix's data folder, so your own OpenCode settings, keys and MCP servers are not loaded. This way any OpenAI-compatible key, such as DeepSeek, GLM, Kimi, Qwen, Groq, OpenRouter or a local Ollama server, can do code tasks; a Gemini key goes through Google's own adapter, because Gemini 3 needs it for tool calls. The model has to make tool calls: omnitrix skips a local model whose server reports that it cannot, and small local models often fail at it even when their server says they can make them. This was checked on 24 November 2026 with OpenCode 1.19.6 on Windows, where a free Gemini key created a file in a job's branch. `omnitrix settings --api-code-agent off` keeps code tasks away from API accounts. Each task runs on a new branch in its own git worktree, so two workers never share a checkout. Other tasks that name a repository and go to an agent CLI run in a temporary copy of the repository that is removed afterwards, so a reviewing worker does not work in your checkout. The copy is taken at the last commit, and the files that the task lists are copied into the prompt from your working tree, including changes that are not committed.
@@ -324,7 +326,7 @@ omnitrix runs as an MCP server and gives Claude the following tools:
 
 | Tool | Purpose |
 |---|---|
-| `pool_status` | Lists every account with its state, owner, models and remaining quota |
+| `pool_status` | Lists every account with its state, owner, models and remaining quota, and the named routes |
 | `route_preview` | Shows which account would receive each task, and why, without running anything |
 | `dispatch` | Sends up to 30 tasks at once and runs independent tasks in parallel |
 | `get_results` | Waits for up to 50 jobs, 45 seconds by default and at most 110, and returns a short preview of each result, or the full results with `full` |
@@ -332,7 +334,7 @@ omnitrix runs as an MCP server and gives Claude the following tools:
 | `rate_result` | Accepts or rejects a result so that the router can learn from it, and can send a rejected task to another model |
 | `cancel_job`, `list_jobs` | Cancels a job, its pending check or its running test, or lists the 20 most recent jobs (at most 100) |
 
-Each task has a `title` of at most 200 characters, a `type`, a `prompt` and optionally an `acceptance` line, a `privacy` level, `files`, a `repo`, a `size` (`small`, `medium` or `large`), `use` to force an account or model, `effort`, `fast`, `check`, `copies` and `follow_up_of` for tasks other than code and, for code tasks, `test`. `route_preview` accepts up to 30 tasks.
+Each task has a `title` of at most 200 characters, a `type`, a `prompt` and optionally an `acceptance` line, a `privacy` level, `files`, a `repo`, a `size` (`small`, `medium` or `large`), `use` to force an account or model, `effort`, `fast`, `route`, `check`, `copies` and `follow_up_of` for tasks other than code and, for code tasks, `test`. `route_preview` accepts up to 30 tasks.
 
 The `pool_status`, `dispatch` and `get_results` tools declare output schemas, and their structured data contains everything their text shows. `list_jobs` also lists jobs that other omnitrix processes started, and `cancel_job` can cancel them.
 
@@ -369,8 +371,9 @@ omnitrix enable|disable <id>    enable or disable an account
 omnitrix remove <id>            remove an account (--purge also deletes its login)
 omnitrix models <id>            show model scores and rated jobs (--refresh queries the provider again)
 omnitrix model <id> <model>     set scores or prices, or --add or --remove a model
-omnitrix route <prompt>         show which model would receive a task (--type, --privacy, --fast)
-omnitrix run <prompt>           run one task and print the answer (--type, --privacy, --use, --repo, --effort, --fast)
+omnitrix route <prompt>         show which model would receive a task (--type, --privacy, --fast, --route)
+omnitrix run <prompt>           run one task and print the answer (--type, --privacy, --use, --repo, --effort, --fast, --route)
+omnitrix routes                 list the named routes; "routes add <name>" and "routes remove <name>" manage your own
 omnitrix settings               set the mode, private protection, pins, bans, the job time limit and the preview length
 omnitrix dashboard              open the live dashboard on 127.0.0.1:4590, which runs in the background (--stop, --port, --no-open, --serve)
 omnitrix setup-claude           register with Claude Code (--scope user|project|local, --no-statusline, --dry-run)

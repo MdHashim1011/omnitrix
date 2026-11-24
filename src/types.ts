@@ -85,6 +85,22 @@ export interface Account {
   team?: boolean;
 }
 
+/**
+ * A named way to route a task. It only steers omnitrix's own router: quota, privacy, health and past verdicts
+ * still apply to every task that uses it.
+ */
+export interface RouteDef {
+  description: string;
+  /** only these accounts ("accountId") or models ("accountId/modelId") */
+  use?: string[];
+  /** how to rank: quality ranks by strength alone, saver puts cost first */
+  mode?: 'balanced' | 'quality' | 'saver';
+  /** prefer models that answered quickly before */
+  fast?: boolean;
+  /** only models on this computer */
+  local?: boolean;
+}
+
 export interface Settings {
   /** never send private/secret work to providers that train on data */
   protectPrivate: boolean;
@@ -97,6 +113,8 @@ export interface Settings {
   bannedProviders: string[];
   /** task type -> list of "accountId/modelId" to always try first */
   pins: Partial<Record<TaskType, string[]>>;
+  /** routes of the user's own, by name; a name of a built-in route replaces it */
+  routes?: Record<string, RouteDef>;
   /** "off" keeps code tasks away from API accounts; otherwise they run through OpenCode when it is installed */
   apiCodeAgent?: 'opencode' | 'off';
   /** the team file this developer joined, if any */
@@ -172,6 +190,8 @@ export interface TaskSpec {
   followUpOf?: string;
   /** prefer models that answered quickly before, for tasks where waiting matters more than depth */
   fast?: boolean;
+  /** a named route: fast, deep, cheap, local, or one the user defined in settings.routes */
+  route?: string;
   /** only models without tools (API drivers); set on checks, whose prompt holds another worker's output */
   textOnly?: boolean;
   /** models whose fit for this task type is lower are not used; set on checks, so a checker is not much weaker than the worker */

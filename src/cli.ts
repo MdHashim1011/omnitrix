@@ -19,9 +19,10 @@ import { basisOf, isChatModel, makeModel, statsKey } from './models.js';
 import { loadStats } from './stats.js';
 import { PROVIDERS, getProvider } from './providers.js';
 import { renderStatusLine } from './statusline.js';
+import { routeDef, routeList } from './router.js';
 import { deleteSecret, dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, updateConfig, readJson, redact, saveConfig, saveHealth, setSecret, uniqueAccountId } from './store.js';
 import { branchExists, branchMerged, deleteBranch, pruneWorktree } from './worktree.js';
-import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, type Limits, type ModelInfo, type TaskType, type UsageRecord } from './types.js';
+import { EFFORTS, DriverError, TASK_TYPES, type Account, type Config, type Job, type Limits, type ModelInfo, type RouteDef, type TaskType, type UsageRecord } from './types.js';
 import { refreshQuotas } from './quota.js';
 import { formatTokens, readLedger, recordUsage, typicalLatency } from './usage.js';
 import { describeDelegated } from './value.js';
@@ -521,10 +522,11 @@ program
   .addOption(new Option('--effort <level>', 'how hard a reasoning model should think').choices([...EFFORTS]))
   .option('--repo <path>', 'git repo for code tasks')
   .option('--fast', 'prefer models that answered quickly before')
+  .option('--route <name>', 'use a named route (see omnitrix routes)')
   .action(async (words: string[], o) => {
     const engine = new Engine();
     const prompt = words.join(' ');
-    const [job] = engine.dispatch([{ title: prompt.slice(0, 60), type: o.type as TaskType, prompt, privacy: o.privacy, use: o.use, effort: o.effort, fast: o.fast, repo: o.repo ? path.resolve(o.repo) : undefined }]);
+    const [job] = engine.dispatch([{ title: prompt.slice(0, 60), type: o.type as TaskType, prompt, privacy: o.privacy, use: o.use, effort: o.effort, fast: o.fast, route: o.route, repo: o.repo ? path.resolve(o.repo) : undefined }]);
     // wait a moment first so the chosen account is printed before the answer arrives
     let done = await engine.wait([job!.id], 1);
     if (done[0]?.accountId) process.stderr.write(`-> ${done[0].accountId}/${done[0].model}\n`);
@@ -545,8 +547,9 @@ program
   .addOption(new Option('--type <type>', 'task type').choices([...TASK_TYPES]).default('writing'))
   .addOption(new Option('--privacy <level>').choices(['public', 'private', 'secret']))
   .option('--fast', 'prefer models that answered quickly before')
+  .option('--route <name>', 'use a named route (see omnitrix routes)')
   .action((words: string[], o) => {
-    const { candidates, rejected } = new Engine().preview({ title: 'preview', type: o.type, prompt: words.join(' '), privacy: o.privacy, fast: o.fast });
+    const { candidates, rejected } = new Engine().preview({ title: 'preview', type: o.type, prompt: words.join(' '), privacy: o.privacy, fast: o.fast, route: o.route });
     if (!candidates.length) console.log('nobody can take this task');
     const shown = candidates.slice(0, 8);
     const width = Math.max(46, ...shown.map((c) => `${c.accountId}/${c.model}`.length));
@@ -588,6 +591,64 @@ program
       return s;
     });
     console.log(JSON.stringify(s, null, 2));
+  });
+
+const routes = program
+  .command('routes')
+  .description('list named routes; a task with a route uses only the accounts and ranking that route names')
+  .action(() => {
+    const settings = loadConfig().settings;
+    const list = routeList(settings);
+    const width = Math.max(...list.map((r) => r.name.length)) + 2;
+    for (const { name, description } of list) {
+      const r = routeDef(name, settings)!;
+      // built-in routes explain themselves; a route of your own also shows what it limits
+      const extra = Object.hasOwn(settings.routes ?? {}, name) ? [r.use?.join(', '), r.mode, r.fast ? 'fast' : '', r.local ? 'local only' : ''].filter(Boolean) : [];
+      console.log(`${name.padEnd(width)}${description}${extra.length ? ` (${extra.join('; ')})` : ''}`);
+    }
+  });
+
+routes
+  .command('add <name>')
+  .description('add or replace a route of your own')
+  .requiredOption('--description <text>', 'what the route is for; Claude reads this to choose it')
+  .option('--use <account[/model],...>', 'only these accounts or models')
+  .addOption(new Option('--mode <mode>', 'how to rank the models').choices(['balanced', 'quality', 'saver']))
+  .option('--fast', 'prefer models that answered quickly before')
+  .option('--local', 'only models on this computer')
+  .action((name: string, o) => {
+    if (!/^[a-z][a-z0-9-]{0,30}$/.test(name)) die('a route name uses lowercase letters, digits and dashes, and starts with a letter');
+    const use = o.use ? String(o.use).split(',').map((x) => x.trim()).filter(Boolean) : undefined;
+    const accounts = loadConfig().accounts;
+    for (const u of use ?? []) {
+      const [acc, model] = [u.split('/')[0]!, u.split('/').slice(1).join('/')];
+      const a = accounts.find((x) => x.id === acc);
+      if (!a) die(`no account "${acc}"`);
+      if (model && !a.models.some((m) => m.id === model)) die(`account "${acc}" has no model "${model}"`);
+    }
+    const def: RouteDef = { description: String(o.description).trim() };
+    if (!def.description) die('give the route a description');
+    if (use?.length) def.use = use;
+    if (o.mode) def.mode = o.mode;
+    if (o.fast) def.fast = true;
+    if (o.local) def.local = true;
+    updateConfig((cfg) => {
+      cfg.settings.routes = { ...cfg.settings.routes, [name]: def };
+    });
+    console.log(`saved route "${name}"`);
+  });
+
+routes
+  .command('remove <name>')
+  .description('remove a route of your own')
+  .action((name: string) => {
+    if (!Object.hasOwn(loadConfig().settings.routes ?? {}, name)) die(`no route of your own named "${name}"`);
+    updateConfig((cfg) => {
+      const rest = { ...cfg.settings.routes };
+      delete rest[name];
+      cfg.settings.routes = Object.keys(rest).length ? rest : undefined;
+    });
+    console.log(`removed route "${name}"`);
   });
 
 program

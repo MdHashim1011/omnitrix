@@ -3,7 +3,7 @@
 import { basisOf, statsKey } from './models.js';
 import { acceptanceFactor } from './stats.js';
 import { headroom, roughSpan, type UsageSummary } from './usage.js';
-import type { Account, AccountHealth, Config, ModelInfo, Privacy, Skills, TaskSpec, TaskType } from './types.js';
+import type { Account, AccountHealth, Config, ModelInfo, Privacy, RouteDef, Settings, Skills, TaskSpec, TaskType } from './types.js';
 
 /** How much each skill matters for each kind of task. Each row adds up to 1. */
 const WEIGHTS: Record<TaskType, Partial<Record<keyof Skills, number>>> = {
@@ -107,6 +107,24 @@ function timing(usage: UsageSummary | undefined, room: number, now: number): { f
   return { factor: 1, why: [] };
 }
 
+/** The routes everyone has. A route of the user's own with the same name replaces one of these. */
+export const BUILTIN_ROUTES: Record<string, RouteDef> = {
+  fast: { description: 'models that answered quickly before; for small lookups and quick drafts', fast: true },
+  deep: { description: 'the strongest models, ranked by strength alone; for hard reviews, reasoning and tricky code', mode: 'quality' },
+  cheap: { description: 'free, local and plan-included models first; for bulk work and first drafts', mode: 'saver' },
+  local: { description: 'models on this computer only; nothing leaves the machine', local: true },
+};
+
+export function routeDef(name: string, settings: Settings): RouteDef | undefined {
+  return Object.hasOwn(settings.routes ?? {}, name) ? settings.routes![name] : Object.hasOwn(BUILTIN_ROUTES, name) ? BUILTIN_ROUTES[name] : undefined;
+}
+
+/** Every route Claude may name, built-in ones first, each with the description Claude chooses by. */
+export function routeList(settings: Settings): { name: string; description: string }[] {
+  const names = [...Object.keys(BUILTIN_ROUTES), ...Object.keys(settings.routes ?? {}).filter((n) => !Object.hasOwn(BUILTIN_ROUTES, n))];
+  return names.map((name) => ({ name, description: routeDef(name, settings)!.description }));
+}
+
 export function effectivePrivacy(task: TaskSpec): Privacy {
   return task.privacy ?? 'private';
 }
@@ -118,10 +136,14 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
   const privacy = effectivePrivacy(task);
   const pins = settings.pins[task.type] ?? [];
   const [forcedAccount, forcedModel] = task.use ? splitUse(task.use) : [undefined, undefined];
+  // a route changes how this task is ranked; it never loosens privacy or quota
+  const via = task.route ? routeDef(task.route, settings) : undefined;
+  const mode = via?.mode ?? settings.mode;
+  const fast = !!(task.fast || via?.fast);
 
   const candidates: Candidate[] = [];
   // the quickest typical time seen, which a model's own typical time is compared with
-  const fastest = task.fast ? Math.min(...Object.values(ctx.latency ?? {})) : Infinity;
+  const fastest = fast ? Math.min(...Object.values(ctx.latency ?? {})) : Infinity;
   const rejected: Rejected[] = [];
 
   for (const account of ctx.config.accounts) {
@@ -132,6 +154,8 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
     if (account.team && ctx.blocked?.[account.id]) { reject(ctx.blocked[account.id]!); continue; }
     if (task.textOnly && account.driver === 'cli') { reject('this task runs without tools, so agent CLIs are not used'); continue; }
     if (!account.enabled) { reject('disabled'); continue; }
+    if (via?.use && !via.use.some((u) => u === account.id || u.startsWith(`${account.id}/`))) { reject(`not in route "${task.route}"`); continue; }
+    if (via?.local && !(account.local && loopback(account.baseUrl))) { reject(`route "${task.route}": models on this computer only`); continue; }
     if (settings.bannedProviders.includes(account.provider)) { reject('provider is banned in settings'); continue; }
 
     const h = ctx.health[account.id];
@@ -163,6 +187,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
 
     for (const model of models) {
       if (task.avoid?.includes(`${account.id}/${model.id}`)) { reject('avoided for this task', model.id); continue; }
+      if (via?.use && !via.use.includes(account.id) && !via.use.includes(`${account.id}/${model.id}`)) { reject(`not in route "${task.route}"`, model.id); continue; }
       // an agent edits files through tool calls, which this model cannot make
       if (task.type === 'code' && account.driver === 'openai' && model.tools === false) { reject('this model cannot call tools, so it cannot edit files', model.id); continue; }
       const paused = ctx.health[modelHealthKey(account.id, model.id)];
@@ -177,7 +202,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       const why: string[] = [];
       const f = fit(model.skills, task.type);
       if (task.minFit !== undefined && f < task.minFit) { reject(`weaker at ${task.type} (fit ${f.toFixed(2)}) than the worker it would check`, model.id); continue; }
-      let score = settings.mode === 'quality' ? f * f : f;
+      let score = mode === 'quality' ? f * f : f;
       const basis = basisOf(model);
       why.push(`fit ${f.toFixed(2)}${basis === 'untested' ? ' (untested scores)' : basis === 'estimated' ? ' (estimated scores)' : ''}`);
 
@@ -195,12 +220,12 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
 
       // An account that may train on prompts can only take public work, so it gets public work first and
       // the other accounts keep their quota for private work. A known price leaves this to the cost factor.
-      if (privacy === 'public' && account.trainsOnData && !account.local && unpriced(model) && settings.mode !== 'quality') {
+      if (privacy === 'public' && account.trainsOnData && !account.local && unpriced(model) && mode !== 'quality') {
         score *= PUBLIC_ONLY_BONUS;
         why.push('takes public work only, so it goes first');
       }
 
-      const c = costFactor(model, account, settings.mode, task.type);
+      const c = costFactor(model, account, mode, task.type);
       score *= c;
       if (c < 1) why.push(`cost x${c.toFixed(2)}`);
 
@@ -219,7 +244,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       // A fast task prefers models that answered quickly before: the quickest keeps its score and one ten
       // times slower loses about half. Without a typical time, the speed score stands in, a little below
       // the quickest measured model, since a guess should not beat a measurement.
-      if (task.fast) {
+      if (fast) {
         const typical = ctx.latency?.[`${account.id}/${model.id}`];
         const known = typical !== undefined && Number.isFinite(fastest);
         score *= known ? 0.5 + 0.5 * Math.min(1, fastest / typical) : 0.5 + 0.05 * Math.min(9, model.skills.speed);
