@@ -135,7 +135,7 @@ describe("Claude's own work on omnitrix", () => {
   it("keeps the dashboard page's script valid JavaScript", async () => {
     // seen while building this: a quote escaped for TypeScript lost its escape in the page and broke it
     const { PAGE } = await import('../src/dashboard.js');
-    const scripts = [...PAGE.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
+    const scripts = [...PAGE.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)].map((m) => m[1]!);
     expect(scripts.length).toBeGreaterThan(0);
     for (const s of scripts) expect(() => new Function(s)).not.toThrow();
     expect(PAGE).toContain(`>Claude: '+esc(fmt(o.outputTokens))+' written, '+esc(fmt(o.resultTokens))+' read<`);
