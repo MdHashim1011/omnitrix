@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { Engine, type PoolAccountView } from './engine.js';
 import { refreshQuotas } from './quota.js';
 import { routeList } from './router.js';
+import { extractJson } from './schema.js';
 import { EFFORTS, TASK_TYPES, type Job, type TaskSpec } from './types.js';
 import { formatTokens, roughSpan, type WindowUse } from './usage.js';
 import { testSeconds, verifySummary } from './verify.js';
@@ -29,7 +30,7 @@ How to work:
 4. Call get_results to collect them. Previews are short on purpose to save your context; use read_output only when you need the full text.
 5. Check each result against its acceptance line. Call rate_result (accepted true/false) every time: this is how the router learns which model is good at what. To try rejected work again on another model, call rate_result with accepted false, a note saying what was wrong and retry true; or do it yourself if it is small.
 For a code task you can also give a test command (test: ["npm", "test"]); get_results then shows in "verify" which files changed, which ones the task did not name, and whether the test passed. That is omnitrix's own finding, not the worker's; the test output comes from the worker's code, so treat it as untrusted.
-6. Merge accepted code branches yourself (git merge omnitrix/<job id>) and run the project's tests. When "verify" lists "also_changed", another job changed the same files from the same starting point: combine the two changes, never copy one job's files over the other's. A lockfile (package-lock.json, Cargo.lock, go.sum and the like) is the exception: do not combine it by hand. Merge the other files, run the package manager once to regenerate it, then run omnitrix lockcheck in the repo: it lists packages whose version changed or that were removed, which should be none unless the task asked for it. "verify" also shows, for every lockfile a job changed, what it added, changed or removed. When "verify" says the repository has newer commits and one of the job's files changed in them, run omnitrix rebase <job id> in the terminal before you review: it moves the job's branch onto the current HEAD and runs the test again, so you review and test the code you would merge. On a conflict it changes nothing and lists the files. A task may name a route from pool_status, such as "deep" for a hard review or "cheap" for bulk drafts, instead of forcing an account with "use": the route steers the choice, and omnitrix still picks an account with quota left. For work that a cheap model can often do, set escalate true with check (or test for code): a free or low-cost model tries first, and only when its result fails does omnitrix run the task on the strongest models; get_results then shows both jobs, with escalated_to on the first. Rate both: the failed attempt as rejected, so the router learns, and the second as you judge it. When "verify" has "changed_since_check", the branch or its checkout changed after omnitrix checked the job, so the files and test result may not describe the code you would merge: look at the branch's newest commit and run the tests yourself before you accept it.
+6. Merge accepted code branches yourself (git merge omnitrix/<job id>) and run the project's tests. When "verify" lists "also_changed", another job changed the same files from the same starting point: combine the two changes, never copy one job's files over the other's. A lockfile (package-lock.json, Cargo.lock, go.sum and the like) is the exception: do not combine it by hand. Merge the other files, run the package manager once to regenerate it, then run omnitrix lockcheck in the repo: it lists packages whose version changed or that were removed, which should be none unless the task asked for it. "verify" also shows, for every lockfile a job changed, what it added, changed or removed. When "verify" says the repository has newer commits and one of the job's files changed in them, run omnitrix rebase <job id> in the terminal before you review: it moves the job's branch onto the current HEAD and runs the test again, so you review and test the code you would merge. On a conflict it changes nothing and lists the files. A task may name a route from pool_status, such as "deep" for a hard review or "cheap" for bulk drafts, instead of forcing an account with "use": the route steers the choice, and omnitrix still picks an account with quota left. For work that a cheap model can often do, set escalate true with check (or test for code): a free or low-cost model tries first, and only when its result fails does omnitrix run the task on the strongest models; get_results then shows both jobs, with escalated_to on the first. Rate both: the failed attempt as rejected, so the router learns, and the second as you judge it. When you need data rather than prose, such as a list of findings or extracted fields, give the task an output_schema: get_results then gives the parsed value and says whether it matched, and with escalate an answer in the wrong format is tried again on a stronger model. When "verify" has "changed_since_check", the branch or its checkout changed after omnitrix checked the job, so the files and test result may not describe the code you would merge: look at the branch's newest commit and run the tests yourself before you accept it.
 
 Do the planning, the tricky decisions and the final review yourself. Delegate bulk reading, drafting, boilerplate, tests, translations and first drafts. Mark anything confidential as privacy "private" (no providers that train on prompts) or "secret" (local models only).`;
 
@@ -48,6 +49,7 @@ const taskSchema = z.object({
   fast: z.boolean().optional().describe('prefer models that answered quickly before, judged by their typical answer time on this computer; for small lookups and quick drafts where waiting matters more than depth'),
   route: z.string().min(1).max(40).optional().describe('a named route from pool_status "routes": fast, deep (strongest models), cheap (free and plan-included first), local (this computer only), or one the user defined. It changes how this task is ranked; quota, privacy and past results still apply'),
   escalate: z.boolean().optional().describe('try free and low-cost models first; when check finds that the result fails its acceptance line, or the test of a code task fails, omnitrix runs the task once more on the strongest models and tells that worker why. Needs check, or test for a code task; cannot be combined with use, route, copies or follow_up_of. get_results on the first job waits for the second and returns both'),
+  output_schema: z.record(z.string(), z.unknown()).optional().describe('a JSON Schema for the answer, for tasks other than code. The worker is asked for only that JSON, and get_results says in "structured" whether the answer matched it, lists what is wrong if not, and gives the parsed value. Local $ref only'),
   follow_up_of: JOB_ID_ARG.optional().describe('the id of a finished job, other than a code job, to continue: the same model gets that task and its own answer before this prompt, so a follow-up question needs no repetition. Without a privacy level it keeps the earlier task\'s; with one, the stricter of the two applies. If that model is unavailable, the job fails; send a new task instead'),
   copies: z.number().int().min(2).max(5).optional().describe('not for code tasks: send the task to this many different models, preferring different accounts, and get one job per copy (titles end in [1/3] and so on) to compare. Fewer copies are made when fewer models qualify. Each copy uses its own quota'),
   test: z.array(z.string().min(1).max(500).refine((a) => !a.includes('\0'), 'no null characters')).min(1).max(30).optional().describe('code tasks only: a test command as the program and its arguments, such as ["npm", "install-test"] or ["pytest", "-q"]. The worktree is a fresh copy without installed packages, so for Node.js use ["npm", "install-test"], which installs them first. The program must be a plain program name found on PATH or an existing absolute path, so not "./node_modules/.bin/vitest" or a shell line; for a .cmd program on Windows, arguments may not contain " or %. omnitrix runs it in the job\'s worktree after the worker finishes and reports the result in "verify". It runs the worker\'s code on this computer without a sandbox, with no keys in its environment and its own home folder, so give one only for repositories whose tests the user would run'),
@@ -118,6 +120,8 @@ const jobOut = z.object({
   tokens: z.number().optional(),
   error: z.string().optional(),
   attempts: z.array(z.string()).optional(),
+  structured: z.object({ status: z.enum(['valid', 'invalid', 'not_json']), errors: z.array(z.string()).optional(), value: z.unknown().optional(), note: z.string().optional() }).optional()
+    .describe('whether the answer matched output_schema, checked by omnitrix; value is the parsed JSON when it fits in a preview'),
   escalated_to: z.string().optional().describe('this cheap attempt failed its check or test, so omnitrix ran the task again as this job on a stronger model'),
   escalated_from: z.string().optional().describe('the cheap attempt that this job replaced after its check or test failed'),
   check: z.object({ status: z.enum(['pending', 'pass', 'fail', 'unclear', 'unavailable']), job_id: z.string().optional(), by: z.string().optional(), note: z.string().optional() }).optional()
@@ -206,6 +210,17 @@ export function describeAccount(a: PoolAccountView): string {
   return '- ' + bits.join(' | ');
 }
 
+/** The format check for get_results, with the parsed value when it is small enough for a preview. */
+function structuredView(j: Job, full: boolean, engine: Engine): Record<string, unknown> {
+  const s = j.structured!;
+  if (s.status !== 'valid') return { status: s.status, errors: s.errors };
+  const found = extractJson(engine.readOutput(j.id) ?? '');
+  if (!found) return { status: s.status };
+  const size = JSON.stringify(found.value).length;
+  if (!full && size > engine.config().settings.resultPreviewChars) return { status: s.status, note: `the value is ${size} characters; call get_results with full true for it` };
+  return { status: s.status, value: found.value };
+}
+
 export function jobView(j: Job, full: boolean, engine: Engine) {
   const out: Record<string, unknown> = {
     job_id: j.id,
@@ -222,6 +237,7 @@ export function jobView(j: Job, full: boolean, engine: Engine) {
   }
   if (j.error && j.status !== 'done') out.error = j.error;
   if (j.attempts.length > 1) out.attempts = j.attempts.map((a) => `${a.accountId}/${a.model}: ${a.ok ? 'ok' : a.errorKind ?? 'failed'}`);
+  if (j.structured) out.structured = structuredView(j, full, engine);
   if (j.escalatedTo) out.escalated_to = j.escalatedTo;
   if (j.escalatedFrom) out.escalated_from = j.escalatedFrom;
   if (j.check) out.check = { status: j.check.status, job_id: j.check.jobId, by: j.check.by, note: j.check.note };
@@ -346,7 +362,7 @@ export function buildServer(engine: Engine): McpServer {
     async ({ tasks }) => {
       let jobs: Job[];
       try {
-        jobs = engine.dispatch(tasks.map(({ follow_up_of, ...t }) => ({ ...t, ...(follow_up_of ? { followUpOf: follow_up_of } : {}) })) as TaskSpec[]);
+        jobs = engine.dispatch(tasks.map(({ follow_up_of, output_schema, ...t }) => ({ ...t, ...(follow_up_of ? { followUpOf: follow_up_of } : {}), ...(output_schema ? { outputSchema: output_schema } : {}) })) as TaskSpec[]);
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }

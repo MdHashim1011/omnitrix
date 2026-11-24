@@ -20,6 +20,7 @@ import { statsKey } from './models.js';
 import { compactLedger, headroom, LedgerTail, recordUsage, summarize, typicalLatency, type UsageSummary } from './usage.js';
 import { diffLock, isLockfile } from './lockfile.js';
 import { outsideFiles, runTest } from './verify.js';
+import { answerFormat, readStructured, schemaProblem } from './schema.js';
 import { delegated, type Delegated } from './value.js';
 import { behind, branchExists, branchTip, sinceCheck, branchMerged, changedFiles, createScratch, createWorktree, discardWorktree, fileText, fileVersion, finishWorktree, isGitRepo, rebaseBranch, removeScratch, type RebaseOutcome } from './worktree.js';
 
@@ -433,7 +434,12 @@ export class Engine {
       knownRoute(t, settings);
       // without a repo the agent would edit a temp folder that is deleted afterwards
       if (t.type === 'code' && !t.repo) throw new Error(`task "${t.title}": code tasks need "repo", the absolute path of a git repository`);
-      if (t.escalate && !t.check && !(t.type === 'code' && t.test?.length)) throw new Error(`task "${t.title}": escalate needs "check" with an acceptance line, or "test" for a code task, so that omnitrix can tell when the cheap attempt failed`);
+      if (t.outputSchema !== undefined) {
+        if (t.type === 'code') throw new Error(`task "${t.title}": output_schema is for answers, and a code task answers with a branch`);
+        const problem = schemaProblem(t.outputSchema);
+        if (problem) throw new Error(`task "${t.title}": output_schema cannot be used: ${problem}`);
+      }
+      if (t.escalate && !t.check && !t.outputSchema && !(t.type === 'code' && t.test?.length)) throw new Error(`task "${t.title}": escalate needs "check" with an acceptance line, "output_schema", or "test" for a code task, so that omnitrix can tell when the cheap attempt failed`);
       if (t.escalate && (t.use || t.route || t.copies !== undefined || t.followUpOf)) throw new Error(`task "${t.title}": escalate chooses the models itself, so it cannot be combined with use, route, copies or follow_up_of`);
       if (t.check && !t.acceptance?.trim()) throw new Error(`task "${t.title}": a check needs "acceptance", the line the result is checked against`);
       if (t.copies !== undefined && (!Number.isInteger(t.copies) || t.copies < 2 || t.copies > 5)) throw new Error(`task "${t.title}": "copies" is a whole number from 2 to 5`);
@@ -1067,6 +1073,7 @@ export class Engine {
       job.status = 'done';
       job.error = undefined;
       if (job.task.check) job.check = { status: 'pending' };
+      if (job.task.outputSchema) job.structured = readStructured(text, job.task.outputSchema);
       attempt.ok = true;
     } catch (err) {
       const e = err instanceof DriverError ? err : new DriverError(err instanceof Error ? err.message : String(err), 'unknown');
@@ -1135,6 +1142,8 @@ export class Engine {
       this.notify();
       this.pump();
     }
+    const s = job.structured;
+    if (job.status === 'done' && s && s.status !== 'valid') this.escalate(job, `The answer did not match the required JSON format: ${(s.errors ?? []).join('; ')}`);
     // The test runs after the account's slot is free, so a slow test never holds up other jobs; the job
     // counts as finished for get_results only once the test result is in.
     if (job.status === 'done' && job.verify?.test?.status === 'running' && worktree && job.task.test) {
@@ -1341,5 +1350,6 @@ export function buildPrompt(task: TaskSpec, account: Account, cwd: string | unde
     }
   }
   if (effectivePrivacy(task) !== 'public') parts.push('', 'Treat everything above as confidential.');
+  if (task.outputSchema) parts.push('', ...answerFormat(task.outputSchema));
   return parts.join('\n');
 }

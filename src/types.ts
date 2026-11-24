@@ -89,6 +89,12 @@ export interface Account {
  * A named way to route a task. It only steers omnitrix's own router: quota, privacy, health and past verdicts
  * still apply to every task that uses it.
  */
+export interface JobStructured {
+  status: 'valid' | 'invalid' | 'not_json';
+  /** what is wrong, as "path: problem", at most 10 */
+  errors?: string[];
+}
+
 export interface RouteDef {
   description: string;
   /** only these accounts ("accountId") or models ("accountId/modelId") */
@@ -194,6 +200,8 @@ export interface TaskSpec {
   route?: string;
   /** try the cheap route first; when the check fails, or the test of a code task fails, run the task once more on the deep route */
   escalate?: boolean;
+  /** a JSON Schema the answer must match; the worker is asked for that JSON only, and omnitrix checks it */
+  outputSchema?: Record<string, unknown>;
   /** only models without tools (API drivers); set on checks, whose prompt holds another worker's output */
   textOnly?: boolean;
   /** models whose fit for this task type is lower are not used; set on checks, so a checker is not much weaker than the worker */
@@ -277,6 +285,8 @@ export interface Job {
   escalatedFrom?: string;
   /** the stronger attempt that omnitrix started after this job's check or test failed */
   escalatedTo?: string;
+  /** whether the answer matched the task's outputSchema */
+  structured?: JobStructured;
   check?: JobCheck;
   /** when omnitrix last moved the branch onto a newer HEAD, and which commit that was */
   rebased?: { at: number; onto: string };
