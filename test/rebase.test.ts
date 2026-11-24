@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Engine } from '../src/engine.js';
-import { behindNote } from '../src/mcp.js';
+import { behindNote, jobView, sinceCheckNote } from '../src/mcp.js';
 import { makeModel } from '../src/models.js';
 import { files } from '../src/store.js';
 import { account, tempHome, writeConfig } from './helpers.js';
@@ -222,5 +222,107 @@ describe('a job whose repository moved on', () => {
       execFile(process.execPath, [cli, 'rebase', job.id], { env: { ...process.env, OMNITRIX_HOME: home } }, (e, so, se) => resolve({ out: String(so) + String(se), code: e ? (typeof e.code === 'number' ? e.code : 1) : 0 })));
     expect(res.out).toMatch(/conflict in hello\.txt; nothing was changed/);
     expect(res.code).toBe(1);
+  }, 40_000);
+});
+
+describe('the commit omnitrix checked', () => {
+  // runs git in the job's checkout as someone working there by hand would
+  const inCheckout = (dir: string, ...a: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: dir, encoding: 'utf8' });
+  // a test that leaves build output behind, as most do; untracked files are not part of the check
+  const builds = [process.execPath, '-e', "require('fs').mkdirSync('build',{recursive:true});require('fs').writeFileSync('build/out.txt','x')"];
+
+  it('records the commit it checked, and finds nothing while the branch and the checkout still match it', async () => {
+    const r = makeRepo();
+    // removed from the worker's checkout before the worker runs; that removal is not a change to report
+    r.commit('.mcp.json', '{}');
+    const { engine, job } = await codeJob(r.dir, builds);
+    expect(job.verify!.test!.status).toBe('passed');
+    expect(job.verify!.commit).toBe(r.g('rev-parse', job.worktree!.branch).stdout.trim());
+    expect(engine.changedSinceCheck(job)).toEqual({ branchMoved: false, uncommitted: [] });
+    const v = jobView(job, false, engine).verify as Record<string, unknown>;
+    expect(v.changed_since_check).toBeUndefined();
+    expect(v.summary).not.toMatch(/did not check|differ from the commit/);
+  }, 40_000);
+
+  it('flags a commit added to the branch after the check', async () => {
+    const r = makeRepo();
+    const { engine, job } = await codeJob(r.dir, builds);
+    const wt = job.worktree!.path;
+    fs.writeFileSync(path.join(wt, 'hello.txt'), 'changed later');
+    inCheckout(wt, 'commit', '-q', '-am', 'later');
+    expect(engine.changedSinceCheck(job)).toEqual({ branchMoved: true, uncommitted: [] });
+    const v = jobView(job, false, engine).verify as Record<string, unknown>;
+    expect(v.changed_since_check).toEqual({ branch_moved: true, uncommitted: [] });
+    expect(v.summary).toContain(`the branch omnitrix/${job.id} has commits that omnitrix did not check`);
+  }, 40_000);
+
+  it('lists tracked files that were changed in the checkout and not committed', async () => {
+    const r = makeRepo();
+    const { engine, job } = await codeJob(r.dir, builds);
+    const wt = job.worktree!.path;
+    fs.writeFileSync(path.join(wt, 'hello.txt'), 'edited');
+    fs.rmSync(path.join(wt, 'README.md'));
+    fs.writeFileSync(path.join(wt, 'new-and-untracked.txt'), 'x');
+    expect(engine.changedSinceCheck(job)).toEqual({ branchMoved: false, uncommitted: ['README.md', 'hello.txt'] });
+    const v = jobView(job, false, engine).verify as Record<string, unknown>;
+    expect(v.changed_since_check).toEqual({ branch_moved: false, uncommitted: ['README.md', 'hello.txt'] });
+    expect(v.summary).toContain("2 files in the job's checkout differ from the commit omnitrix checked (README.md, hello.txt)");
+  }, 40_000);
+
+  it('says what changed in one note, and shortens long file lists', () => {
+    const many = Array.from({ length: 7 }, (_, i) => `f${i}.ts`);
+    expect(sinceCheckNote({ branchMoved: false, uncommitted: ['a.ts'] }, 'omnitrix/j1')).toBe("1 file in the job's checkout differs from the commit omnitrix checked (a.ts): the test ran in that checkout, and a merge takes only the commit");
+    expect(sinceCheckNote({ branchMoved: false, uncommitted: many }, 'omnitrix/j1')).toContain('(f0.ts, f1.ts, f2.ts, f3.ts, f4.ts and 2 more)');
+    expect(sinceCheckNote({ branchMoved: true, uncommitted: ['a.ts'] }, 'omnitrix/j1')).toMatch(/^the branch omnitrix\/j1 has commits that omnitrix did not check, so review and test its newest commit yourself; 1 file/);
+    expect(sinceCheckNote({ branchMoved: false, uncommitted: [] }, 'omnitrix/j1')).toBe('');
+    // without a test, there is no test run to speak of
+    expect(sinceCheckNote({ branchMoved: false, uncommitted: ['a.ts'] }, 'omnitrix/j1', false)).toBe("1 file in the job's checkout differs from the commit omnitrix checked (a.ts), and a merge takes only the commit");
+  });
+
+  it('records the new commit after a rebase', async () => {
+    const r = makeRepo();
+    const { engine, job } = await codeJob(r.dir, builds);
+    r.commit('README.md', 'v2');
+    expect((await engine.rebase(job.id)).status).toBe('rebased');
+    const saved = engine.getJob(job.id)!;
+    expect(saved.verify!.commit).toBe(r.g('rev-parse', job.worktree!.branch).stdout.trim());
+    expect(saved.verify!.commit).not.toBe(job.verify!.commit);
+    expect(engine.changedSinceCheck(saved)).toEqual({ branchMoved: false, uncommitted: [] });
+    // the rebase made a new checkout, with a git folder of its own, and that is the one read now
+    fs.writeFileSync(path.join(saved.worktree!.path, 'hello.txt'), 'edited');
+    expect(engine.changedSinceCheck(saved)).toEqual({ branchMoved: false, uncommitted: ['hello.txt'] });
+  }, 40_000);
+
+  it('says nothing for a job from before the commit was recorded, or whose branch is gone', async () => {
+    const r = makeRepo();
+    const { engine, job } = await codeJob(r.dir);
+    const old = { ...job, verify: { ...job.verify!, commit: undefined } };
+    expect(engine.changedSinceCheck(old)).toBeUndefined();
+    r.g('worktree', 'remove', '--force', job.worktree!.path);
+    r.g('branch', '-D', job.worktree!.branch);
+    expect(engine.changedSinceCheck(job)).toBeUndefined();
+  }, 40_000);
+
+  it("does not run git through the worker's own .git file", async () => {
+    const r = makeRepo();
+    const { engine, job } = await codeJob(r.dir);
+    const wt = job.worktree!.path;
+    fs.writeFileSync(path.join(wt, 'hello.txt'), 'edited');
+    fs.rmSync(path.join(wt, '.git'), { force: true });
+    fs.writeFileSync(path.join(wt, '.git'), 'gitdir: /nowhere/at/all\n');
+    expect(engine.changedSinceCheck(job)).toEqual({ branchMoved: false, uncommitted: ['hello.txt'] });
+  }, 40_000);
+
+  it('shows on the dashboard', async () => {
+    const { recentJobs, sinceCheckReader } = await import('../src/dashboard.js');
+    const r = makeRepo();
+    const { engine, job } = await codeJob(r.dir);
+    const row = (read: ReturnType<typeof sinceCheckReader>) => recentJobs(engine, 30, undefined, read).find((x) => x.id === job.id)!;
+    expect(row(sinceCheckReader(engine, 0)).sinceCheck).toBeUndefined();
+    fs.writeFileSync(path.join(job.worktree!.path, 'hello.txt'), 'edited');
+    expect(row(sinceCheckReader(engine, 0)).sinceCheck).toEqual({ branchMoved: false, files: ['hello.txt'], more: 0 });
+    // a rejected job will not be merged
+    engine.verdict(job.id, false, 'no');
+    expect(row(sinceCheckReader(engine, 0)).sinceCheck).toBeUndefined();
   }, 40_000);
 });

@@ -182,6 +182,34 @@ export function behind(repo: string, branch: string): { commits: number; files: 
   return { commits, files: diff.ok ? diff.out.split('\0').filter(Boolean) : [] };
 }
 
+/** The commit a branch points at, read in the repository itself; undefined when the branch is gone. */
+export function branchTip(repo: string, branch: string): string | undefined {
+  const tip = tryGit(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
+  return tip.ok && tip.out ? tip.out : undefined;
+}
+
+/**
+ * What changed after omnitrix checked a job at `commit`: whether the branch now points elsewhere, and which
+ * tracked files in the job's checkout differ from its commit. A merge takes only the commit, while the test ran
+ * in the checkout. Untracked files are left out, because a test's build output is untracked too. Undefined when
+ * the branch is gone.
+ */
+export function sinceCheck(repo: string, branch: string, commit: string, dir: string, gitDir: string | undefined): { branchMoved: boolean; uncommitted: string[] } | undefined {
+  const tip = branchTip(repo, branch);
+  if (!tip) return undefined;
+  let uncommitted: string[] = [];
+  // only with the git folder recorded when the checkout was made, never through the worker's own .git file
+  if (gitDir && fs.existsSync(dir)) {
+    const r = spawnSync('git', ['--no-optional-locks', ...workerGit(dir, gitDir), 'status', '--porcelain=v1', '-z', '--untracked-files=no', '--no-renames'], { cwd: dir, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+    if (r.status === 0) {
+      uncommitted = r.stdout.split('\0').filter(Boolean).map((line) => line.slice(3))
+        // omnitrix removed these before the worker ran; their absence is not a change
+        .filter((f) => !AGENT_CONFIG.some((name) => f === name || f.startsWith(`${name}/`)));
+    }
+  }
+  return { branchMoved: tip !== commit, uncommitted };
+}
+
 export type RebaseOutcome =
   | { status: 'rebased'; path: string; gitDir: string; root: string; onto: string; diffStat: string }
   | { status: 'up_to_date' }

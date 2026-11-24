@@ -20,7 +20,7 @@ import { compactLedger, headroom, LedgerTail, recordUsage, summarize, typicalLat
 import { diffLock, isLockfile } from './lockfile.js';
 import { outsideFiles, runTest } from './verify.js';
 import { delegated, type Delegated } from './value.js';
-import { behind, branchExists, branchMerged, changedFiles, createScratch, createWorktree, discardWorktree, fileText, fileVersion, finishWorktree, isGitRepo, rebaseBranch, removeScratch, type RebaseOutcome } from './worktree.js';
+import { behind, branchExists, branchTip, sinceCheck, branchMerged, changedFiles, createScratch, createWorktree, discardWorktree, fileText, fileVersion, finishWorktree, isGitRepo, rebaseBranch, removeScratch, type RebaseOutcome } from './worktree.js';
 
 const MAX_ATTEMPTS = 3;
 // A model the provider no longer serves (or gives this plan no allowance for) is dropped from the account,
@@ -483,6 +483,26 @@ export class Engine {
   }
 
   /**
+   * Whether a finished code job's branch or checkout changed after omnitrix checked it: a new commit on the
+   * branch, or tracked files edited in the checkout and not committed. Undefined for jobs that recorded no commit.
+   */
+  changedSinceCheck(job: Job): { branchMoved: boolean; uncommitted: string[] } | undefined {
+    if (job.status !== 'done' || !job.worktree || !job.task.repo || !job.verify?.commit) return undefined;
+    // the job file is read back from disk, so the checkout and its git folder must be the ones omnitrix made
+    const own = this.ownCheckout(job);
+    const gitDir = own && job.worktree.gitDir && path.basename(path.dirname(path.resolve(job.worktree.gitDir))) === 'worktrees' ? job.worktree.gitDir : undefined;
+    return sinceCheck(path.resolve(job.task.repo), job.worktree.branch, job.verify.commit, path.resolve(job.worktree.path), gitDir);
+  }
+
+  /** Whether a job's branch and checkout are the ones omnitrix made for it. */
+  private ownCheckout(job: Job): boolean {
+    if (!job.worktree) return false;
+    const where = path.resolve(job.worktree.path);
+    const name = path.basename(where);
+    return job.worktree.branch === `omnitrix/${job.id}` && path.dirname(where) === path.resolve(files.worktrees()) && (name === job.id || name.startsWith(`${job.id}.rebase-`));
+  }
+
+  /**
    * Moves a finished code job's branch onto the repository's current HEAD, so Claude reviews and tests the
    * code it would merge, then checks the result again: changed files, lockfiles and the task's test.
    */
@@ -494,8 +514,7 @@ export class Engine {
     const { branch } = job.worktree;
     // the job file is read back from disk, so its branch and checkout must be the ones omnitrix made for it
     const where = path.resolve(job.worktree.path);
-    const name = path.basename(where);
-    if (branch !== `omnitrix/${job.id}` || path.dirname(where) !== path.resolve(files.worktrees()) || (name !== job.id && !name.startsWith(`${job.id}.rebase-`))) {
+    if (!this.ownCheckout(job)) {
       return { status: 'not_possible', reason: 'its branch or checkout is not the one omnitrix made for it' };
     }
     if (!branchExists(repo, branch)) return { status: 'not_possible', reason: `its branch ${branch} is gone` };
@@ -508,7 +527,7 @@ export class Engine {
     }
     if (out.status !== 'rebased') return out;
     const changed = changedFiles(out.path, out.gitDir);
-    const verify: JobVerify = { files: changed, outside: outsideFiles(changed, job.task, out.root) };
+    const verify: JobVerify = { files: changed, outside: outsideFiles(changed, job.task, out.root), commit: branchTip(repo, branch) };
     const locks = changed.filter(isLockfile).map((f) => diffLock(f, fileText(out.path, 'HEAD~1', f, out.gitDir), fileText(out.path, 'HEAD', f, out.gitDir)));
     if (locks.length) verify.lockfiles = locks;
     if (job.task.test) {
@@ -524,7 +543,7 @@ export class Engine {
     const disk = readJson<Job | null>(path.join(files.jobs(), `${job.id}.json`), null);
     const latest = disk && disk.id === job.id ? disk : job;
     latest.verify = verify;
-    latest.worktree = { ...job.worktree, path: out.path, diffStat: out.diffStat };
+    latest.worktree = { ...job.worktree, path: out.path, diffStat: out.diffStat, gitDir: out.gitDir };
     latest.rebased = { at: Date.now(), onto: out.onto };
     // a check looked at the code before the rebase
     delete latest.check;
@@ -965,11 +984,11 @@ export class Engine {
       let text = result.text;
       if (worktree) {
         const fin = finishWorktree(worktree.path, `${job.task.title}\n\nomnitrix job ${job.id}`, worktree.gitDir);
-        job.worktree = { path: worktree.path, branch: worktree.branch, diffStat: fin.diffStat };
+        job.worktree = { path: worktree.path, branch: worktree.branch, diffStat: fin.diffStat, ...(worktree.gitDir ? { gitDir: worktree.gitDir } : {}) };
         text += `\n\n---\nbranch: ${worktree.branch}\n${fin.diffStat}`;
         // facts for Claude's review, found by omnitrix itself rather than reported by the worker
         const changed = fin.changed ? changedFiles(worktree.path, worktree.gitDir) : [];
-        job.verify = { files: changed, outside: outsideFiles(changed, job.task, worktree.root) };
+        job.verify = { files: changed, outside: outsideFiles(changed, job.task, worktree.root), commit: branchTip(worktree.root, worktree.branch) };
         const wt = worktree;
         const locks = changed.filter(isLockfile).map((f) => diffLock(f, fileText(wt.path, 'HEAD~1', f, wt.gitDir), fileText(wt.path, 'HEAD', f, wt.gitDir)));
         if (locks.length) job.verify.lockfiles = locks;

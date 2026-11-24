@@ -188,6 +188,8 @@ export interface JobCheck {
 export interface JobVerify {
   /** files the worker changed, relative to the repository */
   files: string[];
+  /** the branch's commit that these findings and the test are about; unset on jobs from before 0.8.6 */
+  commit?: string;
   /** changed files that the task did not name; unset when the task named no files */
   outside?: string[];
   /** for each changed lockfile, which packages the job added, changed or removed */
@@ -235,7 +237,8 @@ export interface Job {
   outputChars?: number;
   preview?: string;
   error?: string;
-  worktree?: { path: string; branch: string; diffStat?: string };
+  /** gitDir is the checkout's git folder, recorded before the worker ran */
+  worktree?: { path: string; branch: string; diffStat?: string; gitDir?: string };
   usage?: { inputTokens: number; outputTokens: number; costUsd?: number };
   verdict?: 'accepted' | 'rejected';
   /** why Claude accepted or rejected the result, as it said in rate_result */

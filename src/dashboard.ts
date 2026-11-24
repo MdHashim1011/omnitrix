@@ -20,14 +20,25 @@ type Behind = { commits: number; files: string[] };
  * job, because the page is rebuilt every second. Rejected jobs are left out: nobody will merge them.
  */
 export function behindReader(engine: Engine, ttlMs = 30_000): (j: Job) => Behind | undefined {
-  const cache = new Map<string, { at: number; value: Behind | undefined }>();
+  return gitReader((j) => engine.behind(j), ttlMs);
+}
+
+type SinceCheck = { branchMoved: boolean; uncommitted: string[] };
+
+/** Whether each finished code job's branch or checkout changed after omnitrix checked it, read like behindReader. */
+export function sinceCheckReader(engine: Engine, ttlMs = 30_000): (j: Job) => SinceCheck | undefined {
+  return gitReader((j) => engine.changedSinceCheck(j), ttlMs);
+}
+
+function gitReader<T>(read: (j: Job) => T | undefined, ttlMs: number): (j: Job) => T | undefined {
+  const cache = new Map<string, { at: number; value: T | undefined }>();
   return (j) => {
     if (j.status !== 'done' || !j.worktree || !j.task.repo || j.verdict === 'rejected') return undefined;
     const hit = cache.get(j.id);
     if (hit && Date.now() - hit.at < ttlMs) return hit.value;
-    let value: Behind | undefined;
+    let value: T | undefined;
     try {
-      value = engine.behind(j);
+      value = read(j);
     } catch {
       value = undefined;
     }
@@ -73,7 +84,7 @@ export function overheadReader(ttlMs = 10 * 60_000, measure: (dir: string, since
 }
 
 /** The newest jobs for the page. A second check is shown on the job it checks, not as a job of its own. */
-export function recentJobs(engine: Engine, limit = 30, behindOf?: (j: Job) => Behind | undefined): Record<string, unknown>[] {
+export function recentJobs(engine: Engine, limit = 30, behindOf?: (j: Job) => Behind | undefined, sinceOf?: (j: Job) => SinceCheck | undefined): Record<string, unknown>[] {
   return engine.listJobs(limit * 2).filter((j) => !j.checkOf).slice(0, limit).map((j) => ({
     id: j.id,
     status: j.status,
@@ -89,6 +100,7 @@ export function recentJobs(engine: Engine, limit = 30, behindOf?: (j: Job) => Be
     verify: j.verify ? { summary: verifySummary(j.verify), warn: !!j.verify.outside?.length || (!!j.verify.test && j.verify.test.status !== 'passed' && j.verify.test.status !== 'running') } : undefined,
     check: j.check ? { status: j.check.status, by: j.check.by, note: j.check.note?.slice(0, 400) } : undefined,
     behind: moved(behindOf?.(j)),
+    sinceCheck: changed(sinceOf?.(j)),
     rebased: !!j.rebased,
   }));
 }
@@ -96,6 +108,11 @@ export function recentJobs(engine: Engine, limit = 30, behindOf?: (j: Job) => Be
 function moved(b: Behind | undefined): { commits: number; files: string[]; more: number } | undefined {
   if (!b?.commits) return undefined;
   return { commits: b.commits, files: b.files.slice(0, 5), more: Math.max(0, b.files.length - 5) };
+}
+
+function changed(s: SinceCheck | undefined): { branchMoved: boolean; files: string[]; more: number } | undefined {
+  if (!s || (!s.branchMoved && !s.uncommitted.length)) return undefined;
+  return { branchMoved: s.branchMoved, files: s.uncommitted.slice(0, 5), more: Math.max(0, s.uncommitted.length - 5) };
 }
 
 /** Where the dashboard on a port writes its process id, so it can be found, checked and stopped. */
@@ -123,8 +140,9 @@ export function startDashboard(port: number): { url: string; server: http.Server
   let openedAt = 0;
 
   const behindOf = behindReader(engine);
+  const sinceOf = sinceCheckReader(engine);
   const overheadOf = overheadReader();
-  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
+  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf, sinceOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
   // Quota reads and local server probes run in the background and are throttled; the page never waits for them.
   const slowChecks = () => {
     if (Date.now() - slowAt < SLOW_MS) return;
@@ -472,7 +490,15 @@ function jobHtml(j,open){
   return '<li class="job"><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span>'
     +'<div><div class="t">'+esc(j.task.title)+'</div><div class="m">'+esc(j.task.type)+(j.accountId?' · '+esc(j.accountId)+(j.model?' / '+esc(j.model):''):'')+'</div></div>'
     +'<div class="r">'+[tokens,ago(j.createdAt)].filter(Boolean).join(' · ')+(verdict?'<div>'+verdict+'</div>':'')+'</div>'+err
-    +(j.verify?'<div class="vf'+(j.verify.warn?' warn':'')+'">Checked by omnitrix'+(j.rebased?' after a rebase':'')+': '+esc(j.verify.summary)+'</div>':'')+behindHtml(j)+checkHtml(j.check)+'</li>';
+    +(j.verify?'<div class="vf'+(j.verify.warn?' warn':'')+'">Checked by omnitrix'+(j.rebased?' after a rebase':'')+': '+esc(j.verify.summary)+'</div>':'')+sinceHtml(j)+behindHtml(j)+checkHtml(j.check)+'</li>';
+}
+// the branch or the checkout changed after omnitrix checked the job, so its check may not cover the code a merge takes
+function sinceHtml(j){
+  var s=j.sinceCheck;if(!s)return '';
+  var t=[];
+  if(s.branchMoved)t.push('its branch has commits that omnitrix did not check');
+  if(s.files.length){var n=s.files.length+s.more;t.push(n+' file'+(n===1?'':'s')+' in its checkout changed after the check and '+(n===1?'is':'are')+' not in the commit: '+s.files.map(esc).join(', ')+(s.more?' and '+s.more+' more':''));}
+  return '<div class="vf warn">Changed since the check: '+t.join('; ')+'. Review and test the code you would merge.</div>';
 }
 // the repository moved on after the job started; when its own files changed there, its check is out of date
 function behindHtml(j){
