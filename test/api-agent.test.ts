@@ -126,9 +126,11 @@ describe('code tasks on an API account', () => {
     expect(engine.readOutput(done!.id)).toContain('Wrote hello.txt.');
 
     const seen = JSON.parse(fs.readFileSync(seenFile, 'utf8'));
-    expect(path.resolve(seen.cwd)).toBe(path.resolve(done!.worktree!.path));
+    // macOS names its temp folders /var and /private/var, so the real paths are compared
+    const real = (p: string) => fs.realpathSync(p);
+    expect(real(seen.cwd)).toBe(real(done!.worktree!.path));
     // OpenCode works in the folder PWD names, so it must name the worktree, not the folder omnitrix started in
-    expect(path.resolve(seen.pwd)).toBe(path.resolve(done!.worktree!.path));
+    expect(real(seen.pwd)).toBe(real(done!.worktree!.path));
     expect(seen.args).toEqual(expect.arrayContaining(['run', '--format', 'json', '--model', 'omnitrix/deepseek-chat']));
     // the key reaches the agent through its own variable only, never through the config or the parent's variables
     expect(seen.key).toBe('sk-test-agent-key-123456');
@@ -147,7 +149,7 @@ describe('code tasks on an API account', () => {
     expect(config.share).toBe('disabled');
     expect(config.autoupdate).toBe(false);
     // a home folder of its own, so the user's own OpenCode setup (MCP servers, keys) is not loaded
-    expect(path.resolve(seen.home).startsWith(path.resolve(home))).toBe(true);
+    expect(real(seen.home).startsWith(real(home))).toBe(true);
     // the agent reads the files itself, so they are listed rather than pasted in
     expect(seen.stdin).toContain('## Files to look at');
   }, 40_000);
