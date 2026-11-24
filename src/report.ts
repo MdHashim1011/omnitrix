@@ -23,6 +23,8 @@ export interface Report {
   rows: ReportRow[];
   totals: {
     jobs: number; failed: number; accepted: number; rejected: number; tokens: number;
+    /** failed jobs that were pinned to one account or model with "use", so they could not move elsewhere */
+    failedPinned: number;
     /** the tokens of jobs that Claude accepted, that it rejected, and of failed jobs; the rest are not rated yet */
     acceptedTokens: number; rejectedTokens: number; failedTokens: number;
   };
@@ -42,6 +44,7 @@ function median(values: number[]): number | null {
 export function buildReport(jobs: Job[], since: number): Report {
   const groups = new Map<string, { row: ReportRow; times: number[] }>();
   const spent = { acceptedTokens: 0, rejectedTokens: 0, failedTokens: 0 };
+  let failedPinned = 0;
   for (const j of jobs) {
     if (j.checkOf || j.createdAt < since || (j.status !== 'done' && j.status !== 'failed')) continue;
     const last = j.attempts[j.attempts.length - 1];
@@ -57,6 +60,7 @@ export function buildReport(jobs: Job[], since: number): Report {
     const r = g.row;
     r.jobs++;
     if (j.status === 'failed') r.failed++;
+    if (j.status === 'failed' && j.task.use) failedPinned++;
     if (j.verdict === 'accepted') r.accepted++;
     if (j.verdict === 'rejected') r.rejected++;
     const used = j.usage ? j.usage.inputTokens + j.usage.outputTokens : 0;
@@ -72,7 +76,7 @@ export function buildReport(jobs: Job[], since: number): Report {
   }
   const rows = [...groups.values()].map(({ row, times }) => ({ ...row, medianSeconds: median(times) }));
   rows.sort((a, b) => b.jobs - a.jobs || a.account.localeCompare(b.account) || a.model.localeCompare(b.model) || a.type.localeCompare(b.type));
-  const totals = { jobs: 0, failed: 0, accepted: 0, rejected: 0, tokens: 0, ...spent };
+  const totals = { jobs: 0, failed: 0, failedPinned, accepted: 0, rejected: 0, tokens: 0, ...spent };
   for (const r of rows) {
     totals.jobs += r.jobs;
     totals.failed += r.failed;
@@ -102,6 +106,11 @@ export function formatReport(r: Report, days: number): string {
   if (t.tokens) {
     const unratedTokens = t.tokens - t.acceptedTokens - t.rejectedTokens - t.failedTokens;
     lines.push(`Of those tokens, ${tokens(t.acceptedTokens)} went to work Claude accepted, ${tokens(t.rejectedTokens)} to work it rejected, ${tokens(t.failedTokens)} to failed jobs and ${tokens(Math.max(0, unratedTokens))} to work not rated yet.`);
+  }
+  // a pinned job is not routed, so its failure says nothing about routing
+  if (t.failedPinned) {
+    const who = t.failedPinned === t.failed ? `All ${t.failed} failed jobs were` : `${t.failedPinned} of the ${t.failed} failed jobs were`;
+    lines.push(`${who} pinned to one account or model with "use", so omnitrix could not send them elsewhere.`);
   }
   lines.push('');
   const table = [['model', 'type', 'jobs', 'accepted', 'failed', 'median time', 'tokens', 'check pass/fail']];

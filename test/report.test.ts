@@ -42,7 +42,7 @@ describe('the report of past jobs', () => {
       { account: 'codex', model: 'default', type: 'code', jobs: 4, failed: 0, accepted: 2, rejected: 1, medianSeconds: 25, tokens: 4000, checksPassed: 0, checksFailed: 0 },
       { account: 'gemini', model: 'flash', type: 'review', jobs: 1, failed: 0, accepted: 1, rejected: 0, medianSeconds: 5, tokens: 1000, checksPassed: 0, checksFailed: 0 },
     ]);
-    expect(r.totals).toEqual({ jobs: 5, failed: 0, accepted: 3, rejected: 1, tokens: 5000, acceptedTokens: 3000, rejectedTokens: 1000, failedTokens: 0 });
+    expect(r.totals).toEqual({ jobs: 5, failed: 0, failedPinned: 0, accepted: 3, rejected: 1, tokens: 5000, acceptedTokens: 3000, rejectedTokens: 1000, failedTokens: 0 });
   });
 
   it('counts failed jobs, leaves out running ones, old ones and checks, and counts check verdicts on the checked job', () => {
@@ -56,6 +56,18 @@ describe('the report of past jobs', () => {
     ], NOW - 30 * 86400_000);
     expect(r.rows).toEqual([{ account: 'codex', model: 'default', type: 'code', jobs: 3, failed: 1, accepted: 0, rejected: 0, medianSeconds: 10, tokens: 2000, checksPassed: 1, checksFailed: 1 }]);
     expect(r.totals.jobs).toBe(3);
+  });
+
+  it('says how many failed jobs were pinned to one account, so they could not move elsewhere', () => {
+    // seen in real use: every failure in a month was a test probe pinned with "use", none a routed job
+    const pinned = (over: Partial<Job> = {}) => job({ status: 'failed', ...over, task: { title: 't', type: 'writing', prompt: 'p', use: 'gemini-main/models/x' } });
+    const r = buildReport([pinned(), pinned(), pinned({ status: 'done' }), job({ status: 'failed' }), job()], NOW - 30 * 86400_000);
+    expect(r.totals).toMatchObject({ failed: 3, failedPinned: 2 });
+    expect(formatReport(r, 30)).toContain('2 of the 3 failed jobs were pinned to one account or model with "use", so omnitrix could not send them elsewhere.');
+    const all = buildReport([pinned(), pinned()], NOW - 30 * 86400_000);
+    expect(formatReport(all, 30)).toContain('All 2 failed jobs were pinned to one account or model with "use"');
+    // nothing pinned, nothing said
+    expect(formatReport(buildReport([job({ status: 'failed' })], 0), 30)).not.toContain('pinned');
   });
 
   it('splits the tokens by outcome, so wasted work shows: accepted, rejected, failed and not rated', () => {
