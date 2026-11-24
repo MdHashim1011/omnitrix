@@ -26,12 +26,14 @@ describe('router', () => {
     expect(candidates[0]!.accountId).toBe('a');
   });
 
-  it('only sends code tasks to agent CLIs', () => {
+  it('sends code tasks to agent CLIs, and to API accounts only when OpenCode can run them', () => {
     const api = account({ id: 'api' });
+    const anth = account({ id: 'anth', driver: 'anthropic', provider: 'anthropic' });
     const cli = account({ id: 'cli', driver: 'cli', provider: 'codex', models: [makeModel('default')] });
-    const { candidates, rejected } = route(task({ type: 'code', repo: '/x' }), ctx([api, cli]));
+    const { candidates, rejected } = route(task({ type: 'code', repo: '/x' }), ctx([api, anth, cli]));
     expect(candidates.map((c) => c.accountId)).toEqual(['cli']);
-    expect(rejected.find((r) => r.accountId === 'api')?.reason).toMatch(/agent CLI/);
+    expect(rejected.find((r) => r.accountId === 'api')?.reason).toMatch(/need OpenCode/);
+    expect(rejected.find((r) => r.accountId === 'anth')?.reason).toMatch(/agent CLI/);
   });
 
   it('keeps private work away from providers that train on data', () => {

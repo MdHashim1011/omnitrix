@@ -46,6 +46,8 @@ export interface RouteContext {
   gpuBytes?: number;
   /** size in bytes of local models per "account/model", as the local server reports it */
   localSizes?: Record<string, number>;
+  /** OpenCode is installed, so an API account can do code tasks through it */
+  apiAgent?: boolean;
 }
 
 // a local model larger than the graphics card's memory runs mostly on the processor, many times slower
@@ -139,7 +141,12 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       continue;
     }
 
-    if (task.type === 'code' && account.driver !== 'cli') { reject('code tasks need an agent CLI that can edit files'); continue; }
+    if (task.type === 'code' && account.driver !== 'cli') {
+      // an API model edits files through OpenCode, which omnitrix runs with this account's key and model
+      if (account.driver !== 'openai') { reject('code tasks need an agent CLI that can edit files'); continue; }
+      if (settings.apiCodeAgent === 'off') { reject('code tasks on API accounts are turned off (settings apiCodeAgent)'); continue; }
+      if (!ctx.apiAgent) { reject('code tasks on an API account need OpenCode: install OpenCode (npm install -g opencode-ai) to let this account edit files'); continue; }
+    }
     if (privacy === 'secret' && !(account.local && loopback(account.baseUrl))) { reject('secret task: local models only'); continue; }
     if (privacy === 'private' && settings.protectPrivate && account.trainsOnData) { reject('private task: this provider may train on prompts'); continue; }
 
@@ -156,6 +163,8 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
 
     for (const model of models) {
       if (task.avoid?.includes(`${account.id}/${model.id}`)) { reject('avoided for this task', model.id); continue; }
+      // an agent edits files through tool calls, which this model cannot make
+      if (task.type === 'code' && account.driver === 'openai' && model.tools === false) { reject('this model cannot call tools, so it cannot edit files', model.id); continue; }
       const paused = ctx.health[modelHealthKey(account.id, model.id)];
       if (paused && paused.state === 'cooling' && (paused.until ?? 0) > now) {
         reject(`paused until ${new Date(paused.until!).toLocaleTimeString()} (${paused.reason ?? 'not answering'})`, model.id);

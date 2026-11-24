@@ -25,8 +25,8 @@ describe('flags passed to each agent CLI, as their documentation describes them'
     expect(args('agy', false)).not.toContain('--mode');
   });
 
-  it('OpenCode takes the documented --model flag', () => {
-    expect(args('opencode', false)).toEqual(['run', '--model', 'some-model']);
+  it('OpenCode takes the documented --model flag and prints JSON events', () => {
+    expect(args('opencode', false)).toEqual(['run', '--format', 'json', '--model', 'some-model']);
   });
 });
 

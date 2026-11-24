@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { apiAgentInstalled, runsAsAgent } from './drivers/cli.js';
 import { runDriver } from './drivers/index.js';
 import { gpuMemoryBytes, modelSizes } from './drivers/ollama.js';
 import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
@@ -264,6 +265,19 @@ export class Engine {
     this.usageCache = undefined;
   }
 
+  private apiAgentAt = 0;
+  private apiAgentFound = false;
+
+  /** Whether OpenCode can run API accounts' code tasks; looked up at most once a minute, and only when it can matter. */
+  private apiAgent(cfg: Config): boolean {
+    if (cfg.settings.apiCodeAgent === 'off' || !cfg.accounts.some((a) => a.driver === 'openai' && a.enabled)) return false;
+    if (Date.now() - this.apiAgentAt > 60_000) {
+      this.apiAgentFound = apiAgentInstalled();
+      this.apiAgentAt = Date.now();
+    }
+    return this.apiAgentFound;
+  }
+
   private routeContext(cfg: Config): RouteContext {
     const records = this.records();
     // another process (a CLI "set" or "test", a second server) may have seen the account more recently
@@ -276,6 +290,7 @@ export class Engine {
     return {
       config: cfg, health: this.health, usage, running: this.running, stats: loadStats(), blocked: this.teamBlocks(cfg, records),
       latency: typicalLatency([...records.values()].flat()),
+      apiAgent: this.apiAgent(cfg),
       // only read when a local model's size is known, so a computer without local models never runs nvidia-smi
       ...(Object.keys(this.localSizes).length ? { gpuBytes: gpuMemoryBytes(), localSizes: this.localSizes } : {}),
     };
@@ -941,6 +956,7 @@ export class Engine {
         }
       }
       // files come from the real repo, so a read-only task sees uncommitted work too
+      const agent = runsAsAgent(account, edit);
       const prompt = buildPrompt(job.task, account, cwd, scratch ? job.task.repo : cwd);
       calling = true;
       const result = await runDriver(
@@ -949,12 +965,12 @@ export class Engine {
           model: cand.model,
           system: edit ? `${WORKER_SYSTEM}\n${EDIT_RULES}` : WORKER_SYSTEM,
           prompt,
-          images: account.driver === 'cli' ? undefined : taskImages(job.task, scratch ? job.task.repo : cwd),
+          images: agent ? undefined : taskImages(job.task, scratch ? job.task.repo : cwd),
           cwd,
-          timeoutMs: requestTimeoutMs(account.driver, job.task.size, cfg.settings.jobTimeoutSec),
+          timeoutMs: requestTimeoutMs(agent ? 'cli' : account.driver, job.task.size, cfg.settings.jobTimeoutSec),
           signal: ctrl.signal,
           effort: job.task.effort,
-          maxOutputTokens: account.driver === 'cli' ? undefined : job.task.size === 'small' ? 4000 : job.task.size === 'large' ? 32000 : 16000,
+          maxOutputTokens: agent ? undefined : job.task.size === 'small' ? 4000 : job.task.size === 'large' ? 32000 : 16000,
         },
         edit,
       );
@@ -1237,7 +1253,7 @@ export function buildPrompt(task: TaskSpec, account: Account, cwd: string | unde
   const parts: string[] = [`# Task: ${task.title}`, '', task.prompt.trim()];
   if (task.acceptance) parts.push('', '## Done means', task.acceptance.trim());
   if (task.files?.length) {
-    if (account.driver === 'cli' && cwd && inlineFrom === cwd) {
+    if (runsAsAgent(account, task.type === 'code') && cwd && inlineFrom === cwd) {
       parts.push('', '## Files to look at', ...task.files.map((f) => `- ${f}`));
     } else {
       let budget = MAX_FILE_BYTES;

@@ -568,6 +568,7 @@ program
   .option('--unpin <type>')
   .option('--timeout <seconds>', 'job timeout', int)
   .option('--preview-chars <n>', 'how much of each result Claude sees', int)
+  .addOption(new Option('--api-code-agent <opencode|off>', 'let API accounts do code tasks through OpenCode when it is installed, or not').choices(['opencode', 'off']))
   .action((o) => {
     const s = updateConfig((cfg) => {
       const s = cfg.settings;
@@ -583,6 +584,7 @@ program
       if (o.unpin) delete s.pins[o.unpin as TaskType];
       if (o.timeout) s.jobTimeoutSec = o.timeout;
       if (o.previewChars) s.resultPreviewChars = o.previewChars;
+      if (o.apiCodeAgent) s.apiCodeAgent = o.apiCodeAgent;
       return s;
     });
     console.log(JSON.stringify(s, null, 2));

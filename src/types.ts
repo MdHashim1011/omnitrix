@@ -43,6 +43,8 @@ export interface ModelInfo {
   basis?: 'untested' | 'estimated' | 'manual';
   /** true when the server itself reported whether the model reads images */
   visionChecked?: boolean;
+  /** false when the server reported that the model cannot call tools, so it cannot work as an agent */
+  tools?: boolean;
   /** the exact version the server reported (Ollama), so feedback on an old version is not carried over */
   digest?: string;
 }
@@ -95,6 +97,8 @@ export interface Settings {
   bannedProviders: string[];
   /** task type -> list of "accountId/modelId" to always try first */
   pins: Partial<Record<TaskType, string[]>>;
+  /** "off" keeps code tasks away from API accounts; otherwise they run through OpenCode when it is installed */
+  apiCodeAgent?: 'opencode' | 'off';
   /** the team file this developer joined, if any */
   team?: { file: string; user: string; sha256: string };
 }

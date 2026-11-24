@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getProvider } from '../providers.js';
-import { redact, resolveKey } from '../store.js';
+import { files, redact, resolveKey } from '../store.js';
 import { DriverError, type Account, type DriverRequest, type DriverResult, type Effort, type ErrorKind } from '../types.js';
 
 /**
@@ -191,11 +191,39 @@ export const CLI_TOOLS: Record<string, CliTool> = {
     id: 'opencode',
     command: 'opencode',
     profileEnv: 'HOME',
-    args: ({ model }) => ['run', ...(model && model !== 'default' ? ['--model', model] : [])],
-    parse: (stdout) => ({ text: stdout.trim(), inputTokens: 0, outputTokens: 0 }),
+    // JSON events carry the token counts and any error; the prompt arrives on stdin
+    args: ({ model }) => ['run', '--format', 'json', ...(model && model !== 'default' ? ['--model', model] : [])],
+    parse: (stdout) => parseOpenCode(stdout),
     loginArgs: ['auth', 'login'],
   },
 };
+
+/**
+ * OpenCode's `run --format json` prints one event per line. Every finished step reports its tokens and cost;
+ * cached reads count as input and thinking as output. An "error" event carries the provider's message.
+ * Output without events (an OpenCode too old for --format) is taken as the answer itself.
+ */
+export function parseOpenCode(stdout: string): { text: string; inputTokens: number; outputTokens: number; costUsd?: number; error?: string } {
+  const events = lines(stdout).filter((e) => e && typeof e.type === 'string');
+  if (!events.length) return { text: stdout.trim(), inputTokens: 0, outputTokens: 0 };
+  const texts: string[] = [];
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cost = 0;
+  let error: string | undefined;
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  for (const e of events) {
+    if (e.type === 'text' && typeof e.part?.text === 'string' && e.part.text.trim()) texts.push(e.part.text.trim());
+    if (e.type === 'step_finish') {
+      const k = e.part?.tokens ?? {};
+      inputTokens += n(k.input) + n(k.cache?.read) + n(k.cache?.write);
+      outputTokens += n(k.output) + n(k.reasoning);
+      cost += n(e.part?.cost);
+    }
+    if (e.type === 'error') error = String(e.error?.data?.message ?? e.error?.message ?? e.error?.name ?? 'error');
+  }
+  return { text: texts.join('\n\n'), inputTokens, outputTokens, ...(cost ? { costUsd: cost } : {}), ...(error ? { error } : {}) };
+}
 
 /** The JSON answer: Qwen Code prints one list of messages, ending in the "result"; others print objects. */
 function answerJson(stdout: string): any {
@@ -348,11 +376,77 @@ export function classifyCliError(text: string): ErrorKind {
 
 const MAX_OUTPUT = 20 * 1024 * 1024;
 
-export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverResult> {
+/** Whether a task on this account runs as an agent in a folder (an agent CLI, or OpenCode for an API account's code task). */
+export function runsAsAgent(account: Account, edit: boolean): boolean {
+  return account.driver === 'cli' || (edit && account.driver === 'openai');
+}
+
+/** OpenCode is installed, so API accounts can do code tasks. */
+export function apiAgentInstalled(): boolean {
+  return resolveCommand('opencode') !== undefined;
+}
+
+/**
+ * Which adapter OpenCode uses for an account. Most providers speak the OpenAI format, but Gemini's
+ * OpenAI-compatible endpoint loses the "thought signatures" that Gemini 3 needs between tool calls, so a
+ * Gemini account goes through Google's own adapter, at the same API without "/openai" and without "models/".
+ */
+export function agentProvider(baseUrl: string, model: string): { npm: string; baseURL: string; model: string } {
+  let host = '';
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    // not a URL; the OpenAI format is tried and the provider's error says the rest
+  }
+  if (host === 'generativelanguage.googleapis.com') {
+    return { npm: '@ai-sdk/google', baseURL: baseUrl.replace(/\/openai\/?$/, ''), model: model.replace(/^models\//, '') };
+  }
+  return { npm: '@ai-sdk/openai-compatible', baseURL: baseUrl, model };
+}
+
+/**
+ * A code task on an API account: OpenCode does the agent's work (reading, editing, running commands) and
+ * omnitrix gives it a config that names one provider, this account's endpoint and the chosen model, so nothing
+ * else is loaded and titles and summaries go to the same model. The key travels in its own variable, never in
+ * the config, and OpenCode gets a home folder of its own, so the user's own OpenCode setup and MCP servers stay out.
+ */
+export async function runApiAgent(req: DriverRequest): Promise<DriverResult> {
+  const { account, model } = req;
+  if (account.driver !== 'openai' || !account.baseUrl) throw new DriverError(`account ${account.id} cannot run code tasks through OpenCode`, 'bad_request');
+  if (!model || !SAFE_ARG.test(model)) throw new DriverError(`unsafe model name: ${model}`, 'bad_request');
+  const key = resolveKey(account);
+  const sdk = agentProvider(account.baseUrl, model);
+  const id = `omnitrix/${sdk.model}`;
+  const config = {
+    $schema: 'https://opencode.ai/config.json',
+    provider: {
+      omnitrix: {
+        npm: sdk.npm,
+        name: `omnitrix: ${account.id}`,
+        options: { baseURL: sdk.baseURL, apiKey: '{env:OMNITRIX_WORKER_KEY}' },
+        models: { [sdk.model]: { name: sdk.model } },
+      },
+    },
+    model: id,
+    small_model: id,
+    enabled_providers: ['omnitrix'],
+    share: 'disabled',
+    autoupdate: false,
+  };
+  const home = path.join(files.profiles(), '.api-agent');
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  const tool = CLI_TOOLS.opencode!;
+  return runCli({ ...req, model: id }, true, {
+    tool,
+    env: { ...profileEnv(tool, home), OPENCODE_CONFIG_CONTENT: JSON.stringify(config), OMNITRIX_WORKER_KEY: key ?? 'none' },
+  });
+}
+
+export async function runCli(req: DriverRequest, edit: boolean, via?: { tool: CliTool; env: Record<string, string> }): Promise<DriverResult> {
   const { account } = req;
   // an abort listener added now would never fire for a job that was already cancelled
   if (req.signal?.aborted) throw new DriverError('cancelled', 'cancelled');
-  const tool = CLI_TOOLS[providerTool(account.provider)];
+  const tool = via?.tool ?? CLI_TOOLS[providerTool(account.provider)];
   if (!tool) throw new DriverError(`unknown CLI tool for provider ${account.provider}`, 'bad_request');
   if (req.model && !SAFE_ARG.test(req.model)) throw new DriverError(`unsafe model name: ${req.model}`, 'bad_request');
 
@@ -369,7 +463,9 @@ export async function runCli(req: DriverRequest, edit: boolean): Promise<DriverR
   }
 
   // never let the parent's keys leak into a worker, which may run whatever a prompt asks
-  const env = childEnv(process.env, { ...(account.profileDir ? profileEnv(tool, account.profileDir) : {}), ...(tool.env?.(account) ?? {}), ...start.env });
+  const env = childEnv(process.env, via ? { ...via.env, ...start.env } : { ...(account.profileDir ? profileEnv(tool, account.profileDir) : {}), ...(tool.env?.(account) ?? {}), ...start.env });
+  // some tools (OpenCode among them) take their folder from PWD, which still names the parent's folder
+  env.PWD = cwd;
 
   const fullPrompt = req.system ? `${req.system}\n\n${req.prompt}` : req.prompt;
 

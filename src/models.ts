@@ -90,7 +90,7 @@ export function guessSkills(modelId: string): Skills {
 
 export function makeModel(id: string, extra: Partial<ModelInfo> = {}, opts: RateOptions = {}): ModelInfo {
   const { skills, basis } = rateModel(id, opts);
-  return { id, skills, basis, ...(opts.capabilities ? { visionChecked: true } : {}), ...extra };
+  return { id, skills, basis, ...(opts.capabilities ? { visionChecked: true, tools: opts.capabilities.includes('tools') } : {}), ...extra };
 }
 
 /** Where a saved model's scores come from; models saved before 0.1.19 carry no label. */
