@@ -127,8 +127,12 @@ export interface Settings {
   routes?: Record<string, RouteDef>;
   /** "off" keeps code tasks away from API accounts; otherwise they run through OpenCode when it is installed */
   apiCodeAgent?: 'opencode' | 'off';
-  /** whether the first dispatch of a Claude session opens the dashboard; on unless set to off */
-  openDashboard?: 'on' | 'off';
+  /**
+   * whether the first dispatch of a Claude session shows the dashboard; on unless set to off. "on" uses
+   * Claude's browser pane inside the Claude desktop app and the default browser elsewhere; "browser" always
+   * uses the default browser.
+   */
+  openDashboard?: 'on' | 'off' | 'browser';
   /** whether omnitrix picks the reasoning effort of a Codex task from its type when nobody chose one; on unless set to off */
   autoEffort?: 'on' | 'off';
   /** "all" keeps every Codex tool, such as browser and computer use; otherwise those a worker never needs are left out */

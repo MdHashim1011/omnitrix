@@ -3,7 +3,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { inCardOrder, loadCardOrder, recentJobs, startDashboard } from '../src/dashboard.js';
-import { dashboardOnce } from '../src/mcp.js';
+import { dashboardOnce, showDashboard } from '../src/mcp.js';
 import { codexModels } from '../src/drivers/cli.js';
 import { codexModelInfo, upgradeCodexModels } from '../src/drivers/index.js';
 import { Engine } from '../src/engine.js';
@@ -90,6 +90,53 @@ describe('opening the dashboard at the first task', () => {
     writeConfig([account({ id: 'a' })], { openDashboard: 'off' });
     dashboardOnce(engine, show)();
     expect(opened).toBe(1);
+  });
+
+  // From the owner: inside the Claude desktop app the dashboard kept opening in Chrome, not in Claude's browser pane
+  it("leaves the dashboard to Claude's browser pane inside the Claude app", async () => {
+    writeConfig([account({ id: 'a' })]);
+    const engine = new Engine();
+    const calls: unknown[] = [];
+    const launch = async (opts?: unknown) => {
+      calls.push(opts);
+      return { url: '', started: false, opened: false };
+    };
+    const page = (viewers: number) => async () => ({ version: '1', pid: 1, viewers });
+    const app = { CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' };
+
+    const note = await showDashboard(engine, app, launch, page(0));
+    expect(calls).toEqual([{ open: false }]);
+    expect(note).toMatch(/http:\/\/127\.0\.0\.1:4590.*browser pane/);
+    // a page that already shows it needs no second one
+    expect(await showDashboard(engine, app, launch, page(1))).toBeUndefined();
+    expect(calls).toEqual([{ open: false }, { open: false }]);
+    // with nothing running yet it still asks, and omnitrix starts the dashboard
+    expect(await showDashboard(engine, app, launch, async () => undefined)).toMatch(/browser pane/);
+
+    // Claude Code in a terminal has no pane, and the owner can ask for the default browser everywhere
+    calls.length = 0;
+    expect(await showDashboard(engine, { CLAUDE_CODE_ENTRYPOINT: 'cli' }, launch, page(0))).toBeUndefined();
+    writeConfig([account({ id: 'a' })], { openDashboard: 'browser' });
+    expect(await showDashboard(engine, app, launch, page(0))).toBeUndefined();
+    expect(calls).toEqual([undefined, undefined]);
+  });
+
+  it('adds the request to open the dashboard to the first dispatch only', async () => {
+    writeConfig([account({ id: 'a' })]);
+    const engine = new Engine();
+    const saved = process.env.OMNITRIX_NO_BROWSER;
+    const savedCi = process.env.CI;
+    delete process.env.OMNITRIX_NO_BROWSER;
+    delete process.env.CI;
+    cleanups.push(() => {
+      process.env.OMNITRIX_NO_BROWSER = saved;
+      if (savedCi !== undefined) process.env.CI = savedCi;
+    });
+    const once = dashboardOnce(engine, async () => 'open it');
+    expect(await once()).toBe('open it');
+    expect(await once()).toBeUndefined();
+    // a failed start costs the dispatch nothing
+    expect(await dashboardOnce(engine, async () => Promise.reject(new Error('port taken')))()).toBeUndefined();
   });
 });
 

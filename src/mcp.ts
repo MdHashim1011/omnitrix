@@ -13,7 +13,7 @@ import { formatTokens, roughSpan, type WindowUse } from './usage.js';
 import { testSeconds, verifySummary } from './verify.js';
 import { describeDelegated } from './value.js';
 import { VERSION } from './version.js';
-import { ensureDashboard, ping, runningDashboard, refreshDashboards } from './dashboard-launch.js';
+import { DEFAULT_PORT, ensureDashboard, ping, runningDashboard, refreshDashboards } from './dashboard-launch.js';
 import { installedVersion, updateNote } from './installed.js';
 import { JOB_ID } from './store.js';
 import { describeLead, leadOut, loadLeadQuota } from './lead.js';
@@ -282,7 +282,8 @@ export function jobView(j: Job, full: boolean, engine: Engine) {
 
 export interface ServerHooks {
   /** called after each successful dispatch; startMcp uses it to show the dashboard once */
-  onDispatch?: () => void;
+  /** runs at each dispatch; a line it returns is added to the answer */
+  onDispatch?: () => Promise<string | undefined>;
 }
 
 export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer {
@@ -379,10 +380,10 @@ export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer 
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
-      hooks.onDispatch?.();
+      const note = await hooks.onDispatch?.();
       const lines = jobs.map((j) => `${j.id}  ${j.task.title}  -> ${j.status === 'failed' ? `FAILED: ${j.error}` : j.accountId ? `${j.accountId}/${j.model}` : 'queued'}`);
       const brief = jobs.map((j) => ({ job_id: j.id, title: j.task.title, status: j.status, account: j.accountId, model: j.model, error: j.status === 'failed' ? j.error : undefined }));
-      return text(lines.join('\n') + '\n\nCall get_results with these job ids.', { job_ids: jobs.map((j) => j.id), jobs: brief });
+      return text(lines.join('\n') + '\n\nCall get_results with these job ids.' + (note ? `\n\n${note}` : ''), { job_ids: jobs.map((j) => j.id), jobs: brief });
     },
   );
 
@@ -493,10 +494,6 @@ export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer 
 }
 
 /**
- * The first dispatch of a session opens the dashboard, unless the user turned this off or nobody is there to
- * look (a test run or a CI machine). ensureDashboard itself opens no tab when a page already shows it.
- */
-/**
  * The dashboard line of pool_status. omnitrix opens the dashboard in the default browser itself, so a client
  * with a browser of its own, such as Claude's browser pane, opens it only when no page shows it yet.
  */
@@ -507,18 +504,48 @@ export function dashboardLine(url: string | null, pages: number): string | undef
     : `live dashboard: ${url} (no page shows it; if you have a browser, you can open it for the user)`;
 }
 
-export function dashboardOnce(engine: Engine, show: () => Promise<void>): () => void {
+const failed = (err: unknown) => process.stderr.write(`omnitrix: could not open the dashboard: ${err instanceof Error ? err.message : err}\n`);
+
+/**
+ * The first dispatch of a session shows the dashboard, unless the user turned this off or nobody is there to
+ * look (a test run or a CI machine). Whatever `show` returns is added to that dispatch's answer.
+ */
+export function dashboardOnce(engine: Engine, show: () => Promise<string | undefined>): () => Promise<string | undefined> {
   let shown = false;
-  return () => {
-    if (shown || engine.config().settings.openDashboard === 'off' || process.env.OMNITRIX_NO_BROWSER === '1' || process.env.CI) return;
+  return async () => {
+    if (shown || engine.config().settings.openDashboard === 'off' || process.env.OMNITRIX_NO_BROWSER === '1' || process.env.CI) return undefined;
     shown = true;
-    show().catch((err) => process.stderr.write(`omnitrix: could not open the dashboard: ${err instanceof Error ? err.message : err}\n`));
+    return show().catch((err) => {
+      failed(err);
+      return undefined;
+    });
   };
+}
+
+/**
+ * Inside the Claude desktop app the dashboard belongs in Claude's own browser pane, not in the default
+ * browser: omnitrix starts it without opening a tab and asks Claude to open it. Elsewhere, or with
+ * "--open-dashboard browser", it opens in the default browser. A dispatch never waits for the dashboard.
+ */
+export async function showDashboard(
+  engine: Engine,
+  env: NodeJS.ProcessEnv = process.env,
+  launch: typeof ensureDashboard = ensureDashboard,
+  probe: typeof ping = ping,
+): Promise<string | undefined> {
+  if (env.CLAUDE_CODE_ENTRYPOINT !== 'claude-desktop' || engine.config().settings.openDashboard === 'browser') {
+    void launch().catch(failed);
+    return undefined;
+  }
+  const live = await probe(DEFAULT_PORT);
+  void launch({ open: false }).catch(failed);
+  if (live && live.viewers > 0) return undefined;
+  return `The live dashboard is at http://127.0.0.1:${DEFAULT_PORT}. Open it now in your browser pane for the user, so they can watch these jobs; omnitrix did not open their default browser, because you run inside the Claude app. If the page does not load at once, try again a second later.`;
 }
 
 export function startMcp(): void {
   const engine = new Engine();
-  const onDispatch = dashboardOnce(engine, () => ensureDashboard().then(() => undefined));
+  const onDispatch = dashboardOnce(engine, () => showDashboard(engine));
   serveStdio(() => buildServer(engine, { onDispatch }), { onerror: (err) => process.stderr.write(`omnitrix: ${err.message}\n`) });
   // an update leaves the old background dashboard running; Claude Code restarting omnitrix is the moment to replace it
   void refreshDashboards();

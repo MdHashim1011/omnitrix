@@ -618,7 +618,7 @@ program
   .option('--timeout <seconds>', 'job timeout', int)
   .option('--preview-chars <n>', 'how much of each result Claude sees', int)
   .addOption(new Option('--api-code-agent <opencode|off>', 'let API accounts do code tasks through OpenCode when it is installed, or not').choices(['opencode', 'off']))
-  .addOption(new Option('--open-dashboard <on|off>', 'open the dashboard in your browser at the first task of each Claude session, unless a page already shows it').choices(['on', 'off']))
+  .addOption(new Option('--open-dashboard <on|off|browser>', 'show the dashboard at the first task of each Claude session, unless a page already shows it: in the browser pane of the Claude app when Claude runs there, else in your browser; "browser" always uses your browser').choices(['on', 'off', 'browser']))
   .addOption(new Option('--auto-effort <on|off>', 'let omnitrix pick the reasoning effort of Codex tasks from their kind when neither Claude nor the account sets one; off leaves it to Codex').choices(['on', 'off']))
   .addOption(new Option('--codex-tools <lean|all>', 'leave out the Codex tools a worker never needs, such as browser and computer use, which saves about 11,000 input tokens per request; all keeps them').choices(['lean', 'all']))
   .action((o) => {
