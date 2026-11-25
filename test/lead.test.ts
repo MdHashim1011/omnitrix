@@ -110,6 +110,8 @@ describe('describing the lead quota for Claude', () => {
   it('asks Claude to delegate more once 70% of the 5-hour window is used', () => {
     saveLeadQuota(readLeadInput(JSON.parse(input(70, 20))), NOW);
     expect(describeLead(loadLeadQuota(NOW), NOW)).toMatch(/delegate more/);
+    // Claude's own subagents draw on the same limit, which is how a busy session used it up
+    expect(describeLead(loadLeadQuota(NOW), NOW)).toMatch(/start no more Claude subagents/);
     saveLeadQuota(readLeadInput(JSON.parse(input(20, 85))), NOW + 120_000);
     expect(describeLead(loadLeadQuota(NOW + 120_000), NOW + 120_000)).toMatch(/delegate more/);
   });

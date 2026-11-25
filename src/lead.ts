@@ -107,7 +107,7 @@ export function describeLead(q: LeadQuota | undefined, now = Date.now()): string
   let line = `Claude (you, the lead): ${parts.join(', ')}`;
   if (q.stale) line += q.seenAt > now ? '; the time of this reading is in the future, so it may be wrong' : `; seen ${Math.round((now - q.seenAt) / 60_000)} min ago`;
   if (q.windows.some((w) => w.usedPercent >= HIGH)) {
-    line += q.stale ? '; your own limit was running low when last seen, so delegate more unless you know it has reset' : '; your own limit is running low, so delegate more and keep your own reading short';
+    line += q.stale ? '; your own limit was running low when last seen, so delegate more unless you know it has reset' : '; your own limit is running low, so delegate more, keep your own reading short and start no more Claude subagents: dispatch their work to the pool instead';
   }
   return line;
 }

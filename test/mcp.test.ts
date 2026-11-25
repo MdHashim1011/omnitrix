@@ -59,6 +59,8 @@ describe('MCP server (real stdio process)', () => {
   it('lists the tools and gives instructions', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(['cancel_job', 'dispatch', 'get_results', 'list_jobs', 'pool_status', 'rate_result', 'read_output', 'route_preview']);
+    // subagents run on Claude's own limit; the pool's workers do not
+    expect(client.getInstructions()).toMatch(/Claude subagents use your own Claude limit.*dispatch/s);
   });
 
   it('shows the pool, runs a task and learns from the verdict', async () => {
