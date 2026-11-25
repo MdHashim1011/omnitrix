@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { recentJobs, startDashboard } from '../src/dashboard.js';
+import { inCardOrder, loadCardOrder, recentJobs, startDashboard } from '../src/dashboard.js';
 import { dashboardOnce } from '../src/mcp.js';
 import { codexModels } from '../src/drivers/cli.js';
 import { codexModelInfo, upgradeCodexModels } from '../src/drivers/index.js';
@@ -178,5 +178,40 @@ describe('removing jobs from the dashboard', () => {
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ hidden: 1 });
     expect(new Engine().getJob('jaaaaaaaaaab1')!.hidden).toBe(true);
+  });
+
+  it('keeps the order the owner dragged the account cards into, for every page', async () => {
+    writeConfig([account({ id: 'groq' }), account({ id: 'ollama' }), account({ id: 'chatgpt' })]);
+    const port = await freePort();
+    const d = startDashboard(port);
+    cleanups.push(() => d.close());
+    await new Promise((r) => setTimeout(r, 100));
+    const url = `http://127.0.0.1:${port}`;
+    const ids = async () => ((await (await fetch(`${url}/api/status`)).json()) as { accounts: { id: string }[] }).accounts.map((a) => a.id);
+    expect(await ids()).toEqual(['groq', 'ollama', 'chatgpt']);
+    const token = /name="omnitrix-token" content="([0-9a-f]{32})"/.exec(await (await fetch(url)).text())![1]!;
+    const post = (headers: Record<string, string>, body: string) => fetch(`${url}/api/order`, { method: 'POST', headers, body });
+    const ok = { 'content-type': 'application/json', 'x-omnitrix-token': token };
+    // the same guard as removing jobs: another site cannot rearrange the page
+    expect((await post({ 'content-type': 'application/json' }, '{"order":["chatgpt"]}')).status).toBe(403);
+    expect((await post({ ...ok, 'sec-fetch-site': 'cross-site' }, '{"order":["chatgpt"]}')).status).toBe(403);
+    expect((await post(ok, '{"order":"chatgpt"}')).status).toBe(400);
+    expect((await post(ok, 'null')).status).toBe(400);
+    expect(await ids()).toEqual(['groq', 'ollama', 'chatgpt']);
+    // unknown and repeated ids are dropped; accounts it does not name keep their place after the named ones
+    const saved = await post(ok, '{"order":["chatgpt","nope","chatgpt","groq"]}');
+    expect(await saved.json()).toEqual({ order: ['chatgpt', 'groq'] });
+    expect(await ids()).toEqual(['chatgpt', 'groq', 'ollama']);
+    expect(loadCardOrder()).toEqual(['chatgpt', 'groq']);
+    // an account added later joins at the end, and the router's choice is untouched by the order
+    writeConfig([account({ id: 'groq' }), account({ id: 'ollama' }), account({ id: 'chatgpt' }), account({ id: 'mistral' })]);
+    expect(await ids()).toEqual(['chatgpt', 'groq', 'ollama', 'mistral']);
+    expect(loadConfig().accounts.map((a) => a.id)).toEqual(['groq', 'ollama', 'chatgpt', 'mistral']);
+  });
+
+  it('puts the accounts in the saved order and leaves the rest in their own order', () => {
+    const list = ['a', 'b', 'c', 'd'].map((id) => ({ id }));
+    expect(inCardOrder(list, ['c', 'a']).map((x) => x.id)).toEqual(['c', 'a', 'b', 'd']);
+    expect(inCardOrder(list, []).map((x) => x.id)).toEqual(['a', 'b', 'c', 'd']);
   });
 });

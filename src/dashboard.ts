@@ -6,8 +6,9 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { Engine } from './engine.js';
 import { refreshQuotas } from './quota.js';
-import { ensureHome, homeDir, writeJson } from './store.js';
+import { ensureHome, files, homeDir, readJson, writeJson } from './store.js';
 import type { Job } from './types.js';
+import type { PoolAccountView } from './engine.js';
 import { verifySummary } from './verify.js';
 import { ICON_SVG } from './icon.js';
 import { leadOut, loadLeadQuota } from './lead.js';
@@ -141,6 +142,29 @@ const MAX_VIEWERS = 16;
 // A page that stops reading is dropped before its unsent updates pile up.
 const MAX_BUFFERED = 1024 * 1024;
 
+/** The order the owner dragged the account cards into. It changes only the page, never which account gets work. */
+export function loadCardOrder(): string[] {
+  const saved = readJson<{ order?: unknown } | null>(files.dashboard(), null);
+  return Array.isArray(saved?.order) ? saved.order.filter((x): x is string => typeof x === 'string') : [];
+}
+
+/** Saves the ids it knows, each once, in the order given; returns what it saved. */
+export function saveCardOrder(order: unknown, known: string[]): string[] | undefined {
+  if (!Array.isArray(order) || order.length > 1000) return undefined;
+  const ids = [...new Set(order.filter((x): x is string => typeof x === 'string' && known.includes(x)))];
+  writeJson(files.dashboard(), { order: ids });
+  return ids;
+}
+
+/** The accounts in the saved order; those not in it, such as one added since, follow in the order of the config. */
+export function inCardOrder<T extends Pick<PoolAccountView, 'id'>>(accounts: T[], order: string[]): T[] {
+  const rank = (id: string) => {
+    const i = order.indexOf(id);
+    return i < 0 ? order.length : i;
+  };
+  return accounts.map((a, i) => ({ a, i })).sort((x, y) => rank(x.a.id) - rank(y.a.id) || x.i - y.i).map((x) => x.a);
+}
+
 export function startDashboard(port: number): { url: string; server: http.Server; close: () => Promise<void> } {
   const engine = new Engine();
   const viewers = new Set<http.ServerResponse>();
@@ -157,7 +181,11 @@ export function startDashboard(port: number): { url: string; server: http.Server
   const behindOf = behindReader(engine);
   const sinceOf = sinceCheckReader(engine);
   const overheadOf = overheadReader();
-  const snapshot = (): string => JSON.stringify({ version: VERSION, installed: installedVersion(), accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf, sinceOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
+  const state = () => {
+    const order = loadCardOrder();
+    return { version: VERSION, installed: installedVersion(), order, accounts: inCardOrder(engine.pool(), order) };
+  };
+  const snapshot = (): string => JSON.stringify({ ...state(), jobs: recentJobs(engine, 30, behindOf, sinceOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
   // Quota reads and local server probes run in the background and are throttled; the page never waits for them.
   const slowChecks = () => {
     if (Date.now() - slowAt < SLOW_MS) return;
@@ -237,16 +265,18 @@ export function startDashboard(port: number): { url: string; server: http.Server
     if (req.url === '/api/status') {
       polledAt = Date.now();
       slowChecks();
-      json(res, { version: VERSION, installed: installedVersion(), now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf, sinceOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
+      json(res, { ...state(), now: Date.now(), jobs: recentJobs(engine, 30, behindOf, sinceOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
       return;
     }
-    // The one action the page can take: removing finished jobs from its list. Only the page this server
-    // sent knows the token, and a browser sends a custom header to another site only after asking it.
-    if (req.url === '/api/hide') {
+    // The page's two actions: removing finished jobs from its list, and keeping the order the owner dragged the
+    // account cards into. Only the page this server sent knows the token, and a browser sends a custom header
+    // to another site only after asking it.
+    if (req.url === '/api/hide' || req.url === '/api/order') {
       if (req.method !== 'POST' || req.headers['x-omnitrix-token'] !== token || !String(req.headers['content-type']).startsWith('application/json')) {
         res.writeHead(403).end('forbidden');
         return;
       }
+      const url = req.url;
       let body = '';
       req.setEncoding('utf8');
       req.on('data', (chunk: string) => {
@@ -254,18 +284,31 @@ export function startDashboard(port: number): { url: string; server: http.Server
         if (body.length > 16_384) req.destroy();
       });
       req.on('end', () => {
-        let ask: { ids?: unknown; failed?: unknown };
+        let ask: { ids?: unknown; failed?: unknown; order?: unknown } | null;
         try {
           ask = JSON.parse(body);
         } catch {
+          ask = null;
+        }
+        if (!ask || typeof ask !== 'object') {
           res.writeHead(400).end('bad request');
           return;
         }
-        const ids = Array.isArray(ask.ids) ? ask.ids.filter((x): x is string => typeof x === 'string').slice(0, 100) : undefined;
-        const hidden = engine.hideJobs(ask.failed === true ? { failed: true } : { ids });
+        let answer: unknown;
+        if (url === '/api/order') {
+          const order = saveCardOrder(ask.order, engine.config().accounts.map((a) => a.id));
+          if (!order) {
+            res.writeHead(400).end('bad request');
+            return;
+          }
+          answer = { order };
+        } else {
+          const ids = Array.isArray(ask.ids) ? ask.ids.filter((x): x is string => typeof x === 'string').slice(0, 100) : undefined;
+          answer = { hidden: engine.hideJobs(ask.failed === true ? { failed: true } : { ids }) };
+        }
         latest = '';
         look();
-        json(res, { hidden });
+        json(res, answer);
       });
       return;
     }
@@ -384,7 +427,14 @@ h2{font-size:15px;font-weight:600;margin:0 0 12px;letter-spacing:-.005em;display
 h2 small{font-size:13px;font-weight:400;color:var(--ink-3)}
 .kpi em{display:block;font-style:normal;font-size:13px;color:var(--warn);margin-top:2px}.kpi small{display:block;font-size:13px;color:var(--ink-2);margin-top:2px}
 .ver{font-size:13px;color:var(--ink-3)}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:14px;margin-bottom:32px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:14px;margin-bottom:32px;position:relative}
+.grip{flex:none;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;margin:-6px -4px -6px -10px;padding:0;border:0;border-radius:8px;background:none;color:var(--ink-3);cursor:grab;touch-action:none}
+.grip:hover{background:var(--tile);color:var(--ink)}
+.card.dragging{position:relative;z-index:4;cursor:grabbing;box-shadow:0 18px 40px rgba(0,0,0,.2),0 2px 6px rgba(0,0,0,.08);border-color:var(--line-strong)}
+.card.dragging .grip{cursor:grabbing;background:var(--tile);color:var(--ink)}
+body.sorting{overflow-x:clip}
+body.sorting,body.sorting *{cursor:grabbing!important;-webkit-user-select:none;user-select:none}
+#order-msg:empty{display:none}#order-msg{margin:0 0 12px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .title{display:flex;align-items:center;gap:10px;min-width:0}
@@ -454,10 +504,10 @@ footer{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);margin-top:28px
 </header>
 <main>
   <section class="kpis" id="kpis" aria-label="Summary for the last 24 hours"></section>
-  <section aria-labelledby="acc-h"><h2 id="acc-h">Accounts <small id="acc-sub"></small></h2><div class="grid" id="accounts"></div></section>
+  <section aria-labelledby="acc-h"><h2 id="acc-h">Accounts <small id="acc-sub"></small></h2><p id="order-msg" class="note warn" role="status"></p><div class="grid" id="accounts"></div></section>
   <section aria-labelledby="job-h"><div class="jobs-h"><h2 id="job-h">Recent jobs <small>newest first</small></h2><button type="button" class="hide" id="clear-failed" hidden>Remove failed jobs</button></div><p id="hide-msg" class="note" role="status"></p><div id="jobs"></div></section>
 </main>
-<footer>This page only shows status. Change accounts and settings with the omnitrix command.</footer>
+<footer>This page shows status and keeps the order you give the accounts; that order does not change which account omnitrix picks. Change accounts and settings with the omnitrix command.</footer>
 </div>
 <script>
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
@@ -487,7 +537,8 @@ function windowHtml(w){
   return '<div class="win"><div class="row"><span>'+label+'</span><b class="'+cls+'">'+amount+'</b></div>'
     +'<div class="bar" role="progressbar" aria-label="'+label+' remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(left)+'" aria-valuetext="'+esc(amount)+'"><i class="'+cls+'" style="width:'+left.toFixed(1)+'%"></i></div>'+reset+'</div>';
 }
-function cardHtml(a,open){
+var GRIP='<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="3.5" r="1.4"/><circle cx="10.5" cy="3.5" r="1.4"/><circle cx="5.5" cy="8" r="1.4"/><circle cx="10.5" cy="8" r="1.4"/><circle cx="5.5" cy="12.5" r="1.4"/><circle cx="10.5" cy="12.5" r="1.4"/></svg>';
+function cardHtml(a,open,movable){
   var u=a.usage, st=STATES[a.state]||['Unknown','s-idle'];
   var ico=a.local?'chip':a.driver==='cli'?'terminal':'cloud';
   var facts=[a.owner?'Owned by '+esc(a.owner):'',esc(a.id),u.plan?esc(u.plan)+' plan':'',a.local?'Runs on this PC':'',a.trainsOnData?'Public tasks only':'',a.running?a.running+' job'+(a.running>1?'s':'')+' running':''];
@@ -513,8 +564,9 @@ function cardHtml(a,open){
     :'<div class="note">No limit is known for this account, so omnitrix cannot show what is left. To track one, run <code>omnitrix set '+esc(a.id)+' --rpd 1000</code> with your real daily limit.</div>';
   var models=a.models||[], shown=models.slice(0,40);
   var modelHtml=models.length?'<details data-key="m-'+esc(a.id)+'"'+(open['m-'+a.id]?' open':'')+'><summary>'+models.length+' model'+(models.length>1?'s':'')+'</summary><ul class="models">'+shown.map(function(m){return '<li>'+esc(m)+'</li>'}).join('')+(models.length>shown.length?'<li>and '+(models.length-shown.length)+' more</li>':'')+'</ul></details>':'';
-  return '<article class="card" aria-label="'+esc(a.label)+'">'
-    +'<div class="head"><div class="title">'+icon(ico)+'<div><h3>'+esc(a.label)+'</h3><div class="sub">'+sub+'</div></div></div><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span></div>'
+  var grip=movable?'<button type="button" class="grip" data-move="'+esc(a.id)+'" aria-label="Move '+esc(a.label)+'. Drag it, or use the arrow keys." title="Drag to move">'+GRIP+'</button>':'';
+  return '<article class="card" data-id="'+esc(a.id)+'" aria-label="'+esc(a.label)+'">'
+    +'<div class="head"><div class="title">'+grip+icon(ico)+'<div><h3>'+esc(a.label)+'</h3><div class="sub">'+sub+'</div></div></div><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span></div>'
     +(quota?'<div>'+quota+'</div>':'')+notes
     +'<div class="stats"><span title="Every request to this account in the last 24 hours: jobs, failed attempts, second-model checks and omnitrix test, including jobs no longer in the list below">Last 24 h, all requests</span><span><b>'+u.requestsToday+'</b> answered</span>'+(u.failedToday?'<span class="warn"><b>'+u.failedToday+'</b> failed</span>':'')+'<span><b>'+fmt(u.tokensToday)+'</b> tokens</span>'+(u.costToday?'<span><b>'+money(u.costToday)+'</b></span>':'')
     +(u.windows.length?'<span class="prov">'+esc(SOURCES[u.source]||u.source)+(u.updatedAt&&!u.stale?', updated '+esc(ago(u.updatedAt)):'')+'</span>':'')+'</div>'
@@ -574,6 +626,7 @@ function checkHtml(c){
   return '<div class="vf'+(c.status==='fail'||c.status==='unclear'?' warn':'')+'">'+text+'</div>';
 }
 var last=0, wasStale=null, lastRaw='', drawnMinute=-1, started=Date.now(), connected=false, savedAt=0, down=false;
+var localOrder=null, localUntil=0, saving=false, wanted=null, sorting=null, held=null, heldLive=false, heldTimer=0, settleUntil=0, drawnCards='';
 function tick(){
   var el=document.getElementById('fresh'), t=document.getElementById('fresh-text');
   // a stream that dropped counts as lost at once; a quiet one only after it missed its signs of life
@@ -602,9 +655,20 @@ function draw(d){
       +(o?'<small title="Output tokens of Claude&#39;s replies that called omnitrix, and an estimate of the omnitrix results it read, over the same 7 days. Claude&#39;s plan limit also counts all its other work, so it is much higher">Claude, omnitrix calls only: '+esc(fmt(o.outputTokens))+' written, '+esc(fmt(o.resultTokens))+' read</small>':'')
       +'</div>'})(d.delegated,d.overhead)
     +'<div class="kpi"><span>Known cost, last 24 h</span><b>'+esc(money(sum('costToday')))+'</b></div>';
-  document.getElementById('acc-sub').textContent=acc.length?acc.length+' connected':'';
-  document.getElementById('accounts').innerHTML=leadHtml(d.lead)+(acc.length?acc.map(function(a){return cardHtml(a,open)}).join('')
+  document.getElementById('acc-sub').textContent=acc.length?acc.length+' connected'+(acc.length>1?'. Drag a card by its handle to arrange them.':''):'';
+  // The order just given here, until the server confirms it, so a live update in between does not undo it.
+  // Shortly after the save the server's order wins in any case, for example when another page changed it since.
+  if(localOrder&&!saving&&(JSON.stringify(d.order||[])===JSON.stringify(localOrder)||Date.now()>localUntil))localOrder=null;
+  var cards=localOrder?byOrder(acc,localOrder):acc;
+  var activeGrip=document.activeElement&&document.activeElement.closest?document.activeElement.closest('.grip'):null;
+  var gripId=activeGrip?activeGrip.getAttribute('data-move'):null;
+  var cardsHtml=leadHtml(d.lead)+(acc.length?cards.map(function(a){return cardHtml(a,open,acc.length>1)}).join('')
     :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix init --apply</code> connects the AI tools, API keys and local models it finds on this PC</li><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>');
+  // rebuilt only when something on the cards changed, so a card the owner just moved is not redrawn mid-motion
+  if(cardsHtml!==drawnCards){
+    document.getElementById('accounts').innerHTML=cardsHtml;drawnCards=cardsHtml;
+    if(gripId){var gs=document.querySelectorAll('.grip');for(var k=0;k<gs.length;k++)if(gs[k].getAttribute('data-move')===gripId)gs[k].focus({preventScroll:true})}
+  }
   document.getElementById('jobs').innerHTML=d.jobs.length?'<ul class="jobs">'+d.jobs.map(function(j){return jobHtml(j,open)}).join('')+'</ul>'
     :'<div class="empty"><h3>No jobs yet</h3>Ask Claude to hand out a task, and it shows up here.</div>';
   document.getElementById('clear-failed').hidden=!d.jobs.some(function(j){return j.status==='failed'||j.status==='cancelled'});
@@ -615,6 +679,11 @@ function draw(d){
 function show(raw,live){
   var minute=Math.floor(Date.now()/60000);
   if(live){last=Date.now();connected=true}
+  // While a card is being moved, or is still sliding into place, the newest state waits and is drawn after.
+  // This comes first, so a state that returns to the one on screen also replaces an older one that waits.
+  if(sorting||Date.now()<settleUntil){held=raw;heldLive=heldLive||live;tick();if(!sorting)release();return}
+  // drawn now, so a state held back earlier is older and must not be drawn over this one later
+  held=null;heldLive=false;clearTimeout(heldTimer);
   if(raw===lastRaw&&minute===drawnMinute){tick();return}
   var d;try{d=JSON.parse(raw)}catch(e){return}
   lastRaw=raw;drawnMinute=minute;
@@ -657,6 +726,159 @@ async function hide(body){
 }
 document.getElementById('jobs').addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-hide]');if(b){b.disabled=true;hide({ids:[b.getAttribute('data-hide')]})}});
 document.getElementById('clear-failed').addEventListener('click',function(){hide({failed:true})});
+// Arranging the account cards: drag one by its handle with a mouse, pen or finger, or give its handle focus and
+// use the arrow keys, Home and End. omnitrix keeps the order, so every browser shows it; routing ignores it.
+var grid=document.getElementById('accounts');
+function reduced(){return !!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)}
+function cardEls(){return Array.prototype.slice.call(grid.querySelectorAll('.card[data-id]'))}
+function idsNow(){return cardEls().map(function(c){return c.getAttribute('data-id')})}
+function nameOf(c){return c.getAttribute('aria-label')||c.getAttribute('data-id')}
+function say(t){document.getElementById('announce').textContent=t}
+function byOrder(list,order){
+  var rank=function(id){var i=order.indexOf(id);return i<0?order.length:i};
+  return list.map(function(a,i){return [a,i]}).sort(function(x,y){return rank(x[0].id)-rank(y[0].id)||x[1]-y[1]}).map(function(x){return x[0]});
+}
+// where a card sits in the grid, without the movement it is showing, in window coordinates
+function slot(c){var g=grid.getBoundingClientRect();return {left:g.left+c.offsetLeft,top:g.top+c.offsetTop,w:c.offsetWidth,h:c.offsetHeight}}
+// makes a change to the order, then slides every card from where it was to where it is now
+function flip(change,skip){
+  var cards=cardEls(), before=cards.map(function(c){var r=c.getBoundingClientRect();return [r.left,r.top]});
+  // a slide still running from the last move ends here, so the next one starts from where the card is seen
+  cards.forEach(function(c){if(c!==skip&&c.getAnimations)c.getAnimations().forEach(function(a){a.cancel()})});
+  change();
+  if(reduced())return;
+  cards.forEach(function(c,i){
+    if(c===skip||!c.animate)return;
+    var r=c.getBoundingClientRect(), dx=before[i][0]-r.left, dy=before[i][1]-r.top;
+    if(Math.abs(dx)+Math.abs(dy)>0.5)c.animate([{transform:'translate('+dx+'px,'+dy+'px)'},{transform:'none'}],{duration:220,easing:'cubic-bezier(.2,.8,.2,1)'});
+  });
+}
+function release(){
+  clearTimeout(heldTimer);
+  heldTimer=setTimeout(function(){
+    if(sorting)return;
+    if(Date.now()<settleUntil){release();return}
+    var h=held, live=heldLive;held=null;heldLive=false;
+    if(h){lastRaw='';show(h,live)}
+  },Math.max(20,settleUntil-Date.now()+20));
+}
+function settle(){settleUntil=Date.now()+260}
+// Only the newest order is sent, one request at a time, so a quick run of moves cannot be saved out of order.
+function saveOrder(ids){localOrder=ids;wanted=ids;if(!saving)flush()}
+async function flush(){
+  var ids=wanted;wanted=null;
+  if(!ids){saving=false;return}
+  saving=true;
+  var msg=document.getElementById('order-msg');
+  try{
+    var r=await fetch('/api/order',{method:'POST',headers:{'content-type':'application/json','x-omnitrix-token':TOKEN},body:JSON.stringify({order:ids})});
+    if(r.status===403){undo('omnitrix restarted since this page loaded. Reload the page, then arrange the accounts again.');return}
+    if(!r.ok)throw new Error(String(r.status));
+    msg.textContent='';localUntil=Date.now()+2000;
+  }catch(e){undo('Could not save the new order, because omnitrix did not answer. The accounts are back in their saved order.');return}
+  flush();
+}
+function undo(text){
+  // the cards on the page were moved by hand, so they are drawn again even though the saved state is unchanged
+  saving=false;wanted=null;localOrder=null;settleUntil=0;drawnCards='';
+  document.getElementById('order-msg').textContent=text;say(text);
+  var raw=held||lastRaw;held=null;
+  if(raw){lastRaw='';show(raw,false)}
+}
+function moved(card){
+  var ids=idsNow(), n=ids.indexOf(card.getAttribute('data-id'));
+  say(nameOf(card)+', place '+(n+1)+' of '+ids.length+'.');
+  settle();saveOrder(ids);
+}
+grid.addEventListener('keydown',function(e){
+  var g=e.target.closest&&e.target.closest('.grip');
+  if(!g||sorting)return;
+  var card=g.closest('.card'), list=cardEls(), i=list.indexOf(card);
+  var to={ArrowUp:i-1,ArrowLeft:i-1,ArrowDown:i+1,ArrowRight:i+1,Home:0,End:list.length-1}[e.key];
+  if(to===undefined)return;
+  e.preventDefault();
+  to=Math.max(0,Math.min(list.length-1,to));
+  if(to===i){say(nameOf(card)+' is already '+(i===0?'first':'last')+'.');return}
+  flip(function(){var ref=list[to];grid.insertBefore(card,to>i?ref.nextSibling:ref)});
+  g.focus({preventScroll:true});
+  card.scrollIntoView({block:'nearest',behavior:reduced()?'auto':'smooth'});
+  moved(card);
+});
+grid.addEventListener('pointerdown',function(e){
+  var g=e.target.closest&&e.target.closest('.grip');
+  // the main button only: a finger, a pen tip or the left mouse button, not a pen's side button or a right click
+  if(!g||sorting||e.button!==0)return;
+  e.preventDefault();
+  g.focus({preventScroll:true});
+  var card=g.closest('.card'), r=card.getBoundingClientRect();
+  sorting={card:card,start:idsNow(),pid:e.pointerId,x0:e.clientX,y0:e.clientY,x:e.clientX,y:e.clientY,gx:e.clientX-r.left,gy:e.clientY-r.top,lifted:false,frame:0};
+});
+window.addEventListener('pointermove',function(e){
+  var s=sorting;
+  if(!s||e.pointerId!==s.pid)return;
+  // the main button was let go while another one stays down; the browser sends no pointerup until all are up
+  if(!(e.buttons&1)){drop(false);return}
+  s.x=e.clientX;s.y=e.clientY;
+  // a small slip of a click or tap does not pick the card up
+  if(!s.lifted){if(Math.abs(s.x-s.x0)+Math.abs(s.y-s.y0)<6)return;lift()}
+  e.preventDefault();
+  follow();
+},{passive:false});
+window.addEventListener('pointerup',function(e){if(sorting&&e.pointerId===sorting.pid)drop(false)});
+window.addEventListener('pointercancel',function(e){if(sorting&&e.pointerId===sorting.pid)drop(true)});
+window.addEventListener('keydown',function(e){if(sorting&&e.key==='Escape'){e.preventDefault();drop(true)}});
+window.addEventListener('blur',function(){if(sorting)drop(true)});
+// scrolling with the wheel moves the page under a still pointer, so the card and its place follow
+window.addEventListener('scroll',function(){if(sorting&&sorting.lifted)follow()},{passive:true});
+function lift(){
+  var s=sorting;s.lifted=true;
+  s.card.classList.add('dragging');document.body.classList.add('sorting');
+  say('Moving '+nameOf(s.card)+'. Let go to drop it, or press Escape to cancel.');
+  s.frame=requestAnimationFrame(edge);
+}
+function follow(){
+  var s=sorting, c=s.card, hit=null;
+  var under=function(p){return s.x>=p.left&&s.x<=p.left+p.w&&s.y>=p.top&&s.y<=p.top+p.h};
+  cardEls().forEach(function(o){if(o!==c&&under(slot(o)))hit=o});
+  if(hit){
+    var list=cardEls(), from=list.indexOf(c), to=list.indexOf(hit), was=c.nextSibling, ref=to>from?hit.nextSibling:hit;
+    // A move is kept only when it puts the card under the pointer. Rows of different heights could otherwise
+    // make two cards swap back and forth while the pointer stands still.
+    grid.insertBefore(c,ref);
+    var fits=under(slot(c));
+    grid.insertBefore(c,was);
+    if(fits)flip(function(){grid.insertBefore(c,ref)},c);
+  }
+  var p=slot(c);
+  c.style.transform='translate('+(s.x-s.gx-p.left)+'px,'+(s.y-s.gy-p.top)+'px)';
+}
+// near the top or bottom of the window the page scrolls, so a card can travel past what fits on the screen
+function edge(){
+  var s=sorting;if(!s||!s.lifted)return;
+  var top=Math.max(0,document.querySelector('header').getBoundingClientRect().bottom)+48, bottom=window.innerHeight-48;
+  var v=s.y<top?-(top-s.y)/3:s.y>bottom?(s.y-bottom)/3:0;
+  if(v){window.scrollBy(0,Math.max(-22,Math.min(22,v)));follow()}
+  s.frame=requestAnimationFrame(edge);
+}
+function drop(cancel){
+  var s=sorting;sorting=null;
+  if(!s)return;
+  if(s.lifted){
+    cancelAnimationFrame(s.frame);
+    var c=s.card, was=c.getBoundingClientRect();
+    document.body.classList.remove('sorting');
+    if(cancel)flip(function(){s.start.forEach(function(id){var el=cardEls().filter(function(x){return x.getAttribute('data-id')===id})[0];if(el)grid.appendChild(el)})},c);
+    c.style.transform='';c.classList.remove('dragging');
+    // moving a card in the page takes the focus off its handle; give it back, so the arrow keys work next
+    var grip=c.querySelector('.grip');if(grip)grip.focus({preventScroll:true});
+    var now=c.getBoundingClientRect(), dx=was.left-now.left, dy=was.top-now.top;
+    if(!reduced()&&c.animate&&Math.abs(dx)+Math.abs(dy)>0.5)c.animate([{transform:'translate('+dx+'px,'+dy+'px)'},{transform:'none'}],{duration:200,easing:'cubic-bezier(.2,.8,.2,1)'});
+    settle();
+    if(!cancel&&idsNow().join('|')!==s.start.join('|'))moved(c);
+    else say(nameOf(c)+' stayed in place.');
+  }
+  if(held)release();
+}
 connect();setInterval(tick,1000);
 </script>
 </body>
