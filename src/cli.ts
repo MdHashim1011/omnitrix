@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { serveDashboard } from './dashboard.js';
 import { DEFAULT_PORT, ensureDashboard, stopDashboard } from './dashboard-launch.js';
-import { codexModelInfo, discoverModels, runDriver } from './drivers/index.js';
+import { codexModelInfo, discoverModels, runDriver, upgradeCodexModels } from './drivers/index.js';
 import { CLI_TOOLS, loginCli, providerTool, resolveCommand } from './drivers/cli.js';
 import { Engine } from './engine.js';
 import { verifySummary } from './verify.js';
@@ -59,6 +59,15 @@ import { VERSION } from './version.js';
 
 const program = new Command();
 program.name('omnitrix').description('One Claude brain, every AI account you have.').version(VERSION);
+// Commands that rank or show models use Codex scores worked out by this version, as the MCP server does at start.
+program.hook('preAction', (_, cmd) => {
+  if (!['run', 'route', 'models', 'list'].includes(cmd.name())) return;
+  try {
+    upgradeCodexModels();
+  } catch {
+    // the saved scores still work; the next command tries again
+  }
+});
 
 /** Report a failure after network work without calling process.exit: exiting while a connection is still
  *  closing trips a libuv assertion on Windows (UV_HANDLE_CLOSING). Node exits once its handles are done. */

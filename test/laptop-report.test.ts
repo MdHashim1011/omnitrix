@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installedVersion, updateNote } from '../src/installed.js';
-import { codexModelInfo } from '../src/drivers/index.js';
+import { codexModelInfo, upgradeCodexModels } from '../src/drivers/index.js';
+import { makeModel } from '../src/models.js';
+import { loadConfig } from '../src/store.js';
 import { dashboardLine } from '../src/mcp.js';
 import { fit } from '../src/router.js';
 import { account, chatReply, mockProvider, tempHome, writeConfig } from './helpers.js';
@@ -49,6 +51,29 @@ describe('the models of a ChatGPT plan', () => {
   });
 });
 
+describe('a ChatGPT account saved with the scores of an older omnitrix', () => {
+  it('gets the current scores when omnitrix starts, without a manual refresh', () => {
+    // as 0.8.8 saved them: by name alone, so astra ranked above sol
+    const old = PLAN.map((id) => makeModel(id));
+    expect(old[1]!.skills.coding).toBeGreaterThan(old[0]!.skills.coding);
+    const handSet = PLAN.map((id) => makeModel(id));
+    handSet[1] = { ...handSet[1]!, skills: { ...handSet[1]!.skills, coding: 10 }, basis: 'manual' };
+    writeConfig([
+      account({ id: 'old', provider: 'codex', driver: 'cli', models: old }),
+      account({ id: 'tuned', provider: 'codex', driver: 'cli', models: handSet }),
+    ]);
+    expect(upgradeCodexModels()).toEqual(['old']);
+    const after = loadConfig().accounts;
+    const models = after.find((a) => a.id === 'old')!.models;
+    expect(models.map((m) => m.skills)).toEqual(codexModelInfo(PLAN).map((m) => m.skills));
+    expect(models[0]!.skills.coding).toBeGreaterThan(models[1]!.skills.coding);
+    // scores the user set by hand stay as they are, and so do the other models of that account
+    expect(after.find((a) => a.id === 'tuned')!.models).toEqual(handSet);
+    // nothing left to change the second time
+    expect(upgradeCodexModels()).toEqual([]);
+  });
+});
+
 describe('the dashboard address that Claude gets', () => {
   it('tells Claude not to open a second page when one is open', () => {
     expect(dashboardLine('http://127.0.0.1:4590', 1)).toMatch(/already open .*do not open it again/);
@@ -90,5 +115,12 @@ describe('omnitrix run --quiet', () => {
     expect(quiet.out.trim()).toBe('the answer');
     const loud = await run('run', 'hello');
     expect(loud.err).toMatch(/-> a\//);
+  }, 60_000);
+
+  it('shows the current Codex scores from the terminal too, without a refresh', async () => {
+    writeConfig([account({ id: 'old', provider: 'codex', driver: 'cli', models: PLAN.map((id) => makeModel(id)) })]);
+    const shown = await run('models', 'old');
+    const coding = (id: string) => Number(shown.out.split('\n').find((l) => l.startsWith(id + ' '))!.trim().split(/\s+/)[1]);
+    expect(coding('gpt-6.2-sol')).toBeGreaterThan(coding('gpt-6.2-astra'));
   }, 60_000);
 });

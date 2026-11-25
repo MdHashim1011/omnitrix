@@ -57,13 +57,23 @@ export function codexModelInfo(ids: string[]): ModelInfo[] {
  */
 export function upgradeCodexModels(): string[] {
   const stale = (a: Account) => a.driver === 'cli' && a.provider === 'codex' && a.models.length === 1 && a.models[0]!.id === 'default' && !a.models[0]!.pinned;
-  if (!loadConfig().accounts.some((a) => stale(a) && codexModels(a).length)) return [];
+  // Scores are saved when the list is read, so an update that ranks the models differently reaches an account
+  // only when they are worked out again. Not when the user set any of them by hand.
+  const outdated = (a: Account) => {
+    if (a.driver !== 'cli' || a.provider !== 'codex' || a.models.some((m) => m.pinned || m.basis === 'manual')) return false;
+    const fresh = codexModelInfo(a.models.map((m) => m.id));
+    return a.models.some((m, i) => JSON.stringify(m.skills) !== JSON.stringify(fresh[i]!.skills));
+  };
+  if (!loadConfig().accounts.some((a) => (stale(a) && codexModels(a).length) || outdated(a))) return [];
   return updateConfig((cfg) => {
     const changed: string[] = [];
     for (const a of cfg.accounts) {
       const ids = stale(a) ? codexModels(a) : [];
-      if (!ids.length) continue;
-      a.models = codexModelInfo(ids);
+      if (ids.length) a.models = codexModelInfo(ids);
+      else if (outdated(a)) {
+        const fresh = codexModelInfo(a.models.map((m) => m.id));
+        a.models.forEach((m, i) => (m.skills = fresh[i]!.skills));
+      } else continue;
       changed.push(a.id);
     }
     return changed;
