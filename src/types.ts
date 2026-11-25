@@ -79,6 +79,8 @@ export interface Account {
   enabled: boolean;
   /** this provider may train on prompts (common on free tiers) */
   trainsOnData: boolean;
+  /** keep only the provider's free models; OpenRouter marks them with a ":free" ending */
+  freeOnly?: boolean;
   local: boolean;
   /** lower number = preferred when scores tie */
   priority: number;
@@ -176,7 +178,7 @@ export interface UsageRecord {
 export const EFFORTS = ['low', 'medium', 'high'] as const;
 export type Effort = (typeof EFFORTS)[number];
 
-export type ErrorKind = 'rate_limit' | 'quota' | 'auth' | 'bad_request' | 'server' | 'network' | 'timeout' | 'cancelled' | 'model_gone' | 'too_long' | 'unknown';
+export type ErrorKind = 'rate_limit' | 'quota' | 'paid_model' | 'auth' | 'bad_request' | 'server' | 'network' | 'timeout' | 'cancelled' | 'model_gone' | 'too_long' | 'unknown';
 
 export interface TaskSpec {
   title: string;

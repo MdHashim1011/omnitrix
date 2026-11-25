@@ -52,7 +52,7 @@ describe('usage ledger', () => {
 describe('http helpers', () => {
   it('classifies provider errors', () => {
     expect(classifyStatus(401, '')).toBe('auth');
-    expect(classifyStatus(402, '')).toBe('quota');
+    expect(classifyStatus(402, '')).toBe('paid_model');
     expect(classifyStatus(429, 'Rate limit reached for requests')).toBe('rate_limit');
     expect(classifyStatus(429, 'You exceeded your current quota')).toBe('quota');
     expect(classifyStatus(503, '')).toBe('server');

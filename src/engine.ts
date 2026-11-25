@@ -33,7 +33,7 @@ const MAX_TRIES = 12;
 // config.json), so it also rests this long in health.json, which every process reads.
 const GONE_PAUSE_MS = 24 * 60 * 60_000;
 const MODEL_PAUSE_MS = 5 * 60_000;
-const MODEL_FAULTS = new Set(['model_gone', 'server', 'timeout', 'too_long']);
+const MODEL_FAULTS = new Set(['model_gone', 'paid_model', 'server', 'timeout', 'too_long']);
 // how long a learned prompt size counts; the server may be given more room meanwhile
 const CONTEXT_MEMORY_MS = 7 * 24 * 60 * 60_000;
 const MAX_FILE_BYTES = 400_000;
@@ -1140,6 +1140,12 @@ export class Engine {
       if (!answered) {
         this.applyFailure(account, e, cand.model);
         this.tripBreaker(account, e);
+        // A second paid model on the same account in one job most likely means the account has no credit at
+        // all. It rests like an account out of quota, so no job tries its other models one by one; the paid
+        // models stay paused afterwards, and its free ones are used again when the rest ends.
+        if (e.kind === 'paid_model' && job.attempts.filter((a) => a.accountId === account.id && a.errorKind === 'paid_model').length > 1) {
+          this.setHealth(account.id, { state: 'exhausted', until: Date.now() + (e.retryAfterMs ?? 3600_000), reason: 'two of its models need a paid plan or credits', measured: this.health[account.id]?.measured });
+        }
       }
       // A model that broke is paused for five minutes, but one attempt can take that long, so the job itself
       // keeps it out from now on. After a local timeout, the same computer's models that are as big or
@@ -1163,7 +1169,7 @@ export class Engine {
       } else if (ctrl.signal.aborted || e.kind === 'cancelled') {
         job.status = 'cancelled';
         job.error = 'cancelled';
-      } else if (job.attempts.filter((a) => a.errorKind !== 'model_gone' && a.errorKind !== 'too_long').length < MAX_ATTEMPTS && job.attempts.length < MAX_TRIES && e.kind !== 'bad_request') {
+      } else if (job.attempts.filter((a) => a.errorKind !== 'model_gone' && a.errorKind !== 'paid_model' && a.errorKind !== 'too_long').length < MAX_ATTEMPTS && job.attempts.length < MAX_TRIES && e.kind !== 'bad_request') {
         job.status = 'queued'; // pump() will try the next best account
         job.error = attempt.error;
       } else {
@@ -1241,6 +1247,13 @@ export class Engine {
       this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + GONE_PAUSE_MS, reason: 'not available on this account' });
       return;
     }
+    // The other models of the account may be free, so only this one rests: for a day, or for as long as the
+    // provider says, such as when OpenRouter's limit on spending in flight passes in a moment. An account with
+    // no other model is out of credit, as before.
+    if (e.kind === 'paid_model' && account.models.length > 1) {
+      this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + (e.retryAfterMs ?? GONE_PAUSE_MS), reason: 'needs a paid plan or credits' });
+      return;
+    }
     if (e.kind === 'server' || e.kind === 'timeout') {
       // pause just this model; the router skips it and the job moves on to the account's other models
       this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + MODEL_PAUSE_MS, reason: e.kind === 'timeout' ? 'no answer' : 'provider error' });
@@ -1251,6 +1264,7 @@ export class Engine {
         this.setHealth(account.id, { state: 'cooling', until: now + (e.retryAfterMs ?? 60_000), reason: 'rate limited', measured: prev?.measured });
         break;
       case 'quota':
+      case 'paid_model':
         // the provider rarely says when quota comes back; check again in an hour unless told otherwise
         this.setHealth(account.id, { state: 'exhausted', until: now + (e.retryAfterMs ?? 3600_000), reason: e.message.slice(0, 160), measured: prev?.measured });
         break;

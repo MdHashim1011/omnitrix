@@ -155,6 +155,7 @@ limitOptions(
     .option('--concurrency <n>', 'jobs at the same time on this account', int)
     .option('--trains-on-data', 'mark that this provider may train on your prompts')
     .option('--no-trains-on-data', 'mark that this provider does not train on your prompts')
+    .option('--free-only', 'OpenRouter: use only the free models (ids ending in ":free"), for a key without credits')
     .option('--login', 'for CLI accounts: sign in right away'),
 ).action(addAccount);
 
@@ -185,6 +186,12 @@ async function addAccount(providerId: string, o: Record<string, any>): Promise<v
   // a key already sitting in the usual environment variable is used without asking (also by CLIs that need one)
   else if (spec.keyEnv && process.env[spec.keyEnv]) apiKey = `env:${spec.keyEnv}`;
   if (!apiKey && driver !== 'cli' && !spec.local) die(`an API key is needed: --key-env ${spec.keyEnv ?? 'NAME'} or --key <value>`);
+  if (o.freeOnly) checkFreeOnly(spec.id);
+  // Running the same add twice made a second account on the same key, which shares the first one's limits
+  // and only splits its history. A second account on purpose gets its own --id.
+  const sameUrl = (x?: string, y?: string) => (x ?? '').toLowerCase().replace(/\/+$/, '') === (y ?? '').toLowerCase().replace(/\/+$/, '');
+  const twin = !o.id && cfg.accounts.find((a) => a.provider === spec.id && sameUrl(a.baseUrl, baseUrl) && a.driver === driver && ((apiKey?.startsWith('env:') && a.apiKey === apiKey) || (spec.local && !apiKey && !a.apiKey)));
+  if (twin) die(`${twin.id} already connects ${spec.name}${apiKey ? ` with ${apiKey.slice(4)}` : ''}. Change it with "omnitrix set ${twin.id}", or pass --id to add a second account on purpose.`);
 
   const account: Account = {
     id,
@@ -199,6 +206,7 @@ async function addAccount(providerId: string, o: Record<string, any>): Promise<v
     concurrency: o.concurrency ?? (driver === 'cli' ? 1 : spec.local ? 1 : 2),
     enabled: true,
     trainsOnData: o.trainsOnData ?? !!spec.trainsOnData,
+    ...(o.freeOnly ? { freeOnly: true } : {}),
     local: !!spec.local,
     priority: cfg.accounts.length,
     addedAt: new Date().toISOString(),
@@ -214,12 +222,16 @@ async function addAccount(providerId: string, o: Record<string, any>): Promise<v
   }
 
   if (o.model) {
-    account.models = String(o.model).split(',').map((s) => s.trim()).filter(Boolean).map((m) => makeModel(m));
+    account.models = freeIds(account, String(o.model).split(',').map((s) => s.trim()).filter(Boolean)).map((m) => makeModel(m));
+    if (!account.models.length) {
+      if (o.key) deleteSecret(id);
+      die('--free-only keeps only models whose id ends in ":free", and none of the given ones does');
+    }
   } else if (driver === 'cli') {
     account.models = [makeModel('default')];
   } else {
     try {
-      const found = (await discoverModels(account)).filter(isChatModel);
+      const found = freeIds(account, (await discoverModels(account)).filter(isChatModel));
       account.models = await modelsFor(account, found.slice(0, 200));
       console.log(`found ${found.length} models`);
     } catch (err) {
@@ -293,6 +305,8 @@ limitOptions(
     .option('--priority <n>', 'lower is preferred when scores tie', int)
     .option('--trains-on-data')
     .option('--no-trains-on-data')
+    .option('--free-only', 'OpenRouter: use only the free models (ids ending in ":free")')
+    .option('--no-free-only', 'use the paid models again; run "omnitrix models <id> --refresh" to get them back')
     .option('--key <value>')
     .option('--key-env <NAME>')
     .option('--base-url <url>')
@@ -306,6 +320,15 @@ limitOptions(
     if (o.priority !== undefined) acc.priority = o.priority;
     if (o.effort) acc.effort = o.effort === 'model' || o.effort === 'auto' ? undefined : o.effort;
     if (o.trainsOnData !== undefined) acc.trainsOnData = o.trainsOnData;
+    if (o.freeOnly === true) {
+      checkFreeOnly(acc.provider);
+      const kept = acc.models.filter((m) => m.id.endsWith(FREE_ENDING));
+      if (!kept.length) die(`${id} has no free model in its list; run "omnitrix models ${id} --refresh" first`);
+      acc.freeOnly = true;
+      acc.models = kept;
+    } else if (o.freeOnly === false) {
+      delete acc.freeOnly;
+    }
     if (o.baseUrl) acc.baseUrl = o.baseUrl;
     if (o.key) {
       setSecret(id, o.key);
@@ -348,6 +371,15 @@ program
     console.log(`removed ${id}${acc.profileDir && !o.purge ? ` (profile kept at ${acc.profileDir})` : ''}`);
   });
 
+/** Only OpenRouter names its free models in a way omnitrix can read, so free-only is offered there only. */
+const FREE_ENDING = ':free';
+function freeIds(account: Pick<Account, 'freeOnly'>, ids: string[]): string[] {
+  return account.freeOnly ? ids.filter((m) => m.endsWith(FREE_ENDING)) : ids;
+}
+function checkFreeOnly(provider: string): void {
+  if (provider !== 'openrouter') die('--free-only works for OpenRouter accounts only: other providers do not mark which of their models are free');
+}
+
 /** Model entries for an account: local servers describe their own models, others are scored from the name. */
 async function modelsFor(account: Account, ids: string[]): Promise<ModelInfo[]> {
   if (account.provider === 'ollama' && account.baseUrl) return localModels(account.baseUrl, ids);
@@ -362,14 +394,15 @@ program
   .action(async (id: string, o) => {
     let acc = o.refresh ? ownAccount(loadConfig(), id) : findAccount(loadConfig(), id) ?? die(`no account "${id}"`);
     if (o.refresh) {
-      const found = (await discoverModels(acc)).filter(isChatModel);
-      if (!found.length) die('the provider returned no models');
+      const found = freeIds(acc, (await discoverModels(acc)).filter(isChatModel));
+      if (!found.length) die(acc.freeOnly ? 'the provider returned no free models' : 'the provider returned no models');
       const fresh = await modelsFor(acc, found);
       acc = updateConfig((cfg) => {
         const latest = ownAccount(cfg, id);
         const old = new Map(latest.models.map((m) => [m.id, m]));
-        // scores set by hand stay; guesses are made again, with what the server now reports
-        latest.models = fresh.map((m) => {
+        // scores set by hand stay; guesses are made again, with what the server now reports. The free-only
+        // setting is read again here, since "set --free-only" may have run while the provider answered.
+        latest.models = freeIds(latest, fresh.map((m) => m.id)).map((mid) => fresh.find((m) => m.id === mid)!).map((m) => {
           const before = old.get(m.id);
           if (before?.pinned) return { ...before, digest: m.digest ?? before.digest };
           return { ...m, inputPrice: before?.inputPrice, outputPrice: before?.outputPrice };

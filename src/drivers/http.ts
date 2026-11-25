@@ -22,8 +22,13 @@ export function classifyStatus(status: number, body: string): ErrorKind {
   if (status === 401 || status === 403) return 'auth';
   // Gemini answers a wrong key with 400; the key is the problem, not the task
   if (status === 400 && /(api_key_invalid|api key not valid|invalid api key)/.test(text)) return 'auth';
-  if (status === 402) return 'quota';
+  // Free keys at OpenRouter or Mistral answer 402 for the paid models only; the account's free models still
+  // work. The engine pauses just that model, or the whole account when it has no other.
+  if (status === 402) return 'paid_model';
   if (status === 429) {
+    // "high demand" or "overloaded" is about one busy model; "at capacity" is left out, since providers also
+    // say it about the account's own limit
+    if (/(high demand|overloaded)/.test(text)) return 'server';
     // "limit: 0" means the plan includes no allowance for this model at all (Gemini's free tier and Pro
     // models, for example). That is the model's problem, not a sign that the whole account is used up.
     if (/limit: 0(?![\d.])/.test(text)) return 'model_gone';
