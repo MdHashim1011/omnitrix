@@ -56,6 +56,27 @@ function lastJson(stdout: string): any {
   return undefined;
 }
 
+/**
+ * The models that the Codex login of this account may use, newest first, as Codex lists them in its model
+ * picker. Codex saves the list in models_cache.json in its home folder after it has run once; models it
+ * hides from the picker are left out. Without that file the list is empty.
+ */
+export function codexModels(account: Account): string[] {
+  if (!account.profileDir) return [];
+  let cache: unknown;
+  try {
+    cache = JSON.parse(fs.readFileSync(path.join(account.profileDir, 'models_cache.json'), 'utf8'));
+  } catch {
+    return [];
+  }
+  const list = (cache as { models?: unknown })?.models;
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((m): m is { slug: string; visibility?: unknown; priority?: unknown } => !!m && typeof m.slug === 'string' && /^[\w.:-]{1,80}$/.test(m.slug) && m.visibility === 'list')
+    .sort((a, b) => (Number(a.priority) || 0) - (Number(b.priority) || 0))
+    .map((m) => m.slug);
+}
+
 export const CLI_TOOLS: Record<string, CliTool> = {
   codex: {
     id: 'codex',

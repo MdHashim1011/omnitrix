@@ -2,6 +2,7 @@
 // every open page, so nobody has to reload it.
 import fs from 'node:fs';
 import http from 'node:http';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { Engine } from './engine.js';
 import { refreshQuotas } from './quota.js';
@@ -85,11 +86,18 @@ export function overheadReader(ttlMs = 10 * 60_000, measure: (dir: string, since
 
 /** The newest jobs for the page. A second check is shown on the job it checks, not as a job of its own. */
 export function recentJobs(engine: Engine, limit = 30, behindOf?: (j: Job) => Behind | undefined, sinceOf?: (j: Job) => SinceCheck | undefined): Record<string, unknown>[] {
-  return engine.listJobs(limit * 2).filter((j) => !j.checkOf).slice(0, limit).map((j) => ({
+  const jobs = engine.listJobs(limit * 2).filter((j) => !j.checkOf && !j.hidden).slice(0, limit);
+  const spend = engine.jobSpend(jobs);
+  return jobs.map((j) => ({
     id: j.id,
     status: j.status,
     accountId: j.accountId,
     model: j.model,
+    effort: j.effort,
+    effortAuto: j.effortAuto,
+    // every attempt of the job and its check, as the account's own totals count them
+    spent: spend.get(j.id),
+    escalatedTo: j.escalatedTo,
     createdAt: j.createdAt,
     updatedAt: j.updatedAt,
     verdict: j.verdict,
@@ -138,6 +146,12 @@ export function startDashboard(port: number): { url: string; server: http.Server
   let latest = '';
   let slowAt = 0;
   let openedAt = 0;
+  // a page that cannot hold a live stream asks for the state every few seconds; it is an open page too
+  let polledAt = 0;
+  const pages = () => viewers.size + (Date.now() - polledAt < 10_000 ? 1 : 0);
+  // a new token every start, so a page from before a restart has to load again to act
+  const token = randomBytes(16).toString('hex');
+  const page = PAGE.replace('__TOKEN__', token);
 
   const behindOf = behindReader(engine);
   const sinceOf = sinceCheckReader(engine);
@@ -220,17 +234,47 @@ export function startDashboard(port: number): { url: string; server: http.Server
       return;
     }
     if (req.url === '/api/status') {
+      polledAt = Date.now();
       slowChecks();
-      json(res, { version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
+      json(res, { version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf, sinceOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
+      return;
+    }
+    // The one action the page can take: removing finished jobs from its list. Only the page this server
+    // sent knows the token, and a browser sends a custom header to another site only after asking it.
+    if (req.url === '/api/hide') {
+      if (req.method !== 'POST' || req.headers['x-omnitrix-token'] !== token || !String(req.headers['content-type']).startsWith('application/json')) {
+        res.writeHead(403).end('forbidden');
+        return;
+      }
+      let body = '';
+      req.setEncoding('utf8');
+      req.on('data', (chunk: string) => {
+        body += chunk;
+        if (body.length > 16_384) req.destroy();
+      });
+      req.on('end', () => {
+        let ask: { ids?: unknown; failed?: unknown };
+        try {
+          ask = JSON.parse(body);
+        } catch {
+          res.writeHead(400).end('bad request');
+          return;
+        }
+        const ids = Array.isArray(ask.ids) ? ask.ids.filter((x): x is string => typeof x === 'string').slice(0, 100) : undefined;
+        const hidden = engine.hideJobs(ask.failed === true ? { failed: true } : { ids });
+        latest = '';
+        look();
+        json(res, { hidden });
+      });
       return;
     }
     if (req.url === '/api/ping') {
-      json(res, { omnitrix: true, version: VERSION, pid: process.pid, viewers: viewers.size });
+      json(res, { omnitrix: true, version: VERSION, pid: process.pid, viewers: pages() });
       return;
     }
     // asked by `omnitrix dashboard` and `omnitrix init` before they open a tab: one tab is enough
     if (req.url === '/api/claim-open') {
-      const open = viewers.size === 0 && Date.now() - openedAt > OPEN_GRACE_MS;
+      const open = pages() === 0 && Date.now() - openedAt > OPEN_GRACE_MS;
       if (open) openedAt = Date.now();
       json(res, { open });
       return;
@@ -240,7 +284,7 @@ export function startDashboard(port: number): { url: string; server: http.Server
       return;
     }
     if (req.url === '/' || req.url === '/index.html') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'", 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY' }).end(PAGE);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'", 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY' }).end(page);
       return;
     }
     res.writeHead(404).end('not found');
@@ -295,6 +339,7 @@ export const PAGE = /* html */ `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="omnitrix-token" content="__TOKEN__">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>omnitrix</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -381,6 +426,11 @@ summary:active{color:var(--ink)}
 .job .err{color:var(--bad);font:12.5px/1.5 var(--mono);margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere}
 .job .vf{grid-column:2/4;color:var(--ink-2);font-size:12.5px;line-height:1.5;overflow-wrap:anywhere}
 .job .vf.warn{color:var(--warn)}.stats .warn{color:var(--warn)}
+.jobs-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.hide{background:none;border:1px solid var(--line-strong);color:var(--ink-2);border-radius:6px;font:inherit;font-size:12.5px;padding:3px 10px;min-height:28px;cursor:pointer}
+.hide:hover,.hide:focus-visible{color:var(--ink);border-color:var(--ink-3)}
+.job .hide{margin-top:6px}
+#hide-msg:empty{display:none}
 .empty{background:var(--surface);border:1px dashed var(--line-strong);border-radius:var(--r);padding:22px;color:var(--ink-2)}
 .empty h3{margin:0 0 6px;font-size:16px;color:var(--ink)}
 .empty ol{margin:10px 0 0;padding-left:20px;line-height:2}
@@ -404,7 +454,7 @@ footer{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);margin-top:28px
 <main>
   <section class="kpis" id="kpis" aria-label="Summary for the last 24 hours"></section>
   <section aria-labelledby="acc-h"><h2 id="acc-h">Accounts <small id="acc-sub"></small></h2><div class="grid" id="accounts"></div></section>
-  <section aria-labelledby="job-h"><h2 id="job-h">Recent jobs <small>newest first</small></h2><div id="jobs"></div></section>
+  <section aria-labelledby="job-h"><div class="jobs-h"><h2 id="job-h">Recent jobs <small>newest first</small></h2><button type="button" class="hide" id="clear-failed" hidden>Remove failed jobs</button></div><p id="hide-msg" class="note" role="status"></p><div id="jobs"></div></section>
 </main>
 <footer>This page only shows status. Change accounts and settings with the omnitrix command.</footer>
 </div>
@@ -427,7 +477,8 @@ var SOURCES={measured:'Measured by the provider',estimated:'Counted by omnitrix 
 function windowHtml(w){
   var pct=w.unit==='percent', left=pct?Math.max(0,Math.min(100,w.remaining)):(w.limit>0?Math.max(0,Math.min(100,w.remaining/w.limit*100)):0);
   var cls=left<=0?'out':left<20?'low':'';
-  var amount=pct?Math.round(left)+'% left':fmt(w.remaining)+' of '+fmt(w.limit)+' '+esc(w.unit)+' left';
+  // providers report whole percents, so a little use shows as 100% left; say so instead of looking unused
+  var amount=pct?(left>=100&&w.used===0?'under 1% used':Math.round(left)+'% left'):fmt(w.remaining)+' of '+fmt(w.limit)+' '+esc(w.unit)+' left';
   var label=esc(w.name)+(pct?'':' ('+esc(w.unit)+')');
   var reset=w.resetsAt?'<div class="when">Resets in '+esc(span(w.resetsAt-Date.now()))+', '+esc(clock(w.resetsAt))+'</div>':'';
   // the server only sends runsOutAt when the current pace empties the window before it resets
@@ -464,7 +515,7 @@ function cardHtml(a,open){
   return '<article class="card" aria-label="'+esc(a.label)+'">'
     +'<div class="head"><div class="title">'+icon(ico)+'<div><h3>'+esc(a.label)+'</h3><div class="sub">'+sub+'</div></div></div><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span></div>'
     +(quota?'<div>'+quota+'</div>':'')+notes
-    +'<div class="stats"><span>Last 24 h</span><span><b>'+u.requestsToday+'</b> answered</span>'+(u.failedToday?'<span class="warn"><b>'+u.failedToday+'</b> failed</span>':'')+'<span><b>'+fmt(u.tokensToday)+'</b> tokens</span>'+(u.costToday?'<span><b>'+money(u.costToday)+'</b></span>':'')
+    +'<div class="stats"><span title="Every request to this account in the last 24 hours: jobs, failed attempts, second-model checks and omnitrix test, including jobs no longer in the list below">Last 24 h, all requests</span><span><b>'+u.requestsToday+'</b> answered</span>'+(u.failedToday?'<span class="warn"><b>'+u.failedToday+'</b> failed</span>':'')+'<span><b>'+fmt(u.tokensToday)+'</b> tokens</span>'+(u.costToday?'<span><b>'+money(u.costToday)+'</b></span>':'')
     +(u.windows.length?'<span class="prov">'+esc(SOURCES[u.source]||u.source)+(u.updatedAt&&!u.stale?', updated '+esc(ago(u.updatedAt)):'')+'</span>':'')+'</div>'
     +(u.stale&&u.updatedAt?'<div class="note warn">omnitrix could not read these numbers again. They are from '+esc(clock(u.updatedAt))+' and may be out of date.</div>':'')
     +modelHtml+'</article>';
@@ -484,12 +535,14 @@ function leadHtml(l){
 var JOB={done:['Done','s-ok'],running:['Running','s-busy'],queued:['Waiting','s-idle'],failed:['Failed','s-bad'],cancelled:['Cancelled','s-idle']};
 function jobHtml(j,open){
   var st=JOB[j.status]||[j.status,'s-idle'];
-  var tokens=j.usage?fmt(j.usage.inputTokens+j.usage.outputTokens)+' tokens':'';
+  // the ledger's total covers failed attempts too; older jobs fall back to the answering attempt
+  var sp=j.spent, own=sp&&sp.tokens?sp.tokens:(j.usage?j.usage.inputTokens+j.usage.outputTokens:0);
+  var tokens=own?'<span title="All attempts of this job, failed ones included'+(sp&&sp.check?', and the second model&#39;s check':'')+'">'+fmt(own+(sp?sp.check:0))+' tokens'+(sp&&sp.check?' (check: '+fmt(sp.check)+')':'')+'</span>':'';
   var verdict=j.verdict?(j.verdict==='accepted'?'Accepted by Claude':'Rejected by Claude'):'';
   var err=j.error&&j.status!=='done'?'<details data-key="e-'+esc(j.id)+'"'+(open['e-'+j.id]?' open':'')+'><summary>Why it '+(j.status==='failed'?'failed':'stopped')+'</summary><div class="err">'+esc(j.error)+'</div></details>':'';
   return '<li class="job"><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span>'
-    +'<div><div class="t">'+esc(j.task.title)+'</div><div class="m">'+esc(j.task.type)+(j.accountId?' · '+esc(j.accountId)+(j.model?' / '+esc(j.model):''):'')+'</div></div>'
-    +'<div class="r">'+[tokens,ago(j.createdAt)].filter(Boolean).join(' · ')+(verdict?'<div>'+verdict+'</div>':'')+'</div>'+err
+    +'<div><div class="t">'+esc(j.task.title)+'</div><div class="m">'+esc(j.task.type)+(j.accountId?' · '+esc(j.accountId)+(j.model?' / '+esc(j.model):''):'')+(j.effort?' · <span'+(j.effortAuto?' title="omnitrix chose this effort from the kind of task"':'')+'>'+esc(j.effort)+' effort'+(j.effortAuto?' (auto)':'')+'</span>':'')+(j.escalatedTo?' · sent on to a stronger model':'')+'</div></div>'
+    +'<div class="r">'+[tokens,ago(j.createdAt)].filter(Boolean).join(' · ')+(verdict?'<div>'+verdict+'</div>':'')+(j.status==='done'||j.status==='failed'||j.status==='cancelled'?'<div><button type="button" class="hide" data-hide="'+esc(j.id)+'" aria-label="Remove '+esc(j.task.title)+' from this list">Remove</button></div>':'')+'</div>'+err
     +(j.verify?'<div class="vf'+(j.verify.warn?' warn':'')+'">Checked by omnitrix'+(j.rebased?' after a rebase':'')+': '+esc(j.verify.summary)+'</div>':'')+sinceHtml(j)+behindHtml(j)+checkHtml(j.check)+'</li>';
 }
 // the branch or the checkout changed after omnitrix checked the job, so its check may not cover the code a merge takes
@@ -553,6 +606,7 @@ function draw(d){
     :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix init --apply</code> connects the AI tools, API keys and local models it finds on this PC</li><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>');
   document.getElementById('jobs').innerHTML=d.jobs.length?'<ul class="jobs">'+d.jobs.map(function(j){return jobHtml(j,open)}).join('')+'</ul>'
     :'<div class="empty"><h3>No jobs yet</h3>Ask Claude to hand out a task, and it shows up here.</div>';
+  document.getElementById('clear-failed').hidden=!d.jobs.some(function(j){return j.status==='failed'||j.status==='cancelled'});
   if(focusKey){var again=document.querySelector('details[data-key="'+focusKey+'"] summary');if(again)again.focus({preventScroll:true})}
   tick();
 }
@@ -569,20 +623,39 @@ function show(raw,live){
 // The last state this browser saw is drawn at once, then the live stream takes over.
 try{var saved=localStorage.getItem('omnitrix-state');savedAt=Number(localStorage.getItem('omnitrix-state-at'))||0;if(saved)show(saved,false)}catch(e){}
 var stream=null;
+var polling=false;
 function connect(){
   if(!window.EventSource){poll();return}
+  var got=false;
   stream=new EventSource('/api/events');
   stream.onopen=function(){down=false;tick()};
-  stream.onmessage=function(e){down=false;show(e.data,true)};
+  stream.onmessage=function(e){got=true;down=false;show(e.data,true)};
+  // Some embedded browsers, such as the browser pane of a desktop app, hold a live stream back; the page
+  // then asks for the state every few seconds instead of waiting on a stream that never arrives.
+  setTimeout(function(){if(!got&&!polling&&stream){stream.close();stream=null;poll()}},4000);
   stream.addEventListener('alive',function(){down=false;last=Date.now();connected=true;if(lastRaw)show(lastRaw,false);tick()});
   stream.onerror=function(){down=true;tick()};
 }
 async function poll(){
+  polling=true;
   try{show(await (await fetch('/api/status',{cache:'no-store'})).text(),true)}catch(e){tick()}
   setTimeout(poll,4000);
 }
 // The browser retries a dropped stream by itself; if it gives up, for example while the server restarts, start a new one.
 setInterval(function(){if(stream&&stream.readyState===2)connect()},3000);
+// Removing jobs only hides them here; Claude can still read their results.
+var TOKEN=(document.querySelector('meta[name="omnitrix-token"]')||{}).content||'';
+async function hide(body){
+  var msg=document.getElementById('hide-msg');msg.textContent='';
+  try{
+    var r=await fetch('/api/hide',{method:'POST',headers:{'content-type':'application/json','x-omnitrix-token':TOKEN},body:JSON.stringify(body)});
+    if(r.status===403){msg.textContent='omnitrix restarted since this page loaded. Reload the page, then try again.';return}
+    if(!r.ok)throw new Error(String(r.status));
+    var n=(await r.json()).hidden;msg.textContent=n?'Removed '+n+' job'+(n===1?'':'s')+' from the list.':'Nothing to remove.';
+  }catch(e){msg.textContent='Could not remove: omnitrix did not answer.'}
+}
+document.getElementById('jobs').addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-hide]');if(b){b.disabled=true;hide({ids:[b.getAttribute('data-hide')]})}});
+document.getElementById('clear-failed').addEventListener('click',function(){hide({failed:true})});
 connect();setInterval(tick,1000);
 </script>
 </body>

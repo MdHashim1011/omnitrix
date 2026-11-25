@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { serveDashboard } from './dashboard.js';
 import { DEFAULT_PORT, ensureDashboard, stopDashboard } from './dashboard-launch.js';
-import { discoverModels, runDriver } from './drivers/index.js';
+import { codexModelInfo, discoverModels, runDriver } from './drivers/index.js';
 import { CLI_TOOLS, loginCli, providerTool, resolveCommand } from './drivers/cli.js';
 import { Engine } from './engine.js';
 import { verifySummary } from './verify.js';
@@ -286,7 +286,8 @@ limitOptions(
     .option('--no-trains-on-data')
     .option('--key <value>')
     .option('--key-env <NAME>')
-    .option('--base-url <url>'),
+    .option('--base-url <url>')
+    .addOption(new Option('--effort <level>', 'how hard reasoning models think when a task does not say; "auto" lets omnitrix choose from the kind of task on Codex accounts and leaves it to the model elsewhere ("model" means the same)').choices([...EFFORTS, 'auto', 'model'])),
 ).action((id: string, o: Record<string, any>) => {
   updateConfig((cfg) => {
     const acc = ownAccount(cfg, id);
@@ -294,6 +295,7 @@ limitOptions(
     if (o.owner) acc.owner = o.owner;
     if (o.concurrency !== undefined) acc.concurrency = Math.max(1, o.concurrency);
     if (o.priority !== undefined) acc.priority = o.priority;
+    if (o.effort) acc.effort = o.effort === 'model' || o.effort === 'auto' ? undefined : o.effort;
     if (o.trainsOnData !== undefined) acc.trainsOnData = o.trainsOnData;
     if (o.baseUrl) acc.baseUrl = o.baseUrl;
     if (o.key) {
@@ -340,6 +342,7 @@ program
 /** Model entries for an account: local servers describe their own models, others are scored from the name. */
 async function modelsFor(account: Account, ids: string[]): Promise<ModelInfo[]> {
   if (account.provider === 'ollama' && account.baseUrl) return localModels(account.baseUrl, ids);
+  if (account.driver === 'cli' && account.provider === 'codex') return codexModelInfo(ids);
   return ids.map((m) => makeModel(m, {}, { local: account.local }));
 }
 
@@ -572,6 +575,8 @@ program
   .option('--timeout <seconds>', 'job timeout', int)
   .option('--preview-chars <n>', 'how much of each result Claude sees', int)
   .addOption(new Option('--api-code-agent <opencode|off>', 'let API accounts do code tasks through OpenCode when it is installed, or not').choices(['opencode', 'off']))
+  .addOption(new Option('--open-dashboard <on|off>', 'open the dashboard in your browser at the first task of each Claude session, unless a page already shows it').choices(['on', 'off']))
+  .addOption(new Option('--auto-effort <on|off>', 'let omnitrix pick the reasoning effort of Codex tasks from their kind when neither Claude nor the account sets one; off leaves it to Codex').choices(['on', 'off']))
   .action((o) => {
     const s = updateConfig((cfg) => {
       const s = cfg.settings;
@@ -588,6 +593,8 @@ program
       if (o.timeout) s.jobTimeoutSec = o.timeout;
       if (o.previewChars) s.resultPreviewChars = o.previewChars;
       if (o.apiCodeAgent) s.apiCodeAgent = o.apiCodeAgent;
+      if (o.openDashboard) s.openDashboard = o.openDashboard;
+      if (o.autoEffort) s.autoEffort = o.autoEffort;
       return s;
     });
     console.log(JSON.stringify(s, null, 2));

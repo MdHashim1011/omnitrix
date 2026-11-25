@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { apiAgentInstalled, runsAsAgent } from './drivers/cli.js';
-import { runDriver } from './drivers/index.js';
+import { runDriver, upgradeCodexModels } from './drivers/index.js';
 import { gpuMemoryBytes, modelSizes } from './drivers/ollama.js';
 import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
 import { reachable } from './init.js';
@@ -15,7 +15,7 @@ import { route, routeDef, routeList, effectivePrivacy, fit, modelHealthKey, type
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
-import { DriverError, type Account, type AccountHealth, type Config, type Job, type JobCheck, type JobVerify, type TaskSpec, type TaskType, type UsageRecord } from './types.js';
+import { DriverError, type Account, type AccountHealth, type Config, type Effort, type Job, type JobCheck, type JobVerify, type TaskSpec, type TaskType, type UsageRecord } from './types.js';
 import { statsKey } from './models.js';
 import { compactLedger, headroom, LedgerTail, recordUsage, summarize, typicalLatency, type UsageSummary } from './usage.js';
 import { diffLock, isLockfile } from './lockfile.js';
@@ -175,6 +175,44 @@ export class Engine {
       this.usageCache = { at: now, byAccount };
     }
     return this.usageCache.byAccount;
+  }
+
+  /**
+   * Leave finished jobs out of the dashboard's list: the given ids, or every failed and cancelled job.
+   * Their records, outputs and branches stay, so get_results and `omnitrix clean` still find them.
+   * A job that is still waiting or running is never hidden. Returns how many jobs were hidden.
+   */
+  hideJobs(which: { ids?: string[]; failed?: boolean }): number {
+    const targets = which.failed ? this.listJobs(500).filter((j) => j.status === 'failed' || j.status === 'cancelled') : (which.ids ?? []).map((id) => this.getJob(id)).filter((j): j is Job => !!j);
+    let n = 0;
+    for (const job of targets) {
+      if (!ended(job) || job.hidden || job.checkOf) continue;
+      this.mergeDisk(job);
+      job.hidden = true;
+      this.jobs.set(job.id, job);
+      this.saveJob(job);
+      n++;
+    }
+    if (n) this.notify();
+    return n;
+  }
+
+  /**
+   * Tokens each job spent in the last 32 days, over all its attempts, failed ones included: a job's own
+   * usage holds only the attempt that answered. The second-model check of a job counts on the job.
+   */
+  jobSpend(jobs: Job[]): Map<string, { tokens: number; check: number }> {
+    const own = new Map<string, number>();
+    for (const list of this.records().values()) {
+      for (const r of list) if (r.jobId) own.set(r.jobId, (own.get(r.jobId) ?? 0) + r.inputTokens + r.outputTokens);
+    }
+    const out = new Map<string, { tokens: number; check: number }>();
+    for (const j of jobs) {
+      if (j.checkOf) continue;
+      const check = j.check?.jobId ? own.get(j.check.jobId) ?? 0 : 0;
+      out.set(j.id, { tokens: own.get(j.id) ?? 0, check });
+    }
+    return out;
   }
 
   private localProbedAt = new Map<string, number>();
@@ -884,6 +922,8 @@ export class Engine {
     }
     if (disk.retriedAs && !job.retriedAs) job.retriedAs = disk.retriedAs;
     if (disk.escalatedTo && !job.escalatedTo) job.escalatedTo = disk.escalatedTo;
+    // the dashboard hides jobs from its own process; the owner's later saves must keep that
+    if (disk.hidden && !job.hidden) job.hidden = true;
     // `omnitrix rebase` runs in its own process and saves the moved branch and its new check
     if (disk.rebased && disk.rebased.at > (job.rebased?.at ?? 0)) {
       job.rebased = disk.rebased;
@@ -972,6 +1012,9 @@ export class Engine {
     job.status = 'running';
     job.accountId = account.id;
     job.model = cand.model;
+    const effort = chooseEffort(job.task, account, !!job.escalatedFrom, cfg.settings.autoEffort);
+    job.effort = effort.effort;
+    job.effortAuto = effort.auto || undefined;
     const chosen = account.models.find((m) => m.id === cand.model);
     job.modelKey = chosen ? statsKey(chosen) : cand.model;
     job.updatedAt = Date.now();
@@ -1023,7 +1066,7 @@ export class Engine {
           cwd,
           timeoutMs: requestTimeoutMs(agent ? 'cli' : account.driver, job.task.size, cfg.settings.jobTimeoutSec),
           signal: ctrl.signal,
-          effort: job.task.effort,
+          effort: job.effort,
           maxOutputTokens: agent ? undefined : job.task.size === 'small' ? 4000 : job.task.size === 'large' ? 32000 : 16000,
         },
         edit,
@@ -1042,6 +1085,14 @@ export class Engine {
       // the provider's own figure when it gives one, otherwise the model's price per million tokens
       const costUsd = result.costUsd ?? estimateCost(account.models.find((m) => m.id === cand.model), result.inputTokens, result.outputTokens);
       this.record(account, { ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ok: true, latencyMs: Date.now() - t0, costUsd }, cfg);
+      // Codex saves its model list on its first run, so the next task can choose among the real models
+      if (cand.model === 'default' && account.provider === 'codex') {
+        try {
+          upgradeCodexModels();
+        } catch {
+          // the account keeps "default"; the next run tries again
+        }
+      }
       const measured = result.rate ? { ...result.rate, at: Date.now(), source: 'response headers' } : this.health[account.id]?.measured;
       // a pause set by another request after this one started is newer news than this success
       // another process may have paused the account meanwhile; its file is the latest word
@@ -1225,6 +1276,30 @@ export class Engine {
 }
 
 /** The checker answers PASS or FAIL on its first line and a reason on the next; anything else is unclear. */
+// What each kind of task usually needs: quick work stays cheap, and only reviews and reasoning think hard.
+const EFFORT_BY_TYPE: Record<TaskType, Effort> = {
+  bulk: 'low',
+  writing: 'low',
+  code_snippet: 'low',
+  vision: 'low',
+  code: 'medium',
+  long_context: 'medium',
+  review: 'high',
+  reasoning: 'high',
+};
+
+/**
+ * The reasoning effort of an attempt: the task's own (Claude chose it), else the account's (the owner chose
+ * it), else one that omnitrix picks from the kind of task, and high for an escalated attempt. omnitrix picks
+ * one only for Codex CLI accounts, whose models all take it; other APIs may refuse the field.
+ */
+export function chooseEffort(task: TaskSpec, account: Account, escalated: boolean, setting?: 'on' | 'off'): { effort: Effort | undefined; auto: boolean } {
+  const chosen = task.effort ?? account.effort;
+  if (chosen) return { effort: chosen, auto: false };
+  if (setting === 'off' || account.provider !== 'codex' || account.driver !== 'cli') return { effort: undefined, auto: false };
+  return { effort: escalated ? 'high' : EFFORT_BY_TYPE[task.type], auto: true };
+}
+
 export function readVerdict(text: string): Pick<JobCheck, 'status' | 'note'> {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
   const first = (lines[0] ?? '').replace(/[*_`#>]/g, '').trim().toUpperCase().replace(/[.!:]$/, '');

@@ -70,6 +70,8 @@ export interface Account {
   apiKey?: string;
   /** isolated config folder for CLI accounts */
   profileDir?: string;
+  /** how hard this account's reasoning models think when a task does not say; the model's own default otherwise */
+  effort?: Effort;
   models: ModelInfo[];
   limits: Limits;
   /** max jobs at the same time on this account */
@@ -123,6 +125,10 @@ export interface Settings {
   routes?: Record<string, RouteDef>;
   /** "off" keeps code tasks away from API accounts; otherwise they run through OpenCode when it is installed */
   apiCodeAgent?: 'opencode' | 'off';
+  /** whether the first dispatch of a Claude session opens the dashboard; on unless set to off */
+  openDashboard?: 'on' | 'off';
+  /** whether omnitrix picks the reasoning effort of a Codex task from its type when nobody chose one; on unless set to off */
+  autoEffort?: 'on' | 'off';
   /** the team file this developer joined, if any */
   team?: { file: string; user: string; sha256: string };
 }
@@ -285,6 +291,12 @@ export interface Job {
   escalatedFrom?: string;
   /** the stronger attempt that omnitrix started after this job's check or test failed */
   escalatedTo?: string;
+  /** removed from the dashboard's job list by the user; the record and output stay */
+  hidden?: boolean;
+  /** the reasoning effort that the last attempt asked for, from the task, the account or omnitrix */
+  effort?: Effort;
+  /** omnitrix chose that effort from the kind of task, because neither the task nor the account set one */
+  effortAuto?: boolean;
   /** whether the answer matched the task's outputSchema */
   structured?: JobStructured;
   check?: JobCheck;

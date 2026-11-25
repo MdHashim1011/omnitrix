@@ -7,8 +7,24 @@ import { makeModel } from '../src/models.js';
 import { defaultSettings, saveConfig } from '../src/store.js';
 import type { Account, Config } from '../src/types.js';
 
+// Each test gets a new data folder; the ones from earlier tests are deleted when the next one starts and
+// when the test process ends, so test runs leave nothing behind in the temp folder.
+const homes: string[] = [];
+function removeHomes(): void {
+  while (homes.length) {
+    try {
+      fs.rmSync(homes.pop()!, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+      // a file still held open on Windows; the system's temp cleanup removes it later
+    }
+  }
+}
+process.on('exit', removeHomes);
+
 export function tempHome(): string {
+  removeHomes();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-test-'));
+  homes.push(dir);
   process.env.OMNITRIX_HOME = dir;
   // commands run by tests never open a browser or leave a dashboard running
   process.env.OMNITRIX_NO_BROWSER = '1';

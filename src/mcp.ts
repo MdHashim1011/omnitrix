@@ -7,12 +7,13 @@ import { Engine, type PoolAccountView } from './engine.js';
 import { refreshQuotas } from './quota.js';
 import { routeList } from './router.js';
 import { extractJson } from './schema.js';
+import { upgradeCodexModels } from './drivers/index.js';
 import { EFFORTS, TASK_TYPES, type Job, type TaskSpec } from './types.js';
 import { formatTokens, roughSpan, type WindowUse } from './usage.js';
 import { testSeconds, verifySummary } from './verify.js';
 import { describeDelegated } from './value.js';
 import { VERSION } from './version.js';
-import { runningDashboard, refreshDashboards } from './dashboard-launch.js';
+import { ensureDashboard, runningDashboard, refreshDashboards } from './dashboard-launch.js';
 import { JOB_ID } from './store.js';
 import { describeLead, leadOut, loadLeadQuota } from './lead.js';
 import { isLockfile } from './lockfile.js';
@@ -44,7 +45,7 @@ const taskSchema = z.object({
   repo: z.string().optional().describe('absolute path of a git repo; required for type "code"'),
   use: z.string().optional().describe('force an account ("accountId") or model ("accountId/modelId")'),
   size: z.enum(['small', 'medium', 'large']).optional(),
-  effort: z.enum(EFFORTS).optional().describe('how hard a reasoning model should think: low, medium or high; leave unset for the default. Higher is slower and uses more quota'),
+  effort: z.enum(EFFORTS).optional().describe('how hard a reasoning model should think: low, medium or high. Higher is slower and uses more quota. Leave it unset unless the task is clearly easier or harder than its type suggests: on ChatGPT (Codex) accounts omnitrix then picks low for bulk, writing, code_snippet and vision, medium for code and long_context, and high for review and reasoning, unless the user set a level for the account'),
   check: z.boolean().optional().describe("after the result, a different account checks it against 'acceptance' (required) and reports pass or fail. Uses that account's quota too. For code tasks it reads the worker's report, not the diff"),
   fast: z.boolean().optional().describe('prefer models that answered quickly before, judged by their typical answer time on this computer; for small lookups and quick drafts where waiting matters more than depth'),
   route: z.string().min(1).max(40).optional().describe('a named route from pool_status "routes": fast, deep (strongest models), cheap (free and plan-included first), local (this computer only), or one the user defined. It changes how this task is ranked; quota, privacy and past results still apply'),
@@ -276,7 +277,12 @@ export function jobView(j: Job, full: boolean, engine: Engine) {
   return out;
 }
 
-export function buildServer(engine: Engine): McpServer {
+export interface ServerHooks {
+  /** called after each successful dispatch; startMcp uses it to show the dashboard once */
+  onDispatch?: () => void;
+}
+
+export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer {
   const server = new McpServer({ name: 'omnitrix', version: VERSION }, { instructions: INSTRUCTIONS });
 
   server.registerTool(
@@ -366,6 +372,7 @@ export function buildServer(engine: Engine): McpServer {
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
+      hooks.onDispatch?.();
       const lines = jobs.map((j) => `${j.id}  ${j.task.title}  -> ${j.status === 'failed' ? `FAILED: ${j.error}` : j.accountId ? `${j.accountId}/${j.model}` : 'queued'}`);
       const brief = jobs.map((j) => ({ job_id: j.id, title: j.task.title, status: j.status, account: j.accountId, model: j.model, error: j.status === 'failed' ? j.error : undefined }));
       return text(lines.join('\n') + '\n\nCall get_results with these job ids.', { job_ids: jobs.map((j) => j.id), jobs: brief });
@@ -474,9 +481,28 @@ export function buildServer(engine: Engine): McpServer {
   return server;
 }
 
+/**
+ * The first dispatch of a session opens the dashboard, unless the user turned this off or nobody is there to
+ * look (a test run or a CI machine). ensureDashboard itself opens no tab when a page already shows it.
+ */
+export function dashboardOnce(engine: Engine, show: () => Promise<void>): () => void {
+  let shown = false;
+  return () => {
+    if (shown || engine.config().settings.openDashboard === 'off' || process.env.OMNITRIX_NO_BROWSER === '1' || process.env.CI) return;
+    shown = true;
+    show().catch((err) => process.stderr.write(`omnitrix: could not open the dashboard: ${err instanceof Error ? err.message : err}\n`));
+  };
+}
+
 export function startMcp(): void {
   const engine = new Engine();
-  serveStdio(() => buildServer(engine), { onerror: (err) => process.stderr.write(`omnitrix: ${err.message}\n`) });
+  const onDispatch = dashboardOnce(engine, () => ensureDashboard().then(() => undefined));
+  serveStdio(() => buildServer(engine, { onDispatch }), { onerror: (err) => process.stderr.write(`omnitrix: ${err.message}\n`) });
   // an update leaves the old background dashboard running; Claude Code restarting omnitrix is the moment to replace it
   void refreshDashboards();
+  try {
+    upgradeCodexModels();
+  } catch (err) {
+    process.stderr.write(`omnitrix: could not read Codex's model list: ${err instanceof Error ? err.message : err}\n`);
+  }
 }
