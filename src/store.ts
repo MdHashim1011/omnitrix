@@ -88,6 +88,15 @@ const STALE_LOCK_MS = 10_000;
 // After this long, the change goes ahead without the lock rather than hang the caller.
 const LOCK_WAIT_MS = 5_000;
 
+/** The text the holder wrote into the lock, or undefined while there is none to read. */
+function lockHolder(lock: string): string | undefined {
+  try {
+    return fs.readFileSync(lock, 'utf8') || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** True when a lock was left by a process that is gone, so it can be taken over at once. */
 function abandoned(lock: string): boolean {
   let text: string;
@@ -113,7 +122,10 @@ function abandoned(lock: string): boolean {
 export function withLock<T>(file: string, fn: () => T): T {
   const lock = `${file}.lock`;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  // The wait counts from the last change of holder: busy processes that pass the lock on are working,
+  // and only one holder that keeps it this long is treated as stuck.
+  let deadline = Date.now() + LOCK_WAIT_MS;
+  let holder: string | undefined;
   let fd: number | undefined;
   // the lock names its holder, so a lock left by a crashed process is recognised at once
   const mine = `${process.pid} ${Math.random().toString(36).slice(2)}`;
@@ -127,6 +139,11 @@ export function withLock<T>(file: string, fn: () => T): T {
       if (code !== 'EEXIST' && code !== 'EPERM') throw err;
       // Read again right before deleting: a lock just taken by a live process names that process and stays.
       if (abandoned(lock) && abandoned(lock)) fs.rmSync(lock, { force: true });
+      const now = lockHolder(lock);
+      if (now !== undefined && now !== holder) {
+        holder = now;
+        deadline = Date.now() + LOCK_WAIT_MS;
+      }
       if (Date.now() > deadline) {
         process.stderr.write(`omnitrix: ${path.basename(file)} stayed locked for ${LOCK_WAIT_MS / 1000} s; changing it without the lock\n`);
         break;

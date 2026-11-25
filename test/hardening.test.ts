@@ -102,6 +102,20 @@ describe('the lock, after review', () => {
     fs.rmSync(lock);
   }, 15_000);
 
+  it('keeps waiting while the lock passes from one holder to the next', async () => {
+    const { withLock, files } = await import('../src/store.js');
+    fs.mkdirSync(home, { recursive: true });
+    // On a slow computer several busy processes can keep a waiter out for more than 5 s; they are working,
+    // not stuck, so going ahead without the lock would overwrite one of their changes.
+    const lock = `${files.health()}.lock`;
+    const released = path.join(home, 'released');
+    const script = `const fs=require('fs');const [lock,released]=process.argv.slice(1);let n=0;fs.writeFileSync(lock,process.pid+' h0');const t=setInterval(()=>{n++;if(n<7){fs.writeFileSync(lock,process.pid+' h'+n);return}clearInterval(t);fs.writeFileSync(released,'1');fs.rmSync(lock)},1000);`;
+    const holder = spawn(process.execPath, ['-e', script, lock, released], { stdio: 'ignore' });
+    cleanups.push(() => holder.kill());
+    await expect.poll(() => fs.existsSync(lock), { timeout: 10_000 }).toBe(true);
+    expect(withLock(files.health(), () => fs.existsSync(released))).toBe(true);
+  }, 30_000);
+
   it('tells Windows not to look for programs in the current folder, for every program omnitrix starts', () => {
     const l = launch({ file: 'C:\\x\\tool.cmd', prefix: [], shell: true }, []);
     if (process.platform === 'win32') expect(l.env.NoDefaultCurrentDirectoryInExePath).toBe('1');
