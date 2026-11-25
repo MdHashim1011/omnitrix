@@ -116,6 +116,16 @@ describe('MCP server (real stdio process)', () => {
     expect(res.structuredContent).toEqual({ jobs: [], pending: 0, unknown: ['jnope0000'] });
   });
 
+  it('reminds Claude to rate a finished job until it is rated', async () => {
+    const sent: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 'r', type: 'writing', prompt: 'p' }] } });
+    const id = sent.structuredContent.job_ids[0];
+    const first: any = await client.callTool({ name: 'get_results', arguments: { job_ids: [id], wait_seconds: 10 } });
+    expect(first.content[0].text).toMatch(/^When you have checked this result, rate it with rate_result/);
+    await client.callTool({ name: 'rate_result', arguments: { job_id: id, accepted: true } });
+    const again: any = await client.callTool({ name: 'get_results', arguments: { job_ids: [id], wait_seconds: 0 } });
+    expect(again.content[0].text).not.toMatch(/rate_result/);
+  });
+
   it('keeps the note given with a verdict', async () => {
     const sent: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 'n', type: 'writing', prompt: 'p' }] } });
     const id = sent.structuredContent.job_ids[0];

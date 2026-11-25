@@ -408,7 +408,11 @@ export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer 
       const missing = job_ids.filter((id) => !jobs.some((j) => j.id === id));
       const views = jobs.map((j) => jobView(j, !!full, engine));
       const pending = jobs.filter((j) => j.status === 'queued' || j.status === 'running' || j.check?.status === 'pending' || j.verify?.test?.status === 'running').length;
-      const head = pending ? `${pending} still working; call get_results again for them.\n\n` : '';
+      // A report from another computer: 59 jobs, none rated, so the router had learned nothing from any of them.
+      const unrated = jobs.filter((j) => j.status === 'done' && !j.verdict).length;
+      const head =
+        (pending ? `${pending} still working; call get_results again for them.\n\n` : '') +
+        (unrated ? `When you have checked ${unrated === 1 ? 'this result' : `these ${unrated} results`}, rate ${unrated === 1 ? 'it' : 'each one'} with rate_result; the router learns only from rated jobs.\n\n` : '');
       const miss = missing.length ? `\nunknown job ids: ${missing.join(', ')}` : '';
       return text(head + JSON.stringify(views, null, 2) + miss, { jobs: views, pending, unknown: missing });
     },
