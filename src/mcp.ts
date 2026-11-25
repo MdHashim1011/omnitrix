@@ -13,7 +13,8 @@ import { formatTokens, roughSpan, type WindowUse } from './usage.js';
 import { testSeconds, verifySummary } from './verify.js';
 import { describeDelegated } from './value.js';
 import { VERSION } from './version.js';
-import { ensureDashboard, runningDashboard, refreshDashboards } from './dashboard-launch.js';
+import { ensureDashboard, ping, runningDashboard, refreshDashboards } from './dashboard-launch.js';
+import { installedVersion, updateNote } from './installed.js';
 import { JOB_ID } from './store.js';
 import { describeLead, leadOut, loadLeadQuota } from './lead.js';
 import { isLockfile } from './lockfile.js';
@@ -89,7 +90,9 @@ const poolOut = z.object({
   accounts: z.array(accountOut),
   team: teamOut.optional(),
   routes: z.array(z.object({ name: z.string(), description: z.string() })).optional().describe('named routes a task may set in "route"'),
-  dashboard: z.string().nullable().describe('address of the live dashboard when it runs; a client with a browser can open it for the user'),
+  dashboard: z.string().nullable().describe('address of the live dashboard when it runs'),
+  dashboard_open: z.boolean().optional().describe('a page already shows the dashboard; do not open another one unless the user asks'),
+  update: z.string().optional().describe('a newer omnitrix is installed than the one running; tell the user to restart the app'),
   delegated: z.object({ days: z.number(), jobs: z.number(), accepted: z.number(), rejected: z.number(), tokens: z.number() }).optional()
     .describe('work other accounts did instead of Claude in the last days: jobs answered, how many Claude accepted or rejected, and their tokens'),
   lead: z.object({
@@ -328,12 +331,16 @@ export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer 
         pausedModels: a.pausedModels,
         stale: !!a.usage.stale,
       }));
-      if (dashboard) lines.push(`live dashboard: ${dashboard}`);
+      const pages = dashboard ? (await ping(Number(new URL(dashboard).port)))?.viewers ?? 0 : 0;
+      const shown = dashboardLine(dashboard, pages);
+      if (shown) lines.push(shown);
+      const update = updateNote(VERSION, installedVersion());
+      if (update) lines.push(update);
       const delegated = engine.delegated(7);
       if (delegated.jobs) lines.push(describeDelegated(delegated));
       const routes = routeList(engine.config().settings);
       lines.push(`routes: ${routes.map((r) => `${r.name} (${r.description})`).join('; ')}`);
-      return text(lines.join('\n'), { ready, total: pool.length, accounts, ...(team ? { team } : {}), dashboard, delegated, lead, routes });
+      return text(lines.join('\n'), { ready, total: pool.length, accounts, ...(team ? { team } : {}), dashboard, ...(dashboard ? { dashboard_open: pages > 0 } : {}), ...(update ? { update } : {}), delegated, lead, routes });
     },
   );
 
@@ -485,6 +492,17 @@ export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer 
  * The first dispatch of a session opens the dashboard, unless the user turned this off or nobody is there to
  * look (a test run or a CI machine). ensureDashboard itself opens no tab when a page already shows it.
  */
+/**
+ * The dashboard line of pool_status. omnitrix opens the dashboard in the default browser itself, so a client
+ * with a browser of its own, such as Claude's browser pane, opens it only when no page shows it yet.
+ */
+export function dashboardLine(url: string | null, pages: number): string | undefined {
+  if (!url) return undefined;
+  return pages > 0
+    ? `live dashboard: ${url} (already open in a browser, so do not open it again unless the user asks)`
+    : `live dashboard: ${url} (no page shows it; if you have a browser, you can open it for the user)`;
+}
+
 export function dashboardOnce(engine: Engine, show: () => Promise<void>): () => void {
   let shown = false;
   return () => {

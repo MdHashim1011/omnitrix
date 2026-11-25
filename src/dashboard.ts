@@ -13,6 +13,7 @@ import { ICON_SVG } from './icon.js';
 import { leadOut, loadLeadQuota } from './lead.js';
 import { claudeProjectsDir, measureOverhead, resultTokens, type Overhead } from './overhead.js';
 import { VERSION } from './version.js';
+import { installedVersion } from './installed.js';
 
 type Behind = { commits: number; files: string[] };
 
@@ -156,7 +157,7 @@ export function startDashboard(port: number): { url: string; server: http.Server
   const behindOf = behindReader(engine);
   const sinceOf = sinceCheckReader(engine);
   const overheadOf = overheadReader();
-  const snapshot = (): string => JSON.stringify({ version: VERSION, accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf, sinceOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
+  const snapshot = (): string => JSON.stringify({ version: VERSION, installed: installedVersion(), accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf, sinceOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
   // Quota reads and local server probes run in the background and are throttled; the page never waits for them.
   const slowChecks = () => {
     if (Date.now() - slowAt < SLOW_MS) return;
@@ -236,7 +237,7 @@ export function startDashboard(port: number): { url: string; server: http.Server
     if (req.url === '/api/status') {
       polledAt = Date.now();
       slowChecks();
-      json(res, { version: VERSION, now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf, sinceOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
+      json(res, { version: VERSION, installed: installedVersion(), now: Date.now(), accounts: engine.pool(), jobs: recentJobs(engine, 30, behindOf, sinceOf), delegated: engine.delegated(7), overhead: overheadOf(), lead: leadOut(loadLeadQuota()) });
       return;
     }
     // The one action the page can take: removing finished jobs from its list. Only the page this server
@@ -588,7 +589,7 @@ function draw(d){
   var focused=document.activeElement&&document.activeElement.closest?document.activeElement.closest('details[data-key]'):null;
   var focusKey=focused?focused.getAttribute('data-key'):null;
   var open={};document.querySelectorAll('details[data-key]').forEach(function(x){if(x.open)open[x.getAttribute('data-key')]=true});
-  document.getElementById('ver').textContent='v'+d.version;
+  document.getElementById('ver').textContent='v'+d.version+(d.installed&&d.installed!==d.version?' · '+d.installed+' is installed: run omnitrix dashboard to switch':'');
   var acc=d.accounts, ready=acc.filter(function(a){return a.state==='ready'||a.state==='busy'}).length;
   var sum=function(k){return acc.reduce(function(s,a){return s+(a.usage[k]||0)},0)};
   var attention=acc.filter(function(a){return a.enabled&&a.state!=='ready'&&a.state!=='busy'}).length;
@@ -598,7 +599,7 @@ function draw(d){
     // the work other accounts did instead of Claude, counted from the usage log
     +(function(g,o){g=g||{jobs:0,tokens:0,accepted:0};return '<div class="kpi"><span>Done by other accounts, 7 days</span><b>'+g.jobs+' job'+(g.jobs===1?'':'s')+'</b><small>'+esc(fmt(g.tokens))+' tokens'+(g.accepted?', '+g.accepted+' accepted':'')+'</small>'
       // Claude's own part, from Claude Code's session files (omnitrix overhead); absent until measured
-      +(o?'<small title="Output tokens of Claude&#39;s replies that called omnitrix, and an estimate of the omnitrix results it read, over the same 7 days">Claude: '+esc(fmt(o.outputTokens))+' written, '+esc(fmt(o.resultTokens))+' read</small>':'')
+      +(o?'<small title="Output tokens of Claude&#39;s replies that called omnitrix, and an estimate of the omnitrix results it read, over the same 7 days. Claude&#39;s plan limit also counts all its other work, so it is much higher">Claude, omnitrix calls only: '+esc(fmt(o.outputTokens))+' written, '+esc(fmt(o.resultTokens))+' read</small>':'')
       +'</div>'})(d.delegated,d.overhead)
     +'<div class="kpi"><span>Known cost, last 24 h</span><b>'+esc(money(sum('costToday')))+'</b></div>';
   document.getElementById('acc-sub').textContent=acc.length?acc.length+' connected':'';

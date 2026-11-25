@@ -526,20 +526,21 @@ program
   .option('--repo <path>', 'git repo for code tasks')
   .option('--fast', 'prefer models that answered quickly before')
   .option('--route <name>', 'use a named route (see omnitrix routes)')
+  .option('--quiet', 'print only the answer, without the account and token lines on stderr')
   .action(async (words: string[], o) => {
     const engine = new Engine();
     const prompt = words.join(' ');
     const [job] = engine.dispatch([{ title: prompt.slice(0, 60), type: o.type as TaskType, prompt, privacy: o.privacy, use: o.use, effort: o.effort, fast: o.fast, route: o.route, repo: o.repo ? path.resolve(o.repo) : undefined }]);
     // wait a moment first so the chosen account is printed before the answer arrives
     let done = await engine.wait([job!.id], 1);
-    if (done[0]?.accountId) process.stderr.write(`-> ${done[0].accountId}/${done[0].model}\n`);
+    if (done[0]?.accountId && !o.quiet) process.stderr.write(`-> ${done[0].accountId}/${done[0].model}\n`);
     while (done[0] && (done[0].status === 'queued' || done[0].status === 'running')) done = await engine.wait([job!.id], 30);
     const j = done[0]!;
     if (j.status !== 'done') {
       fail(j.error ?? j.status);
       return;
     }
-    process.stderr.write(`(${j.accountId}/${j.model}, ${(j.usage?.inputTokens ?? 0) + (j.usage?.outputTokens ?? 0)} tokens)\n`);
+    if (!o.quiet) process.stderr.write(`(${j.accountId}/${j.model},${(j.usage?.inputTokens ?? 0) + (j.usage?.outputTokens ?? 0)} tokens)\n`);
     console.log(engine.readOutput(j.id) ?? j.preview);
     // no process.exit here: exiting while a connection is still closing crashes Node on Windows
   });

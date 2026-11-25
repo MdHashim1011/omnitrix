@@ -28,11 +28,24 @@ export function codexModelInfo(ids: string[]): ModelInfo[] {
     return m ? { major: Number(m[1]), minor: Number(m[2] ?? 0) } : undefined;
   };
   const newest = ids.map(version).filter((v): v is { major: number; minor: number } => !!v).sort((a, b) => b.major - a.major || b.minor - a.minor)[0];
+  const QUALITY = ['coding', 'reasoning', 'writing', 'longContext'] as const;
+  const gen = (id: string) => {
+    const v = version(id);
+    return v ? `${v.major}.${v.minor}` : id;
+  };
+  const newestGen = newest ? `${newest.major}.${newest.minor}` : undefined;
+  // Codex lists a plan's models in its own order, its default first. The names say little about which of
+  // two models of one generation is stronger, so within a generation the first one listed stays ahead, and
+  // an older generation stays below the first model of the newest one.
+  const leaders = new Map<string, ModelInfo>();
   return ids.map((id) => {
     const model = makeModel(id);
     const v = version(id);
     const drop = !newest || !v || (v.major === newest.major && v.minor === newest.minor) ? 0 : v.major === newest.major ? 1 : 2;
-    if (drop) for (const k of ['coding', 'reasoning', 'writing', 'longContext'] as const) model.skills[k] = Math.max(1, model.skills[k] - drop);
+    if (drop) for (const k of QUALITY) model.skills[k] = Math.max(1, model.skills[k] - drop);
+    const above = [leaders.get(gen(id)), gen(id) !== newestGen && newestGen ? leaders.get(newestGen) : undefined].filter((m): m is ModelInfo => !!m);
+    for (const k of QUALITY) for (const m of above) model.skills[k] = Math.max(1, Math.min(model.skills[k], m.skills[k] - 1));
+    if (!leaders.has(gen(id))) leaders.set(gen(id), model);
     return model;
   });
 }

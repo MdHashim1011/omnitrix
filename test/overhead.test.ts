@@ -138,7 +138,7 @@ describe("Claude's own work on omnitrix", () => {
     const scripts = [...PAGE.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)].map((m) => m[1]!);
     expect(scripts.length).toBeGreaterThan(0);
     for (const s of scripts) expect(() => new Function(s)).not.toThrow();
-    expect(PAGE).toContain(`>Claude: '+esc(fmt(o.outputTokens))+' written, '+esc(fmt(o.resultTokens))+' read<`);
+    expect(PAGE).toContain(`>Claude, omnitrix calls only: '+esc(fmt(o.outputTokens))+' written, '+esc(fmt(o.resultTokens))+' read<`);
   });
 
   it('shows nothing on the dashboard when Claude made no omnitrix calls', async () => {
