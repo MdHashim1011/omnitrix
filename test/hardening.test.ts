@@ -133,6 +133,90 @@ describe('the lock, after review', () => {
     fs.rmSync(lock);
   }, 15_000);
 
+  it.each([1, 2])('never deletes the fresh lock of another waiter that took over the same abandoned lock (after look %i)', async (at) => {
+    const { withLock, files } = await import('../src/store.js');
+    fs.mkdirSync(home, { recursive: true });
+    // found by a review through omnitrix: two waiters both find a lock whose process is gone; the first deletes
+    // it and takes the lock, then the second deletes the first one's fresh lock and both change the file at once
+    const lock = `${files.health()}.lock`;
+    fs.writeFileSync(lock, '999999 deadbeef');
+    const read = fs.readFileSync.bind(fs) as (...a: unknown[]) => unknown;
+    let reads = 0;
+    let otherHolds = false;
+    const spy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: unknown[]) => {
+      const out = read(...args);
+      if (args[0] !== lock) return out;
+      reads++;
+      if (otherHolds && reads === at + 3) {
+        // the other waiter finishes its change and lets go
+        fs.rmSync(lock, { force: true });
+        otherHolds = false;
+      }
+      if (reads === at) {
+        // the other waiter, between this waiter's last look and its delete, follows the same rules
+        let guard: number | undefined;
+        try {
+          guard = fs.openSync(`${lock}.takeover`, 'wx');
+        } catch {
+          /* this waiter is taking over; the other one waits */
+        }
+        if (guard !== undefined) {
+          fs.rmSync(lock, { force: true });
+          fs.writeFileSync(lock, `${process.pid} other`);
+          otherHolds = true;
+          fs.closeSync(guard);
+          fs.rmSync(`${lock}.takeover`, { force: true });
+        }
+      }
+      return out;
+    }) as typeof fs.readFileSync);
+    cleanups.push(() => spy.mockRestore());
+    expect(withLock(files.health(), () => otherHolds)).toBe(false);
+  });
+
+  it('still takes over an abandoned lock when a crash left the takeover guard behind', async () => {
+    const { withLock, files } = await import('../src/store.js');
+    fs.mkdirSync(home, { recursive: true });
+    const lock = `${files.health()}.lock`;
+    fs.writeFileSync(lock, '999999 deadbeef');
+    fs.writeFileSync(`${lock}.takeover`, '');
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(`${lock}.takeover`, old, old);
+    const t0 = Date.now();
+    expect(withLock(files.health(), () => fs.readFileSync(lock, 'utf8'))).not.toBe('999999 deadbeef');
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(fs.existsSync(`${lock}.takeover`)).toBe(false);
+  });
+
+  it('clears at once a takeover guard whose process is gone', async () => {
+    const { withLock, files } = await import('../src/store.js');
+    fs.mkdirSync(home, { recursive: true });
+    // found by a review through omnitrix: a waiter killed while taking over made the next ones give up after 5 s
+    const lock = `${files.health()}.lock`;
+    fs.writeFileSync(lock, '999999 deadbeef');
+    fs.writeFileSync(`${lock}.takeover`, '999998 deadbeef');
+    const t0 = Date.now();
+    withLock(files.health(), () => undefined);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(fs.existsSync(`${lock}.takeover`)).toBe(false);
+  });
+
+  it('never clears the takeover guard of a waiter that is still running, however old it is', async () => {
+    const { withLock, files } = await import('../src/store.js');
+    fs.mkdirSync(home, { recursive: true });
+    // found by a review through omnitrix: a guard holder paused for over 10 s lost its guard to a second waiter,
+    // and both then took over the lock
+    const lock = `${files.health()}.lock`;
+    const guard = `${lock}.takeover`;
+    fs.writeFileSync(lock, '999999 deadbeef');
+    fs.writeFileSync(guard, `${process.pid} paused`);
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(guard, old, old);
+    withLock(files.health(), () => undefined);
+    expect(fs.readFileSync(guard, 'utf8')).toBe(`${process.pid} paused`);
+    fs.rmSync(guard);
+  }, 15_000);
+
   it('removes its lock again when writing its name into it fails', async () => {
     const { withLock, files } = await import('../src/store.js');
     fs.mkdirSync(home, { recursive: true });

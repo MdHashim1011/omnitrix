@@ -23,6 +23,7 @@ export const files = {
   worktrees: () => path.join(homeDir(), 'worktrees'),
   seats: () => path.join(homeDir(), 'seats'),
   owners: () => path.join(homeDir(), 'owners'),
+  dashboard: () => path.join(homeDir(), 'dashboard.json'),
 };
 
 /** What job ids look like (see newId in engine.ts). Anything else could name a file outside the jobs folder. */
@@ -115,6 +116,31 @@ function abandoned(lock: string): boolean {
 }
 
 /**
+ * Delete a lock whose process is gone. Only one waiter at a time may do this, and it looks again while it may:
+ * otherwise a second waiter that saw the same old lock could delete the fresh lock that the first one just took.
+ */
+function removeAbandoned(lock: string, mine: string): void {
+  const guard = `${lock}.takeover`;
+  let fd: number;
+  try {
+    fd = fs.openSync(guard, 'wx');
+  } catch {
+    // Another waiter is taking over. The guard names its holder too, so one left by a crash is cleared at once,
+    // and one whose holder lives is never cleared, however long the system paused that holder.
+    if (abandoned(guard)) fs.rmSync(guard, { force: true });
+    return;
+  }
+  try {
+    fs.writeSync(fd, mine);
+    // Another waiter that cleared this guard by mistake may be taking over now; then leave the lock to it.
+    if (abandoned(lock) && lockHolder(guard) === mine) fs.rmSync(lock, { force: true });
+  } finally {
+    fs.closeSync(fd);
+    if (lockHolder(guard) === mine) fs.rmSync(guard, { force: true });
+  }
+}
+
+/**
  * Run `fn` while holding a lock file beside `file`. Several omnitrix processes change the same files
  * (verdicts, account health, quota readings, keys) by reading, changing and writing them; without the
  * lock, one process's write silently replaces another's.
@@ -146,8 +172,7 @@ export function withLock<T>(file: string, fn: () => T): T {
       const code = (err as NodeJS.ErrnoException).code;
       // Windows answers EPERM while another process is deleting the lock
       if (code !== 'EEXIST' && code !== 'EPERM') throw err;
-      // Read again right before deleting: a lock just taken by a live process names that process and stays.
-      if (abandoned(lock) && abandoned(lock)) fs.rmSync(lock, { force: true });
+      if (abandoned(lock)) removeAbandoned(lock, mine);
       const now = lockHolder(lock);
       if (now !== undefined && now !== holder) {
         holder = now;
