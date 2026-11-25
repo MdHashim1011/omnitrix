@@ -17,25 +17,52 @@ export function missingKey(account: Account): string {
   return `no API key for ${account.id}: none is set; use "omnitrix set ${account.id} --key-env NAME"`;
 }
 
+const MINUTE = /per[ _]?min(ute)?(?![a-z])|perminute|per_minute|\b[rt]pm\b/;
+const DAY = /per[ _]?day|perday|\b[rt]pd\b/;
+// an allowance that names its model: Groq's "rate limit reached for model `m`", Gemini's "PerModel" quota ids,
+// OpenAI's "rate limit reached for gpt-x in organization"
+const MODEL_SCOPE = /(for model\b|per[ _]?model|"model"\s*:\s*"|rate limit reached for \S+ in organization)/;
+
 export function classifyStatus(status: number, body: string): ErrorKind {
   const text = body.toLowerCase();
   if (status === 401 || status === 403) return 'auth';
   // Gemini answers a wrong key with 400; the key is the problem, not the task
   if (status === 400 && /(api_key_invalid|api key not valid|invalid api key)/.test(text)) return 'auth';
-  // Free keys at OpenRouter or Mistral answer 402 for the paid models only; the account's free models still
-  // work. The engine pauses just that model, or the whole account when it has no other.
-  if (status === 402) return 'paid_model';
+  if (status === 402) {
+    // OpenRouter's limit on spending in flight passes in a moment
+    if (/in_flight_budget/.test(text)) return 'rate_limit';
+    // Free keys at OpenRouter or Mistral answer 402 for the paid models only; the account's free models still
+    // work. The engine pauses just that model, or the whole account when it has no other.
+    return 'paid_model';
+  }
+  // One request bigger than the model's whole allowance for a minute (Groq on a free key), or too large for the
+  // server at all: waiting never helps, a smaller request or another model does. A limit of 0 is handled below.
+  if (status === 413 || (status === 429 && /request too large/.test(text) && !/limit:? 0(?![\d.])/.test(text))) return 'too_long';
   if (status === 429) {
-    // "high demand" or "overloaded" is about one busy model; "at capacity" is left out, since providers also
-    // say it about the account's own limit
-    if (/(high demand|overloaded)/.test(text)) return 'server';
+    // "high demand" or "overloaded" is about one busy model, and so is a model that OpenRouter's upstream
+    // provider is throttling; "at capacity" is left out, since providers also say it about the account's own limit
+    if (/(high demand|overloaded|rate-limited upstream|upstream_provider_shared_pool)/.test(text)) return 'server';
+    // Anthropic's spend cap holds the whole organization until the date it names
+    if (/(enforced_spend_limit|reached your api usage limits)/.test(text)) return 'quota';
     // "limit: 0" means the plan includes no allowance for this model at all (Gemini's free tier and Pro
     // models, for example). That is the model's problem, not a sign that the whole account is used up.
     if (/limit: 0(?![\d.])/.test(text)) return 'model_gone';
-    // Gemini says "you exceeded your current quota" for its per-minute limits too; those pass in a minute
-    if (/perminute/.test(text) && !/perday/.test(text)) return 'rate_limit';
-    // some providers use 429 for "you are out of credits" as well as "slow down"
-    return /(quota|insufficient|exceeded your current|billing|credit|balance)/.test(text) ? 'quota' : 'rate_limit';
+    // OpenRouter's daily allowance of free requests is the key's, shared by all its free models
+    if (/free-models-per-day/.test(text)) return 'quota';
+    // A limit per minute passes in a minute, however the provider words it ("tokens per minute", "per min",
+    // Gemini's "PerMinutePerProject", Google's "per_minute_per_project"), even with an upgrade offer beside it.
+    // Alibaba's DashScope reports its limit per minute as "exceeded your current quota" with a link to "token-limit".
+    if ((MINUTE.test(text) && !DAY.test(text)) || /error-code#token-limit/.test(text)) return 'rate_limit';
+    // Links are left out: "upgrade at .../settings/billing" says nothing about whether credit is left
+    const words = text.replace(/https?:\/\/[^\s"'<>)\]]+/g, ' ');
+    // A used-up allowance that names its model is that model's alone
+    if (MODEL_SCOPE.test(words) && /(quota|exhausted|exceeded|limit reached)/.test(words)) return 'model_quota';
+    // An empty balance or plan is the account's
+    if (/(exceeded your current quota|insufficient|credit|balance|billing|payment)/.test(words)) return 'quota';
+    // Any other used-up allowance is taken as the model's, which Gemini's "resource has been exhausted" often
+    // is: the account's other models still get their turn, and an account with only that model rests
+    if (/(quota|exhausted)/.test(words)) return 'model_quota';
+    return 'rate_limit';
   }
   if (status === 408) return 'timeout';
   if (status >= 500) return 'server';
@@ -44,6 +71,19 @@ export function classifyStatus(status: number, body: string): ErrorKind {
   if ((status === 404 || status === 400) && retiredModel(text)) return 'model_gone';
   if (status >= 400) return 'bad_request';
   return 'unknown';
+}
+
+/**
+ * The per-minute token limit in Groq's "Request too large for model `m` ... on tokens per minute (TPM): Limit
+ * 6000, Requested 16400" (OpenAI writes "tokens per min"). An "output tokens per minute" limit counts only the
+ * answer, the other one the prompt too. A limit in other units, such as the bytes of a request, is not one.
+ */
+export function minuteLimit(body: string): { tokens: number; outputOnly: boolean } | undefined {
+  const text = body.toLowerCase();
+  const on = /request too large.*?\bon ((input |output )?tokens per min(ute)?\b)[^:]*:\s*limit:?\s+(\d+)/.exec(text);
+  if (!on || Number(on[4]) <= 0) return undefined;
+  // a limit on the prompt alone leaves the answer free, which a limit on both covers safely
+  return { tokens: Number(on[4]), outputOnly: on[2] === 'output ' };
 }
 
 /** Gemini gives its wait in the answer (`"retryDelay": "37s"`) rather than in a Retry-After header. */
@@ -181,7 +221,11 @@ export async function postJson(url: string, headers: Record<string, string>, bod
     const text = await readCapped(res, MAX_ANSWER);
     if (!res.ok) {
       const kind = classifyStatus(res.status, text);
-      throw new DriverError(`HTTP ${res.status}: ${redact(errorMessage(text).slice(0, 400))}`, kind, res.status, retryAfterMs(res.headers) ?? retryDelayInBody(text));
+      // When an answer names a limit per day beside one per minute, its short wait is for the minute; the day
+      // limit may still hold, so the engine's own longer rest applies instead
+      const both = kind === 'model_quota' && MINUTE.test(text.toLowerCase()) && DAY.test(text.toLowerCase());
+      const wait = both ? undefined : retryAfterMs(res.headers) ?? retryDelayInBody(text);
+      throw new DriverError(`HTTP ${res.status}: ${redact(errorMessage(text).slice(0, 400))}`, kind, res.status, wait, undefined, minuteLimit(text));
     }
     let json: any;
     try {

@@ -157,6 +157,10 @@ export interface AccountHealth {
   measured?: { remainingRequests?: number; remainingTokens?: number; resetAt?: number; at: number; source: string };
   /** how many prompt tokens this model really reads, learned when it cut a longer prompt (key from contextLimitKey) */
   contextTokens?: number;
+  /** the model's token limit for a minute, learned when a request was bigger than all of it (key from minuteLimitKey) */
+  minuteTokens?: number;
+  /** whether that limit counts only the answer, not the prompt */
+  minuteOutputOnly?: boolean;
   /** when this entry was written */
   at?: number;
 }
@@ -182,7 +186,7 @@ export interface UsageRecord {
 export const EFFORTS = ['low', 'medium', 'high'] as const;
 export type Effort = (typeof EFFORTS)[number];
 
-export type ErrorKind = 'rate_limit' | 'quota' | 'paid_model' | 'auth' | 'bad_request' | 'server' | 'network' | 'timeout' | 'cancelled' | 'model_gone' | 'too_long' | 'unknown';
+export type ErrorKind = 'rate_limit' | 'quota' | 'model_quota' | 'paid_model' | 'auth' | 'bad_request' | 'server' | 'network' | 'timeout' | 'cancelled' | 'model_gone' | 'too_long' | 'unknown';
 
 export interface TaskSpec {
   title: string;
@@ -349,6 +353,8 @@ export class DriverError extends Error {
     public retryAfterMs?: number,
     /** for too_long: how many prompt tokens the model reported reading */
     public readTokens?: number,
+    /** for too_long: the model's token limit for a minute, when one request is bigger than all of it */
+    public minuteLimit?: { tokens: number; outputOnly: boolean },
   ) {
     super(message);
     this.name = 'DriverError';

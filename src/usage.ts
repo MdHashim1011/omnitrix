@@ -251,7 +251,7 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
     if (r.accountId !== account.id) continue;
     if (!r.ok && r.ts >= now - DAY) failed++;
     // failed calls that never reached the model do not count against a quota
-    if (!(r.ok || r.errorKind === 'rate_limit' || r.errorKind === 'quota')) continue;
+    if (!(r.ok || r.errorKind === 'rate_limit' || r.errorKind === 'quota' || r.errorKind === 'model_quota')) continue;
     const t = r.inputTokens + r.outputTokens;
     if (r.ts >= now - MIN) minute++;
     if (r.ts >= now - HOUR) {

@@ -72,11 +72,11 @@ describe('errors from APIs', () => {
     expect(err.retryAfterMs).toBe(37_000);
   });
 
-  it("keeps Gemini's daily limit as a used-up quota", () => {
+  it("keeps Gemini's daily limit as a used-up allowance of that model, not a short wait", () => {
     const perDay = '{"error":{"code":429,"message":"You exceeded your current quota. Quota exceeded for metric: x, limit: 250","details":[{"violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}';
-    expect(classifyStatus(429, perDay)).toBe('quota');
+    expect(classifyStatus(429, perDay)).toBe('model_quota');
     const both = perDay.replace('"violations":[', '"violations":[{"quotaId":"GenerateRequestsPerMinutePerProjectPerModel-FreeTier"},');
-    expect(classifyStatus(429, both)).toBe('quota');
+    expect(classifyStatus(429, both)).toBe('model_quota');
   });
 
   it("knows Gemini's answer to a wrong key as a sign-in problem, not the task's", () => {

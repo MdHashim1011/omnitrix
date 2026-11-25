@@ -63,7 +63,8 @@ describe('http helpers', () => {
     expect(classifyStatus(404, 'page not found')).toBe('bad_request');
     // a plan with no allowance for one model must not mark the whole account as out of quota
     expect(classifyStatus(429, 'Quota exceeded for metric: free_tier_input_token_count, limit: 0, model: gemini-3.1-pro')).toBe('model_gone');
-    expect(classifyStatus(429, 'Quota exceeded for metric: free_tier_requests, limit: 250, model: gemini-flash')).toBe('quota');
+    // a used-up allowance of one model rests that model, and the account only when it has no other
+    expect(classifyStatus(429, 'Quota exceeded for metric: free_tier_requests, limit: 250, model: gemini-flash')).toBe('model_quota');
   });
 
   it('parses durations and retry headers', () => {

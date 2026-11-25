@@ -203,6 +203,12 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
         reject(`this model reads only about ${cut.contextTokens.toLocaleString('en-US')} tokens of a prompt, and this task is longer${account.provider === 'ollama' ? ' (start Ollama with OLLAMA_CONTEXT_LENGTH set higher to give it more room)' : ''}`, model.id);
         continue;
       }
+      // a model whose limit for a minute leaves no room for a useful answer cannot take the task
+      const minute = ctx.health[minuteLimitKey(account.id, model.id)];
+      if (answerRoom(minute, task.prompt.length + PROMPT_EXTRA_CHARS, answerTokens(task.size), now) < Math.min(MIN_ANSWER, answerTokens(task.size))) {
+        reject(`this task is too large for this model's per-minute limit of ${minute!.minuteTokens!.toLocaleString('en-US')} tokens on this key`, model.id);
+        continue;
+      }
       // Ollama's "-cloud" models run on Ollama's servers, even through a local Ollama
       if (privacy === 'secret' && /[-:]cloud$/i.test(model.id)) { reject('secret task: this model runs in the cloud', model.id); continue; }
       if (task.type === 'vision' && account.local && !model.visionChecked && !model.pinned) { reject('the server has not reported that this model reads images', model.id); continue; }
@@ -272,6 +278,33 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
 
   candidates.sort((a, b) => b.score - a.score);
   return { candidates, rejected };
+}
+
+/** The longest answer omnitrix asks an API model for, by task size. */
+export function answerTokens(size: TaskSpec['size']): number {
+  return size === 'small' ? 4000 : size === 'large' ? 32000 : 16000;
+}
+
+/** Below this, an answer is too short to be worth asking a model for. */
+const MIN_ANSWER = 1000;
+
+/** What omnitrix adds to a task's prompt before sending it, such as its rules and the acceptance line, counted high. */
+const PROMPT_EXTRA_CHARS = 2000;
+
+/**
+ * The longest answer that fits a model's token limit for a minute, once one is known: the limit itself when it
+ * counts only the answer, else what the prompt leaves of it. Prompt tokens are counted high (three characters
+ * each) and a tenth is kept free, so the request stays under the limit. It can be below MIN_ANSWER, or below 1.
+ */
+export function answerRoom(limit: AccountHealth | undefined, promptChars: number, wanted: number, now = Date.now()): number {
+  if (!limit?.minuteTokens || (limit.until ?? 0) <= now) return wanted;
+  const room = limit.minuteOutputOnly ? limit.minuteTokens : limit.minuteTokens - Math.ceil(promptChars / 3);
+  return Math.min(wanted, Math.floor(room * 0.9));
+}
+
+/** Where the learned token limit for a minute of one model is kept in health.json, apart from its prompt size. */
+export function minuteLimitKey(accountId: string, modelId: string): string {
+  return `${modelHealthKey(accountId, modelId)}#minute`;
 }
 
 /** Where the learned prompt size of one model is kept in health.json. */

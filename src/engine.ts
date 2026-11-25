@@ -11,7 +11,7 @@ import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
 import { reachable } from './init.js';
 import { budgetBlocks, budgetFor, estimateCost, loadTeam, periodStart, personSpend, readShared, shareRecord, type Reserved, type TeamSummary } from './team.js';
 import { loadQuotas, refreshQuotas } from './quota.js';
-import { route, routeDef, routeList, effectivePrivacy, fit, contextLimitKey, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
+import { route, routeDef, routeList, effectivePrivacy, fit, contextLimitKey, minuteLimitKey, modelHealthKey, answerRoom, answerTokens, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
@@ -33,7 +33,9 @@ const MAX_TRIES = 12;
 // config.json), so it also rests this long in health.json, which every process reads.
 const GONE_PAUSE_MS = 24 * 60 * 60_000;
 const MODEL_PAUSE_MS = 5 * 60_000;
-const MODEL_FAULTS = new Set(['model_gone', 'paid_model', 'server', 'timeout', 'too_long']);
+const MODEL_FAULTS = new Set(['model_gone', 'paid_model', 'model_quota', 'server', 'timeout', 'too_long']);
+/** Faults of one model that another model of the same account may not have; they do not use up a job's attempts. */
+const ONE_MODEL = new Set(['model_gone', 'paid_model', 'model_quota', 'too_long']);
 // how long a learned prompt size counts; the server may be given more room meanwhile
 const CONTEXT_MEMORY_MS = 7 * 24 * 60 * 60_000;
 const MAX_FILE_BYTES = 400_000;
@@ -1033,6 +1035,8 @@ export class Engine {
     let scratch: { path: string; root: string } | undefined;
     // only a failure while the provider is being called is the provider's; a broken checkout or a full disk is ours
     let calling = false;
+    // the longest answer asked for, kept to tell whether a token limit learned from a refusal would change it
+    let asked: number | undefined;
     let answered = false;
     let recorded = false;
     try {
@@ -1057,6 +1061,7 @@ export class Engine {
       // files come from the real repo, so a read-only task sees uncommitted work too
       const agent = runsAsAgent(account, edit);
       const prompt = buildPrompt(job.task, account, cwd, scratch ? job.task.repo : cwd);
+      asked = agent ? undefined : Math.max(1, answerRoom(this.health[minuteLimitKey(account.id, cand.model)], prompt.length + WORKER_SYSTEM.length, answerTokens(job.task.size)));
       calling = true;
       const result = await runDriver(
         {
@@ -1070,7 +1075,7 @@ export class Engine {
           signal: ctrl.signal,
           effort: job.effort,
           lean: cfg.settings.codexTools !== 'all',
-          maxOutputTokens: agent ? undefined : job.task.size === 'small' ? 4000 : job.task.size === 'large' ? 32000 : 16000,
+          maxOutputTokens: asked,
         },
         edit,
       );
@@ -1150,7 +1155,11 @@ export class Engine {
       // A model that broke is paused for five minutes, but one attempt can take that long, so the job itself
       // keeps it out from now on. After a local timeout, the same computer's models that are as big or
       // bigger would most likely time out too.
-      if (MODEL_FAULTS.has(e.kind)) {
+      // A first "request too large" taught the model its limit for a minute, so it may try once more, but only
+      // when that asks for a shorter answer than this attempt did; a second one keeps it out like any other fault.
+      const shorter = e.minuteLimit && asked !== undefined && answerRoom(this.health[minuteLimitKey(account.id, cand.model)], 0, asked) < asked;
+      const learned = !!shorter && job.attempts.filter((a) => a.accountId === account.id && a.model === cand.model && a.errorKind === 'too_long').length < 2;
+      if (MODEL_FAULTS.has(e.kind) && !learned) {
         const out = e.kind === 'timeout' && account.local ? avoidAfterTimeout(account.id, cand.model, this.localSizes) : [`${account.id}/${cand.model}`];
         job.task = { ...job.task, avoid: [...new Set([...(job.task.avoid ?? []), ...out])] };
       }
@@ -1169,7 +1178,7 @@ export class Engine {
       } else if (ctrl.signal.aborted || e.kind === 'cancelled') {
         job.status = 'cancelled';
         job.error = 'cancelled';
-      } else if (job.attempts.filter((a) => a.errorKind !== 'model_gone' && a.errorKind !== 'paid_model' && a.errorKind !== 'too_long').length < MAX_ATTEMPTS && job.attempts.length < MAX_TRIES && e.kind !== 'bad_request') {
+      } else if (job.attempts.filter((a) => !ONE_MODEL.has(a.errorKind ?? 'unknown')).length < MAX_ATTEMPTS && job.attempts.length < MAX_TRIES && e.kind !== 'bad_request') {
         job.status = 'queued'; // pump() will try the next best account
         job.error = attempt.error;
       } else {
@@ -1241,6 +1250,7 @@ export class Engine {
     const prev = this.health[account.id];
     if (e.kind === 'too_long') {
       if (e.readTokens) this.setHealth(contextLimitKey(account.id, model), { state: 'ready', contextTokens: e.readTokens, until: now + CONTEXT_MEMORY_MS, reason: 'cut a longer prompt' });
+      if (e.minuteLimit) this.setHealth(minuteLimitKey(account.id, model), { state: 'ready', minuteTokens: e.minuteLimit.tokens, minuteOutputOnly: e.minuteLimit.outputOnly, until: now + CONTEXT_MEMORY_MS, reason: 'has a small token limit per minute' });
       return;
     }
     if (e.kind === 'model_gone') {
@@ -1254,6 +1264,11 @@ export class Engine {
       this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + (e.retryAfterMs ?? GONE_PAUSE_MS), reason: 'needs a paid plan or credits' });
       return;
     }
+    // the provider rarely says when a model's own allowance comes back; look again in an hour unless told
+    if (e.kind === 'model_quota' && account.models.length > 1) {
+      this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + (e.retryAfterMs ?? 3600_000), reason: 'its own allowance is used up' });
+      return;
+    }
     if (e.kind === 'server' || e.kind === 'timeout') {
       // pause just this model; the router skips it and the job moves on to the account's other models
       this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + MODEL_PAUSE_MS, reason: e.kind === 'timeout' ? 'no answer' : 'provider error' });
@@ -1264,6 +1279,7 @@ export class Engine {
         this.setHealth(account.id, { state: 'cooling', until: now + (e.retryAfterMs ?? 60_000), reason: 'rate limited', measured: prev?.measured });
         break;
       case 'quota':
+      case 'model_quota':
       case 'paid_model':
         // the provider rarely says when quota comes back; check again in an hour unless told otherwise
         this.setHealth(account.id, { state: 'exhausted', until: now + (e.retryAfterMs ?? 3600_000), reason: e.message.slice(0, 160), measured: prev?.measured });

@@ -554,6 +554,9 @@ function cardHtml(a,open,movable){
     var fix=a.state==='auth_error'?' Run <code>omnitrix login '+esc(a.id)+'</code> to sign in again.':a.state==='disabled'?' Run <code>omnitrix enable '+esc(a.id)+'</code> to turn it on.':'';
     var text=(why?esc(why)+'.':'')+back+fix;
     if(text)notes+='<div class="note '+(st[1]==='s-bad'?'bad':st[1]==='s-warn'?'warn':'')+'">'+text+'</div>';
+    // bars counted by omnitrix can show room while the provider refuses with a limit of its own
+    if((a.state==='exhausted'||a.state==='cooling')&&u.source==='estimated'&&u.windows.some(function(w){return w.remaining>0}))
+      notes+='<div class="note">The bars count only the limits set in omnitrix. The provider stopped this account with a limit of its own, given above.</div>';
   }
   var paused=a.pausedModels||[];
   if(paused.length)notes+='<div class="note warn">Resting after errors: '+esc(paused.join(', '))+'.'+(paused.length<(a.models||[]).length?' omnitrix uses the other models meanwhile.':'')+'</div>';
