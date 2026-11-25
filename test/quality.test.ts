@@ -354,11 +354,14 @@ describe('several independent answers to one task', () => {
   it('sends each copy to a different model, so the answers are independent', async () => {
     const servers = await three();
     const engine = new Engine();
-    const jobs = engine.dispatch([task({ title: 'Review', type: 'review', copies: 3 })]);
+    const jobs = engine.dispatch([task({ title: 'Review', type: 'review', copies: 3, prompt: 'Review the parking meter design.' })]);
     expect(jobs.map((j) => j.task.title)).toEqual(['Review [1/3]', 'Review [2/3]', 'Review [3/3]']);
     const done = await engine.wait(jobs.map((j) => j.id), 10);
     expect(new Set(done.map((j) => j.accountId)).size).toBe(3);
-    expect(servers.every((s) => s.calls.length === 1)).toBe(true);
+    // a closed server's port can be reused at once, and an earlier test's job may still be trying it, so only
+    // this test's questions count
+    const mine = (s: { calls: { body?: { messages?: unknown } }[] }) => s.calls.filter((c) => /parking meter design/.test(JSON.stringify(c.body?.messages ?? ''))).length;
+    expect(servers.map(mine)).toEqual([1, 1, 1]);
   });
 
   it('sends only as many copies as there are different models', async () => {
