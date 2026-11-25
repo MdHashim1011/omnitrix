@@ -24,6 +24,8 @@ export interface CliTool {
   env?(account: Account): Record<string, string | undefined>;
   /** prepare a fresh profile folder */
   initProfile?(dir: string): void;
+  /** the tool reports at once that it started (Codex with --json), so a long silence at the start means it hangs */
+  reportsStart?: boolean;
 }
 
 const SAFE_ARG = /^[\w.:@\/=,+\-]+$/;
@@ -80,6 +82,7 @@ export function codexModels(account: Account): string[] {
 export const CLI_TOOLS: Record<string, CliTool> = {
   codex: {
     id: 'codex',
+    reportsStart: true,
     command: 'codex',
     profileEnv: 'CODEX_HOME',
     args: ({ model, edit, cwd, outFile, effort, off }) => [
@@ -535,6 +538,17 @@ function codexFeatures(resolved: Resolved, env: Record<string, string>): Promise
   return found;
 }
 
+/**
+ * How long a tool that reports its start at once may stay silent before omnitrix stops it: two minutes, or
+ * OMNITRIX_CLI_START_SEC. A healthy Codex prints its first event within a few seconds; once it has started,
+ * it may think in silence until the job's own limit. Other tools print only at the end, so they get none.
+ */
+export function cliStartLimitMs(tool: CliTool): number | undefined {
+  if (!tool.reportsStart) return undefined;
+  const sec = Number(process.env.OMNITRIX_CLI_START_SEC);
+  return Number.isFinite(sec) && sec > 0 ? sec * 1000 : 120_000;
+}
+
 export async function runCli(req: DriverRequest, edit: boolean, via?: { tool: CliTool; env: Record<string, string> }): Promise<DriverResult> {
   const { account } = req;
   // an abort listener added now would never fire for a job that was already cancelled
@@ -598,11 +612,18 @@ export async function runCli(req: DriverRequest, edit: boolean, via?: { tool: Cl
       finish(() => reject(new DriverError('cancelled', 'cancelled')));
     };
     req.signal?.addEventListener('abort', onAbort, { once: true });
+    const startLimit = cliStartLimitMs(tool);
+    const silentStart = startLimit === undefined ? undefined : setTimeout(() => {
+      killTree(child.pid);
+      finish(() => reject(new DriverError(`${tool.command} printed nothing in ${Math.round(startLimit / 1000)} s after it started, so it was stopped`, 'timeout')));
+    }, startLimit);
+    child.on('close', () => clearTimeout(silentStart));
 
     // decoded as one stream, so a character split across two chunks stays whole
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d: string) => {
+      clearTimeout(silentStart);
       // the tools write their result and token counts last, so a very long output keeps its end
       stdout += d;
       if (stdout.length > 2 * MAX_OUTPUT) stdout = stdout.slice(-MAX_OUTPUT);
