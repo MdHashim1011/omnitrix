@@ -348,8 +348,8 @@ omnitrix runs as an MCP server and gives Claude the following tools:
 |---|---|
 | `pool_status` | Lists every account with its state, owner, models and remaining quota, and the named routes |
 | `route_preview` | Shows which account would receive each task, and why, without running anything |
-| `dispatch` | Sends up to 30 tasks at once and runs independent tasks in parallel |
-| `get_results` | Waits for up to 50 jobs, 45 seconds by default and at most 110, and returns a short preview of each result, or the full results with `full`. While a finished job is not rated, it reminds Claude to rate it |
+| `dispatch` | Sends up to 30 tasks at once and runs independent tasks in parallel. In the Claude desktop app, the answer to the first task of a session asks Claude, in its `next` field, to open the dashboard in its browser pane |
+| `get_results` | Waits for up to 50 jobs, 45 seconds by default and at most 110, and returns a short preview of each result, or the full results with `full`. While a finished job is not rated, its `next` field reminds Claude to rate it |
 | `read_output` | Reads a full result in pages of 12,000 characters by default and at most 40,000 |
 | `rate_result` | Accepts or rejects a result so that the router can learn from it, and can send a rejected task to another model |
 | `cancel_job`, `list_jobs` | Cancels a job, its pending check or its running test, or lists the 20 most recent jobs (at most 100) |

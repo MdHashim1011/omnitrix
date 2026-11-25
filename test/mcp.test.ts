@@ -1,10 +1,12 @@
-import { Client } from '@modelcontextprotocol/client';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { account, chatReply, mockProvider, tempHome, writeConfig } from './helpers.js';
 import { files, writeJson } from '../src/store.js';
+import { Engine } from '../src/engine.js';
+import { buildServer } from '../src/mcp.js';
 
 const cli = path.resolve(__dirname, '..', 'dist', 'cli.js');
 
@@ -121,9 +123,12 @@ describe('MCP server (real stdio process)', () => {
     const id = sent.structuredContent.job_ids[0];
     const first: any = await client.callTool({ name: 'get_results', arguments: { job_ids: [id], wait_seconds: 10 } });
     expect(first.content[0].text).toMatch(/^When you have checked this result, rate it with rate_result/);
+    // Claude Code shows Claude only the structured part of an answer, so the reminder must be there too
+    expect(first.structuredContent.next).toMatch(/rate it with rate_result/);
     await client.callTool({ name: 'rate_result', arguments: { job_id: id, accepted: true } });
     const again: any = await client.callTool({ name: 'get_results', arguments: { job_ids: [id], wait_seconds: 0 } });
     expect(again.content[0].text).not.toMatch(/rate_result/);
+    expect(again.structuredContent.next).toBeUndefined();
   });
 
   it('keeps the note given with a verdict', async () => {
@@ -230,4 +235,21 @@ describe('MCP second-model check', () => {
       await checker.close();
     }
   }, 30_000);
+});
+
+// From the owner: in the Claude app the dashboard did not open in Claude's browser pane, because the request to
+// open it was only in the text of the dispatch answer, and Claude Code shows Claude only the structured part.
+describe('what Claude is asked to do next', () => {
+  it('puts the request of the first dispatch in the structured answer', async () => {
+    tempHome();
+    writeConfig([account({ id: 'a' })]);
+    const server = buildServer(new Engine(), { onDispatch: async () => 'Open the dashboard in your browser pane.' });
+    const [one, two] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    await Promise.all([server.connect(one), client.connect(two)]);
+    const sent: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 'x', type: 'writing', prompt: 'p' }] } });
+    expect(sent.structuredContent.next).toBe('Open the dashboard in your browser pane.');
+    expect(sent.content[0].text).toMatch(/Open the dashboard in your browser pane\./);
+    await client.close();
+  });
 });
