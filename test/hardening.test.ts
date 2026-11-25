@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { launch, runCli } from '../src/drivers/cli.js';
 import { makeModel } from '../src/models.js';
 import { loadHealth } from '../src/store.js';
@@ -115,6 +115,36 @@ describe('the lock, after review', () => {
     await expect.poll(() => fs.existsSync(lock), { timeout: 10_000 }).toBe(true);
     expect(withLock(files.health(), () => fs.existsSync(released))).toBe(true);
   }, 30_000);
+
+  it('does not count time when the waiter itself was paused', async () => {
+    const { withLock, files } = await import('../src/store.js');
+    fs.mkdirSync(home, { recursive: true });
+    // found by a review through omnitrix: a waiter that the system paused for longer than the limit gave up
+    // at its next look, although the holder had not kept the lock that long
+    const lock = `${files.health()}.lock`;
+    fs.writeFileSync(lock, `${process.pid} cafebabe`);
+    const real = Date.now.bind(Date);
+    let calls = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => real() + (++calls > 3 ? 6_000 : 0));
+    cleanups.push(() => clock.mockRestore());
+    const t0 = performance.now();
+    withLock(files.health(), () => undefined);
+    expect(performance.now() - t0).toBeGreaterThanOrEqual(4000);
+    fs.rmSync(lock);
+  }, 15_000);
+
+  it('removes its lock again when writing its name into it fails', async () => {
+    const { withLock, files } = await import('../src/store.js');
+    fs.mkdirSync(home, { recursive: true });
+    const write = vi.spyOn(fs, 'writeSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+    });
+    cleanups.push(() => write.mockRestore());
+    expect(() => withLock(files.health(), () => 'ran')).toThrow(/no space/);
+    // a lock left behind would make the next processes wait and then go ahead together without it
+    expect(fs.existsSync(`${files.health()}.lock`)).toBe(false);
+    expect(withLock(files.health(), () => 'ran')).toBe('ran');
+  });
 
   it('tells Windows not to look for programs in the current folder, for every program omnitrix starts', () => {
     const l = launch({ file: 'C:\\x\\tool.cmd', prefix: [], shell: true }, []);

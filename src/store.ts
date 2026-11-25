@@ -127,12 +127,21 @@ export function withLock<T>(file: string, fn: () => T): T {
   let deadline = Date.now() + LOCK_WAIT_MS;
   let holder: string | undefined;
   let fd: number | undefined;
+  let looked = Date.now();
   // the lock names its holder, so a lock left by a crashed process is recognised at once
   const mine = `${process.pid} ${Math.random().toString(36).slice(2)}`;
   while (fd === undefined) {
     try {
-      fd = fs.openSync(lock, 'wx');
-      fs.writeSync(fd, mine);
+      const opened = fs.openSync(lock, 'wx');
+      try {
+        fs.writeSync(opened, mine);
+      } catch (err) {
+        // an empty lock left behind would hold up the next processes and then let them go ahead together
+        fs.closeSync(opened);
+        fs.rmSync(lock, { force: true });
+        throw err;
+      }
+      fd = opened;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       // Windows answers EPERM while another process is deleting the lock
@@ -144,6 +153,10 @@ export function withLock<T>(file: string, fn: () => T): T {
         holder = now;
         deadline = Date.now() + LOCK_WAIT_MS;
       }
+      // Time in which the system paused this process is not time that the holder kept the lock.
+      const t = Date.now();
+      if (t - looked > 1000) deadline = Math.max(deadline, t + LOCK_WAIT_MS);
+      looked = t;
       if (Date.now() > deadline) {
         process.stderr.write(`omnitrix: ${path.basename(file)} stayed locked for ${LOCK_WAIT_MS / 1000} s; changing it without the lock\n`);
         break;
