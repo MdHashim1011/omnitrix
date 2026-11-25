@@ -411,8 +411,9 @@ describe('follow-up questions', () => {
     expect(done!.accountId).toBe('b');
     // a follow-up never loosens the privacy of the task it continues
     expect(done!.task.privacy).toBe('secret');
-    // the server also gets omnitrix's checks that it is up, so the follow-up is found by its text
-    const asked = JSON.stringify(b.calls.map((c) => c.body?.messages).filter(Boolean).at(-1));
+    // the server also gets omnitrix's checks that it is up, and on a slow machine a check left over from
+    // an earlier test can reach it too, so the follow-up is found by its text
+    const asked = JSON.stringify(b.calls.map((c) => c.body?.messages).find((m) => JSON.stringify(m ?? '').includes('And how much of it is tax?')));
     expect(asked).toContain('What is the invoice total?');
     expect(asked).toContain('The total is 20.52.');
     expect(asked).toContain('And how much of it is tax?');

@@ -508,7 +508,8 @@ function codexFeatures(resolved: Resolved, env: Record<string, string>): Promise
       let out = '';
       let child: ReturnType<typeof spawn>;
       try {
-        child = spawn(start.file, start.args, { env: { ...env, ...start.env } as NodeJS.ProcessEnv, windowsVerbatimArguments: start.verbatim, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+        // from the temp folder: the current one may be a repository, and Windows looks for programs there first
+        child = spawn(start.file, start.args, { cwd: os.tmpdir(), env: { ...env, ...start.env } as NodeJS.ProcessEnv, windowsVerbatimArguments: start.verbatim, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
       } catch {
         return done(new Set());
       }

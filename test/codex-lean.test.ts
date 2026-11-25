@@ -60,7 +60,7 @@ describe('a Codex job', () => {
     const log = path.join(bin, 'args.log');
     fs.writeFileSync(script, `const fs=require('fs');const args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(args)+'\\n');
-if(args[0]==='features'){process.stdout.write(${JSON.stringify(LIST)});process.exit(${featureExit});}
+if(args[0]==='features'){fs.writeFileSync(${JSON.stringify(log)}+'.cwd',process.cwd());process.stdout.write(${JSON.stringify(LIST)});process.exit(${featureExit});}
 process.stdin.resume();process.stdin.on('end',()=>{
   fs.writeFileSync(args[args.indexOf('-o')+1],'fine');
   console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_tokens:1}}));
@@ -97,6 +97,8 @@ process.stdin.resume();process.stdin.on('end',()=>{
     expect(execs[0]).toContain('features.computer_use=false');
     expect(execs[0]).not.toContain('features.shell_tool=false');
     expect(fs.readFileSync(log, 'utf8').split('\n').filter((l) => l.startsWith('["features"')).length).toBe(1);
+    // never from the current folder, which may be a repository a worker wrote into
+    expect(fs.realpathSync(fs.readFileSync(`${log}.cwd`, 'utf8'))).toBe(fs.realpathSync(os.tmpdir()));
   }, 60_000);
 
   it('keeps every tool when the owner turns this off, or when the list cannot be read', async () => {
