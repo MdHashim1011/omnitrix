@@ -28,6 +28,8 @@ export interface Rejected {
   accountId: string;
   model?: string;
   reason: string;
+  /** when the account or model stops resting, for a reason that passes by itself */
+  until?: number;
 }
 
 export interface RouteContext {
@@ -149,7 +151,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
   const rejected: Rejected[] = [];
 
   for (const account of ctx.config.accounts) {
-    const reject = (reason: string, model?: string) => rejected.push({ accountId: account.id, model, reason });
+    const reject = (reason: string, model?: string, until?: number) => rejected.push({ accountId: account.id, model, reason, ...(until ? { until } : {}) });
     if (forcedAccount && account.id !== forcedAccount) continue;
     if (task.avoid?.includes(account.id)) { reject('avoided for this task'); continue; }
     // only a team account is held to the team's budgets, even when the developer has an account with the same id
@@ -163,7 +165,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
     const h = ctx.health[account.id];
     if (h && (h.state === 'auth_error' || h.state === 'disabled')) { reject(`${h.state}: ${h.reason ?? ''}`.trim()); continue; }
     if (h && (h.state === 'cooling' || h.state === 'exhausted' || h.state === 'offline') && (h.until ?? 0) > now) {
-      reject(`${h.state} until ${new Date(h.until!).toLocaleTimeString()}`);
+      reject(`${h.state} until ${new Date(h.until!).toLocaleTimeString()}`, undefined, h.until);
       continue;
     }
 
@@ -194,7 +196,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       if (task.type === 'code' && account.driver === 'openai' && model.tools === false) { reject('this model cannot call tools, so it cannot edit files', model.id); continue; }
       const paused = ctx.health[modelHealthKey(account.id, model.id)];
       if (paused && paused.state === 'cooling' && (paused.until ?? 0) > now) {
-        reject(`paused until ${new Date(paused.until!).toLocaleTimeString()} (${paused.reason ?? 'not answering'})`, model.id);
+        reject(`paused until ${new Date(paused.until!).toLocaleTimeString()} (${paused.reason ?? 'not answering'})`, model.id, paused.until);
         continue;
       }
       // a model that cut a long prompt before gets only prompts that fit what it read then

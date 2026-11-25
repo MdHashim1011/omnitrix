@@ -29,6 +29,8 @@ const MAX_ATTEMPTS = 3;
 // and rests (GONE_PAUSE_MS), so trying it did no work and is not repeated: it does not use up one of the
 // MAX_ATTEMPTS. The cap bounds a job that meets many such models in a row.
 const MAX_TRIES = 12;
+/** Tries that ended in a rest of the account (see REST_FAULTS) have this bound instead. */
+const MAX_REST_TRIES = 24;
 // A model with no allowance stays unusable, but the config drop that removes it can be lost (no lock on
 // config.json), so it also rests this long in health.json, which every process reads.
 const GONE_PAUSE_MS = 24 * 60 * 60_000;
@@ -36,6 +38,18 @@ const MODEL_PAUSE_MS = 5 * 60_000;
 const MODEL_FAULTS = new Set(['model_gone', 'paid_model', 'model_quota', 'server', 'timeout', 'too_long']);
 /** Faults of one model that another model of the same account may not have; they do not use up a job's attempts. */
 const ONE_MODEL = new Set(['model_gone', 'paid_model', 'model_quota', 'too_long']);
+/**
+ * Faults that rest the whole account for a while (see applyFailure) and say nothing about the task. Free keys run
+ * out quickly, so they do not use up a job's attempts either, and the account may take the job again once its
+ * rest is over. MAX_REST_TRIES bounds them instead.
+ */
+const REST_FAULTS = new Set(['rate_limit', 'quota', 'network', 'auth']);
+/** A job whose every possible account rests waits for the soonest one when it is back within this time... */
+const WAIT_FOR_REST_MS = 2 * 60_000;
+/** ...but a job does not stay queued this way for longer than this in all. */
+const MAX_RESTING_WAIT_MS = 5 * 60_000;
+/** The shortest rest after a limit, even when a provider says to try again at once. */
+const MIN_REST_MS = 2000;
 // how long a learned prompt size counts; the server may be given more room meanwhile
 const CONTEXT_MEMORY_MS = 7 * 24 * 60 * 60_000;
 const MAX_FILE_BYTES = 400_000;
@@ -80,6 +94,22 @@ export function requestTimeoutMs(driver: string, size: TaskSpec['size'], jobTime
   if (driver === 'cli') return job;
   const cap = size === 'small' ? 120_000 : size === 'large' ? 600_000 : 300_000;
   return Math.min(job, cap);
+}
+
+/**
+ * Why each account cannot take a task, with a passing rest replaced by what would still stop it once the rest
+ * is over, such as a secret task on a cloud account; a rest is the reason only when nothing else is.
+ */
+function lastingReasons(task: TaskSpec, ctx: RouteContext, rejected: Rejected[]): Rejected[] {
+  const last = Math.max(0, ...rejected.map((r) => r.until ?? 0));
+  if (!last) return rejected;
+  const later = route(task, { ...ctx, now: last + 1 }).rejected;
+  // a rest of a whole account stands for every reason its models have; a rest of one model for that model's
+  return rejected.flatMap((r) => {
+    if (!r.until) return [r];
+    const lasting = later.filter((l) => l.accountId === r.accountId && !l.until && (r.model === undefined || l.model === r.model));
+    return lasting.length ? lasting : [r];
+  });
 }
 
 function newId(prefix: string): string {
@@ -966,11 +996,12 @@ export class Engine {
     const full = new Set<string>();
     // Built once per pass: the usage picture is the same for every queued job, and `running` and
     // `health` inside it are live references, so jobs started earlier in this pass are still seen.
-    const ctx = queued.length ? this.routeContext(cfg) : undefined;
+    // one moment for the whole pass, so the router and the wait for a rest agree on which rests are over
+    const ctx = queued.length ? { ...this.routeContext(cfg), now: Date.now() } : undefined;
     for (const job of queued) {
       // A retired, overloaded or silent model is that model's problem, not the account's: the account may be
       // tried again with another model, and the failing model is paused so it is not picked twice.
-      const tried = new Set(job.attempts.filter((a) => !MODEL_FAULTS.has(a.errorKind ?? 'unknown')).map((a) => a.accountId));
+      const tried = new Set(job.attempts.filter((a) => !MODEL_FAULTS.has(a.errorKind ?? 'unknown') && !REST_FAULTS.has(a.errorKind ?? 'unknown')).map((a) => a.accountId));
       const { candidates, rejected } = route(job.task, ctx!);
       // After a server error or a timeout, other accounts go first: when a whole provider is down, the
       // remaining attempts should not all be spent on that provider's other models.
@@ -992,9 +1023,21 @@ export class Engine {
         continue;
       }
       if (fresh.length === 0) {
+        // every account that could take it is resting for a short while: wait for the first one back
+        const back = this.nextChance(job, ctx!, rejected, tried);
+        if (back !== undefined) {
+          if (job.waitingUntil !== back) {
+            job.waitingUntil = back;
+            job.updatedAt = Date.now();
+            this.saveJob(job);
+            this.notify();
+          }
+          continue;
+        }
         job.status = 'failed';
+        job.waitingUntil = undefined;
         const lastError = job.attempts.at(-1)?.error;
-        const reasons = rejected.slice(0, 8).map((r) => `${r.accountId}${r.model ? '/' + r.model : ''}: ${r.reason}`);
+        const reasons = lastingReasons(job.task, ctx!, rejected).slice(0, 8).map((r) => `${r.accountId}${r.model ? '/' + r.model : ''}: ${r.reason}`);
         job.error = lastError
           ? `all attempts failed. last error: ${lastError}`
           : `no account can take this task.${reasons.length ? ' ' + reasons.join('; ') : ' Add an account with "omnitrix add".'}`;
@@ -1006,8 +1049,44 @@ export class Engine {
     }
   }
 
+  /**
+   * When a job that no account can take now could run, because an account or model that could take it ends a
+   * short rest: the time to try again, or undefined when the job should fail now. The router is asked as at that
+   * time, so a rest ending on an account that the task cannot use anyway, such as a cloud account for a secret
+   * task, is not waited for. A resting account hides the rests of its models, so each look ahead also adds the
+   * rests it uncovers.
+   */
+  private nextChance(job: Job, ctx: RouteContext, rejected: Rejected[], tried: Set<string>): number | undefined {
+    // the same moment the router just used, so a rest that ends in between is not missed
+    const now = ctx.now ?? Date.now();
+    if (now - job.createdAt > MAX_RESTING_WAIT_MS) return undefined;
+    const cutoff = now + WAIT_FOR_REST_MS;
+    const ends = new Set(rejected.map((r) => r.until ?? 0).filter((u) => u > now && u <= cutoff));
+    const looked = new Set<number>();
+    for (let n = 0; n < 50; n++) {
+      const end = Math.min(...[...ends].filter((u) => !looked.has(u)));
+      if (!Number.isFinite(end)) break;
+      looked.add(end);
+      const later = route(job.task, { ...ctx, now: end + 1 });
+      if (later.candidates.some((c) => !tried.has(c.accountId))) return end + 1;
+      for (const r of later.rejected) if (r.until && r.until > end && r.until <= cutoff) ends.add(r.until);
+    }
+    return undefined;
+  }
+
+  /**
+   * Whether a job may be tried again. A rest says nothing about the task, so limits that free keys hit quickly
+   * do not use up the job's tries; they have a larger bound of their own, so a pool that keeps refusing cannot
+   * keep a job going for ever.
+   */
+  private triesLeft(job: Job): boolean {
+    const rests = job.attempts.filter((a) => REST_FAULTS.has(a.errorKind ?? 'unknown')).length;
+    return job.attempts.length - rests < MAX_TRIES && rests < MAX_REST_TRIES;
+  }
+
   private async start(job: Job, cand: Candidate, cfg: Config, seat?: string): Promise<void> {
     const account = findAccount(cfg, cand.accountId)!;
+    job.waitingUntil = undefined;
     this.running[account.id] = (this.running[account.id] ?? 0) + 1;
     const ctrl = new AbortController();
     this.controllers.set(job.id, ctrl);
@@ -1178,7 +1257,7 @@ export class Engine {
       } else if (ctrl.signal.aborted || e.kind === 'cancelled') {
         job.status = 'cancelled';
         job.error = 'cancelled';
-      } else if (job.attempts.filter((a) => !ONE_MODEL.has(a.errorKind ?? 'unknown')).length < MAX_ATTEMPTS && job.attempts.length < MAX_TRIES && e.kind !== 'bad_request') {
+      } else if (job.attempts.filter((a) => !ONE_MODEL.has(a.errorKind ?? 'unknown') && !REST_FAULTS.has(a.errorKind ?? 'unknown')).length < MAX_ATTEMPTS && this.triesLeft(job) && e.kind !== 'bad_request') {
         job.status = 'queued'; // pump() will try the next best account
         job.error = attempt.error;
       } else {
@@ -1276,13 +1355,14 @@ export class Engine {
     }
     switch (e.kind) {
       case 'rate_limit':
-        this.setHealth(account.id, { state: 'cooling', until: now + (e.retryAfterMs ?? 60_000), reason: 'rate limited', measured: prev?.measured });
+        // at least a short rest, since a job may come back to this account once the rest is over
+        this.setHealth(account.id, { state: 'cooling', until: now + Math.max(e.retryAfterMs ?? 60_000, MIN_REST_MS), reason: 'rate limited', measured: prev?.measured });
         break;
       case 'quota':
       case 'model_quota':
       case 'paid_model':
         // the provider rarely says when quota comes back; check again in an hour unless told otherwise
-        this.setHealth(account.id, { state: 'exhausted', until: now + (e.retryAfterMs ?? 3600_000), reason: e.message.slice(0, 160), measured: prev?.measured });
+        this.setHealth(account.id, { state: 'exhausted', until: now + Math.max(e.retryAfterMs ?? 3600_000, MIN_REST_MS), reason: e.message.slice(0, 160), measured: prev?.measured });
         break;
       case 'auth':
         this.setHealth(account.id, { state: 'auth_error', reason: e.message.slice(0, 160) });

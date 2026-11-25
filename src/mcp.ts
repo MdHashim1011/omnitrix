@@ -124,6 +124,7 @@ const jobOut = z.object({
   branch: z.string().optional(),
   tokens: z.number().optional(),
   error: z.string().optional(),
+  waiting: z.string().optional().describe("the job is queued because every account that can take it is resting; it says when omnitrix tries again, so call get_results again then"),
   attempts: z.array(z.string()).optional(),
   structured: z.object({ status: z.enum(['valid', 'invalid', 'not_json']), errors: z.array(z.string()).optional(), value: z.unknown().optional(), note: z.string().optional() }).optional()
     .describe('whether the answer matched output_schema, checked by omnitrix; value is the parsed JSON when it fits in a preview'),
@@ -246,6 +247,7 @@ export function jobView(j: Job, full: boolean, engine: Engine) {
     if (j.usage) out.tokens = j.usage.inputTokens + j.usage.outputTokens;
   }
   if (j.error && j.status !== 'done') out.error = j.error;
+  if (j.status === 'queued' && j.waitingUntil && j.waitingUntil > Date.now()) out.waiting = `every account that can take this task is resting; omnitrix tries again at ${new Date(j.waitingUntil).toLocaleTimeString()}`;
   if (j.attempts.length > 1) out.attempts = j.attempts.map((a) => `${a.accountId}/${a.model}: ${a.ok ? 'ok' : a.errorKind ?? 'failed'}`);
   if (j.structured) out.structured = structuredView(j, full, engine);
   if (j.escalatedTo) out.escalated_to = j.escalatedTo;
@@ -287,9 +289,8 @@ export function jobView(j: Job, full: boolean, engine: Engine) {
 }
 
 export interface ServerHooks {
-  /** called after each successful dispatch; startMcp uses it to show the dashboard once */
-  /** runs at each dispatch; a line it returns is added to the answer */
-  onDispatch?: () => Promise<string | undefined>;
+  /** runs at each dispatch and get_results; a request it returns, such as to open the dashboard, is added to the answer */
+  dashboardNote?: () => Promise<string | undefined>;
 }
 
 export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer {
@@ -386,7 +387,7 @@ export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer 
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
-      const note = await hooks.onDispatch?.();
+      const note = await hooks.dashboardNote?.();
       const lines = jobs.map((j) => `${j.id}  ${j.task.title}  -> ${j.status === 'failed' ? `FAILED: ${j.error}` : j.accountId ? `${j.accountId}/${j.model}` : 'queued'}`);
       const brief = jobs.map((j) => ({ job_id: j.id, title: j.task.title, status: j.status, account: j.accountId, model: j.model, error: j.status === 'failed' ? j.error : undefined }));
       // Claude Code shows Claude only the structured part of an answer, so a request must be there as well
@@ -422,8 +423,9 @@ export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer 
         (pending ? `${pending} still working; call get_results again for them.\n\n` : '') +
         (unrated ? `When you have checked ${unrated === 1 ? 'this result' : `these ${unrated} results`}, rate ${unrated === 1 ? 'it' : 'each one'} with rate_result; the router learns only from rated jobs.\n\n` : '');
       const miss = missing.length ? `\nunknown job ids: ${missing.join(', ')}` : '';
-      const next = head.replace(/\s+/g, ' ').trim();
-      return text(head + JSON.stringify(views, null, 2) + miss, { jobs: views, pending, unknown: missing, ...(next ? { next } : {}) });
+      const ask = await hooks.dashboardNote?.();
+      const next = ((ask ? ask + ' ' : '') + head).replace(/\s+/g, ' ').trim();
+      return text((ask ? ask + '\n\n' : '') + head + JSON.stringify(views, null, 2) + miss, { jobs: views, pending, unknown: missing, ...(next ? { next } : {}) });
     },
   );
 
@@ -515,18 +517,31 @@ export function dashboardLine(url: string | null, pages: number): string | undef
 const failed = (err: unknown) => process.stderr.write(`omnitrix: could not open the dashboard: ${err instanceof Error ? err.message : err}\n`);
 
 /**
- * The first dispatch of a session shows the dashboard, unless the user turned this off or nobody is there to
- * look (a test run or a CI machine). Whatever `show` returns is added to that dispatch's answer.
+ * A dispatch shows the dashboard, unless the user turned this off or nobody is there to look (a test run or a CI
+ * machine). When `show` returns a request, because only the client can open the page, the request is added to
+ * every dispatch and get_results answer until a page shows the dashboard: a client may pass over it once.
  */
-export function dashboardOnce(engine: Engine, show: () => Promise<string | undefined>): () => Promise<string | undefined> {
-  let shown = false;
-  return async () => {
-    if (shown || engine.config().settings.openDashboard === 'off' || process.env.OMNITRIX_NO_BROWSER === '1' || process.env.CI) return undefined;
-    shown = true;
-    return show().catch((err) => {
-      failed(err);
-      return undefined;
-    });
+export function dashboardUntilOpen(engine: Engine, show: () => Promise<string | undefined>): () => Promise<string | undefined> {
+  let done = false;
+  let pending: Promise<string | undefined> | undefined;
+  return () => {
+    if (done || engine.config().settings.openDashboard === 'off' || process.env.OMNITRIX_NO_BROWSER === '1' || process.env.CI) return Promise.resolve(undefined);
+    pending ??= show()
+      .then(
+        (note) => {
+          if (!note) done = true;
+          return note;
+        },
+        (err) => {
+          failed(err);
+          done = true;
+          return undefined;
+        },
+      )
+      .finally(() => {
+        pending = undefined;
+      });
+    return pending;
   };
 }
 
@@ -548,13 +563,13 @@ export async function showDashboard(
   const live = await probe(DEFAULT_PORT);
   void launch({ open: false }).catch(failed);
   if (live && live.viewers > 0) return undefined;
-  return `The live dashboard is at http://127.0.0.1:${DEFAULT_PORT}. Open it now in your browser pane for the user, so they can watch these jobs; omnitrix did not open their default browser, because you run inside the Claude app. If the page does not load at once, try again a second later.`;
+  return `Do this first: open the live dashboard at http://127.0.0.1:${DEFAULT_PORT} in your browser pane for the user, so they can watch these jobs. You run inside the Claude app, so omnitrix cannot open a browser itself, and it repeats this request until a page shows the dashboard. If the page does not load at once, try again a second later.`;
 }
 
 export function startMcp(): void {
   const engine = new Engine();
-  const onDispatch = dashboardOnce(engine, () => showDashboard(engine));
-  serveStdio(() => buildServer(engine, { onDispatch }), { onerror: (err) => process.stderr.write(`omnitrix: ${err.message}\n`) });
+  const dashboardNote = dashboardUntilOpen(engine, () => showDashboard(engine));
+  serveStdio(() => buildServer(engine, { dashboardNote }), { onerror: (err) => process.stderr.write(`omnitrix: ${err.message}\n`) });
   // an update leaves the old background dashboard running; Claude Code restarting omnitrix is the moment to replace it
   void refreshDashboards();
   try {

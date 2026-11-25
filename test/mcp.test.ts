@@ -240,16 +240,45 @@ describe('MCP second-model check', () => {
 // From the owner: in the Claude app the dashboard did not open in Claude's browser pane, because the request to
 // open it was only in the text of the dispatch answer, and Claude Code shows Claude only the structured part.
 describe('what Claude is asked to do next', () => {
-  it('puts the request of the first dispatch in the structured answer', async () => {
+  it('puts the request to open the dashboard in the structured answers', async () => {
     tempHome();
     writeConfig([account({ id: 'a' })]);
-    const server = buildServer(new Engine(), { onDispatch: async () => 'Open the dashboard in your browser pane.' });
+    const server = buildServer(new Engine(), { dashboardNote: async () => 'Open the dashboard in your browser pane.' });
     const [one, two] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'test', version: '1.0.0' });
     await Promise.all([server.connect(one), client.connect(two)]);
     const sent: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 'x', type: 'writing', prompt: 'p' }] } });
     expect(sent.structuredContent.next).toBe('Open the dashboard in your browser pane.');
     expect(sent.content[0].text).toMatch(/Open the dashboard in your browser pane\./);
+    // and again when Claude collects the results, in case it passed over the first request
+    const got: any = await client.callTool({ name: 'get_results', arguments: { job_ids: sent.structuredContent.job_ids, wait_seconds: 0 } });
+    expect(got.structuredContent.next).toMatch(/^Open the dashboard in your browser pane\./);
+    expect(got.content[0].text).toMatch(/^Open the dashboard in your browser pane\./);
     await client.close();
+  });
+});
+
+// Found by a stdio check before release: a waiting job broke the output schema, so a client refused the answer.
+describe('a job that waits for a resting account', () => {
+  it('says so in get_results within the output schema', async () => {
+    tempHome();
+    const p = await mockProvider(() => ({ status: 429, headers: { 'retry-after': '30' }, json: { error: { message: 'Rate limit reached for requests per minute' } } }));
+    writeConfig([account({ id: 'only', baseUrl: p.url, local: true })]);
+    const engine = new Engine();
+    const server = buildServer(engine);
+    const [one, two] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    await Promise.all([server.connect(one), client.connect(two)]);
+    // a client checks answers against the output schemas only once it has listed the tools, as Claude Code does
+    await client.listTools();
+    const sent: any = await client.callTool({ name: 'dispatch', arguments: { tasks: [{ title: 'x', type: 'writing', prompt: 'p' }] } });
+    await new Promise((r) => setTimeout(r, 500));
+    const got: any = await client.callTool({ name: 'get_results', arguments: { job_ids: sent.structuredContent.job_ids, wait_seconds: 0 } });
+    expect(got.isError).toBeFalsy();
+    expect(got.structuredContent.jobs[0].status).toBe('queued');
+    expect(got.structuredContent.jobs[0].waiting).toMatch(/resting; omnitrix tries again at/);
+    engine.cancel(sent.structuredContent.job_ids[0]);
+    await client.close();
+    await p.close();
   });
 });

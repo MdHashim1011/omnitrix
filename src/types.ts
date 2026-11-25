@@ -291,6 +291,8 @@ export interface Job {
   outputChars?: number;
   preview?: string;
   error?: string;
+  /** while queued: every account that can take the job is resting, and it is tried again at this time */
+  waitingUntil?: number;
   /** gitDir is the checkout's git folder, recorded before the worker ran */
   worktree?: { path: string; branch: string; diffStat?: string; gitDir?: string };
   usage?: { inputTokens: number; outputTokens: number; costUsd?: number };

@@ -3,7 +3,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { inCardOrder, loadCardOrder, recentJobs, startDashboard } from '../src/dashboard.js';
-import { dashboardOnce, showDashboard } from '../src/mcp.js';
+import { dashboardUntilOpen, showDashboard } from '../src/mcp.js';
 import { codexModels } from '../src/drivers/cli.js';
 import { codexModelInfo, upgradeCodexModels } from '../src/drivers/index.js';
 import { Engine } from '../src/engine.js';
@@ -80,15 +80,15 @@ describe('opening the dashboard at the first task', () => {
       if (savedCi !== undefined) process.env.CI = savedCi;
     });
     process.env.OMNITRIX_NO_BROWSER = '1';
-    dashboardOnce(engine, show)();
+    dashboardUntilOpen(engine, show)();
     expect(opened).toBe(0);
     delete process.env.OMNITRIX_NO_BROWSER;
-    const once = dashboardOnce(engine, show);
+    const once = dashboardUntilOpen(engine, show);
     once();
     once();
     expect(opened).toBe(1);
     writeConfig([account({ id: 'a' })], { openDashboard: 'off' });
-    dashboardOnce(engine, show)();
+    dashboardUntilOpen(engine, show)();
     expect(opened).toBe(1);
   });
 
@@ -121,7 +121,8 @@ describe('opening the dashboard at the first task', () => {
     expect(calls).toEqual([undefined, undefined]);
   });
 
-  it('adds the request to open the dashboard to the first dispatch only', async () => {
+  // From the owner: Claude passed over the one request to open the dashboard, and it was never asked again
+  it('asks to open the dashboard until a page shows it', async () => {
     writeConfig([account({ id: 'a' })]);
     const engine = new Engine();
     const saved = process.env.OMNITRIX_NO_BROWSER;
@@ -132,11 +133,17 @@ describe('opening the dashboard at the first task', () => {
       process.env.OMNITRIX_NO_BROWSER = saved;
       if (savedCi !== undefined) process.env.CI = savedCi;
     });
-    const once = dashboardOnce(engine, async () => 'open it');
-    expect(await once()).toBe('open it');
-    expect(await once()).toBeUndefined();
+    let open = false;
+    const ask = dashboardUntilOpen(engine, async () => (open ? undefined : 'open it'));
+    expect(await ask()).toBe('open it');
+    expect(await ask()).toBe('open it');
+    open = true;
+    expect(await ask()).toBeUndefined();
+    // once a page has shown it, closing that page later is the user's choice
+    open = false;
+    expect(await ask()).toBeUndefined();
     // a failed start costs the dispatch nothing
-    expect(await dashboardOnce(engine, async () => Promise.reject(new Error('port taken')))()).toBeUndefined();
+    expect(await dashboardUntilOpen(engine, async () => Promise.reject(new Error('port taken')))()).toBeUndefined();
   });
 });
 

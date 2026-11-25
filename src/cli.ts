@@ -14,6 +14,7 @@ import { CLI_TOOLS, loginCli, providerTool, resolveCommand } from './drivers/cli
 import { Engine } from './engine.js';
 import { verifySummary } from './verify.js';
 import { describeAccount } from './mcp.js';
+import { checkLabel, cleanName } from './label.js';
 import { localModels } from './drivers/ollama.js';
 import { basisOf, isChatModel, makeModel, statsKey } from './models.js';
 import { loadStats } from './stats.js';
@@ -80,6 +81,12 @@ function fail(msg: string): void {
 function die(msg: string): never {
   process.stderr.write(`error: ${msg}\n`);
   process.exit(1);
+}
+
+/** A name checked with the same rule as the dashboard's, or the reason it cannot be used. */
+function nameOrDie(text: string): string {
+  const r = checkLabel(text);
+  return 'error' in r ? die(r.error) : r.label;
 }
 
 /** Team accounts come from the team file; a local change would be lost on the next load, so refuse it. */
@@ -166,7 +173,7 @@ async function addAccount(providerId: string, o: Record<string, any>): Promise<v
   if (o.key && o.keyEnv) die('use either --key or --key-env, not both');
   ensureHome();
   const cfg = loadConfig();
-  const label = o.label ?? spec.name;
+  const label = o.label === undefined ? spec.name : nameOrDie(o.label);
   const id = o.id ? uniqueAccountId(cfg, o.id) : uniqueAccountId(cfg, label === spec.name ? spec.id : label);
 
   let driver = spec.driver;
@@ -295,6 +302,21 @@ program
     for (const a of pool) console.log(describeAccount(a));
   });
 
+program
+  .command('rename <id> <name...>')
+  .description('give an account the name shown everywhere; emoji and any language are fine, e.g. omnitrix rename my-gemini "🚀 Fast Gemini"')
+  .action((id: string, words: string[]) => {
+    const name = nameOrDie(words.join(' '));
+    let before = '';
+    updateConfig((cfg) => {
+      const acc = ownAccount(cfg, id);
+      before = acc.label;
+      acc.label = name;
+    });
+    // a name saved by an older version may hold characters that a terminal acts on, so the old one is shown cleaned
+    console.log(before === name ? `${id} is already called ${name}` : `${id} is now called ${name} (was ${cleanName(before)})`);
+  });
+
 limitOptions(
   program
     .command('set <id>')
@@ -314,7 +336,7 @@ limitOptions(
 ).action((id: string, o: Record<string, any>) => {
   updateConfig((cfg) => {
     const acc = ownAccount(cfg, id);
-    if (o.label) acc.label = o.label;
+    if (o.label !== undefined) acc.label = nameOrDie(o.label);
     if (o.owner) acc.owner = o.owner;
     if (o.concurrency !== undefined) acc.concurrency = Math.max(1, o.concurrency);
     if (o.priority !== undefined) acc.priority = o.priority;

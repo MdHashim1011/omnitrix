@@ -6,7 +6,8 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { Engine } from './engine.js';
 import { refreshQuotas } from './quota.js';
-import { ensureHome, files, homeDir, readJson, writeJson } from './store.js';
+import { ensureHome, files, findAccount, homeDir, readJson, updateConfig, writeJson } from './store.js';
+import { checkLabel } from './label.js';
 import type { Job } from './types.js';
 import type { PoolAccountView } from './engine.js';
 import { verifySummary } from './verify.js';
@@ -142,6 +143,24 @@ const MAX_VIEWERS = 16;
 // A page that stops reading is dropped before its unsent updates pile up.
 const MAX_BUFFERED = 1024 * 1024;
 
+/**
+ * Renames an account from the dashboard, with the same rule as `omnitrix rename`. A team account takes its name
+ * from the team file, so it is not renamed here.
+ */
+export function renameAccount(id: unknown, label: unknown): { id: string; label: string } | { error: string } {
+  const checked = checkLabel(label);
+  if ('error' in checked) return checked;
+  if (typeof id !== 'string') return { error: 'no such account' };
+  let error: string | undefined;
+  updateConfig((cfg) => {
+    const acc = findAccount(cfg, id);
+    if (!acc) error = 'no such account';
+    else if (acc.team) error = 'this account comes from the team file, so its name is changed there';
+    else acc.label = checked.label;
+  });
+  return error ? { error } : { id, label: checked.label };
+}
+
 /** The order the owner dragged the account cards into. It changes only the page, never which account gets work. */
 export function loadCardOrder(): string[] {
   const saved = readJson<{ order?: unknown } | null>(files.dashboard(), null);
@@ -271,7 +290,7 @@ export function startDashboard(port: number): { url: string; server: http.Server
     // The page's two actions: removing finished jobs from its list, and keeping the order the owner dragged the
     // account cards into. Only the page this server sent knows the token, and a browser sends a custom header
     // to another site only after asking it.
-    if (req.url === '/api/hide' || req.url === '/api/order') {
+    if (req.url === '/api/hide' || req.url === '/api/order' || req.url === '/api/rename') {
       if (req.method !== 'POST' || req.headers['x-omnitrix-token'] !== token || !String(req.headers['content-type']).startsWith('application/json')) {
         res.writeHead(403).end('forbidden');
         return;
@@ -284,7 +303,7 @@ export function startDashboard(port: number): { url: string; server: http.Server
         if (body.length > 16_384) req.destroy();
       });
       req.on('end', () => {
-        let ask: { ids?: unknown; failed?: unknown; order?: unknown } | null;
+        let ask: { ids?: unknown; failed?: unknown; order?: unknown; id?: unknown; label?: unknown } | null;
         try {
           ask = JSON.parse(body);
         } catch {
@@ -295,7 +314,14 @@ export function startDashboard(port: number): { url: string; server: http.Server
           return;
         }
         let answer: unknown;
-        if (url === '/api/order') {
+        if (url === '/api/rename') {
+          const renamed = renameAccount(ask.id, ask.label);
+          if ('error' in renamed) {
+            res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify(renamed));
+            return;
+          }
+          answer = renamed;
+        } else if (url === '/api/order') {
           const order = saveCardOrder(ask.order, engine.config().accounts.map((a) => a.id));
           if (!order) {
             res.writeHead(400).end('bad request');
@@ -440,6 +466,11 @@ body.sorting,body.sorting *{cursor:grabbing!important;-webkit-user-select:none;u
 .title{display:flex;align-items:center;gap:10px;min-width:0}
 .title svg{flex:none;color:var(--ink-2)}
 .title h3{font-size:16px;font-weight:600;margin:0;line-height:1.3;letter-spacing:-.01em;overflow-wrap:break-word}
+.name{display:flex;align-items:center;gap:2px;min-width:0}
+.ren{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-4px 0;padding:0;border:0;border-radius:7px;background:none;color:var(--ink-3);font-size:14px;cursor:pointer;opacity:.55}
+.card:hover .ren,.ren:focus-visible{opacity:1}
+.ren:hover{background:var(--tile);color:var(--ink)}
+.name-in{font:inherit;font-size:16px;font-weight:600;width:100%;min-width:0;padding:3px 7px;margin:-4px 0;border:1px solid var(--line-strong);border-radius:7px;background:var(--bg);color:var(--ink)}
 .sub{font-size:13px;color:var(--ink-3);margin-top:1px;overflow-wrap:break-word}
 .state{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;padding:4px 10px;border-radius:999px;white-space:nowrap}
 .state i{width:7px;height:7px;border-radius:50%;background:currentColor}
@@ -569,7 +600,7 @@ function cardHtml(a,open,movable){
   var modelHtml=models.length?'<details data-key="m-'+esc(a.id)+'"'+(open['m-'+a.id]?' open':'')+'><summary>'+models.length+' model'+(models.length>1?'s':'')+'</summary><ul class="models">'+shown.map(function(m){return '<li>'+esc(m)+'</li>'}).join('')+(models.length>shown.length?'<li>and '+(models.length-shown.length)+' more</li>':'')+'</ul></details>':'';
   var grip=movable?'<button type="button" class="grip" data-move="'+esc(a.id)+'" aria-label="Move '+esc(a.label)+'. Drag it, or use the arrow keys." title="Drag to move">'+GRIP+'</button>':'';
   return '<article class="card" data-id="'+esc(a.id)+'" aria-label="'+esc(a.label)+'">'
-    +'<div class="head"><div class="title">'+grip+icon(ico)+'<div><h3>'+esc(a.label)+'</h3><div class="sub">'+sub+'</div></div></div><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span></div>'
+    +'<div class="head"><div class="title">'+grip+icon(ico)+'<div><div class="name"><h3>'+esc(a.label)+'</h3><button type="button" class="ren" data-rename="'+esc(a.id)+'" aria-label="Rename '+esc(a.label)+'" title="Rename">&#9998;</button></div><div class="sub">'+sub+'</div></div></div><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span></div>'
     +(quota?'<div>'+quota+'</div>':'')+notes
     +'<div class="stats"><span title="Every request to this account in the last 24 hours: jobs, failed attempts, second-model checks and omnitrix test, including jobs no longer in the list below">Last 24 h, all requests</span><span><b>'+u.requestsToday+'</b> answered</span>'+(u.failedToday?'<span class="warn"><b>'+u.failedToday+'</b> failed</span>':'')+'<span><b>'+fmt(u.tokensToday)+'</b> tokens</span>'+(u.costToday?'<span><b>'+money(u.costToday)+'</b></span>':'')
     +(u.windows.length?'<span class="prov">'+esc(SOURCES[u.source]||u.source)+(u.updatedAt&&!u.stale?', updated '+esc(ago(u.updatedAt)):'')+'</span>':'')+'</div>'
@@ -684,7 +715,7 @@ function show(raw,live){
   if(live){last=Date.now();connected=true}
   // While a card is being moved, or is still sliding into place, the newest state waits and is drawn after.
   // This comes first, so a state that returns to the one on screen also replaces an older one that waits.
-  if(sorting||Date.now()<settleUntil){held=raw;heldLive=heldLive||live;tick();if(!sorting)release();return}
+  if(sorting||renaming||Date.now()<settleUntil){held=raw;heldLive=heldLive||live;tick();if(!sorting&&!renaming)release();return}
   // drawn now, so a state held back earlier is older and must not be drawn over this one later
   held=null;heldLive=false;clearTimeout(heldTimer);
   if(raw===lastRaw&&minute===drawnMinute){tick();return}
@@ -729,6 +760,59 @@ async function hide(body){
 }
 document.getElementById('jobs').addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-hide]');if(b){b.disabled=true;hide({ids:[b.getAttribute('data-hide')]})}});
 document.getElementById('clear-failed').addEventListener('click',function(){hide({failed:true})});
+// Renaming an account: its name becomes a text box, Enter or leaving the box saves, Escape keeps the old name.
+// Live updates wait meanwhile, so a redraw cannot wipe what is being typed.
+var renaming=null;
+// Ends the edit and draws the cards again. A saved name is written into the state drawn, which may be older
+// than the save. Focus goes back to the pencil only when the edit ended in the box; after Tab or a click it
+// stays where the user moved it.
+function endRename(id,text,warn,label,refocus){
+  renaming=null;drawnCards='';
+  var raw=held||lastRaw;held=null;heldLive=false;
+  if(raw&&label!==undefined){try{var d=JSON.parse(raw);d.accounts.forEach(function(a){if(a.id===id)a.label=label});raw=JSON.stringify(d)}catch(e){}}
+  if(raw){lastRaw='';show(raw,false)}
+  var b=document.querySelector('button[data-rename="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]');if(b&&refocus)b.focus({preventScroll:true});
+  note(text,warn);
+}
+// one line under the Accounts heading: a warning, or a plain confirmation; empty clears it
+function note(text,warn){var m=document.getElementById('order-msg');text=text?text.charAt(0).toUpperCase()+text.slice(1):'';m.textContent=text;m.classList.toggle('warn',!!warn);if(text)say(text)}
+function startRename(btn){
+  var id=btn.getAttribute('data-rename'), row=btn.parentNode, h=row.querySelector('h3'), old=h.textContent;
+  renaming=id;note('',false);
+  // no length limit in the box: the browser would count an emoji as several characters; omnitrix checks the name
+  var box=document.createElement('input');box.type='text';box.className='name-in';box.value=old;
+  box.setAttribute('aria-label','New name for '+old+'. Press Enter to save or Escape to keep it.');box.setAttribute('autocomplete','off');box.spellcheck=false;
+  row.replaceChildren(box);box.focus();box.select();
+  var busy=false, done=false;
+  // inBox: the edit ended with Enter in the box, not by leaving it
+  async function save(inBox){
+    if(busy||done)return;
+    var text=box.value;
+    if(text.trim()===old){done=true;endRename(id,'',false,undefined,inBox);return}
+    // while the name is on its way the box is read-only and Escape waits, so nothing typed meanwhile is lost
+    busy=true;box.readOnly=true;
+    var fail=function(text){
+      busy=false;box.readOnly=false;
+      // after leaving the box, the old name stays and the user's focus is not taken back
+      if(inBox){note(text,true);box.focus()}else{done=true;endRename(id,text+' The name stays '+old+'.',true,undefined,false)}
+    };
+    try{
+      var r=await fetch('/api/rename',{method:'POST',headers:{'content-type':'application/json','x-omnitrix-token':TOKEN},body:JSON.stringify({id:id,label:text})});
+      if(r.status===403){done=true;endRename(id,'omnitrix restarted since this page loaded. Reload the page, then rename the account again.',true,undefined,inBox);return}
+      var a=await r.json().catch(function(){return {}});
+      if(!r.ok){fail(a.error?a.error.charAt(0).toUpperCase()+a.error.slice(1)+'.':'omnitrix could not save the name.');return}
+      done=true;endRename(id,'Renamed to '+a.label+'.',false,a.label,inBox);
+    }catch(e){fail('Could not rename: omnitrix did not answer.')}
+  }
+  box.addEventListener('keydown',function(e){
+    // a key that picks a word in an input method for Chinese, Japanese and other languages is not for us
+    if(e.isComposing||e.keyCode===229)return;
+    if(e.key==='Enter'){e.preventDefault();save(true)}
+    else if(e.key==='Escape'){e.preventDefault();if(!busy){done=true;endRename(id,'',false,undefined,true)}}
+  });
+  box.addEventListener('blur',function(){if(!busy&&!done)save(false)});
+}
+document.getElementById('accounts').addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-rename]');if(b&&!renaming)startRename(b)});
 // Arranging the account cards: drag one by its handle with a mouse, pen or finger, or give its handle focus and
 // use the arrow keys, Home and End. omnitrix keeps the order, so every browser shows it; routing ignores it.
 var grid=document.getElementById('accounts');
@@ -759,7 +843,7 @@ function flip(change,skip){
 function release(){
   clearTimeout(heldTimer);
   heldTimer=setTimeout(function(){
-    if(sorting)return;
+    if(sorting||renaming)return;
     if(Date.now()<settleUntil){release();return}
     var h=held, live=heldLive;held=null;heldLive=false;
     if(h){lastRaw='';show(h,live)}
@@ -784,7 +868,7 @@ async function flush(){
 function undo(text){
   // the cards on the page were moved by hand, so they are drawn again even though the saved state is unchanged
   saving=false;wanted=null;localOrder=null;settleUntil=0;drawnCards='';
-  document.getElementById('order-msg').textContent=text;say(text);
+  note(text,true);
   var raw=held||lastRaw;held=null;
   if(raw){lastRaw='';show(raw,false)}
 }
