@@ -149,6 +149,8 @@ export interface AccountHealth {
   reason?: string;
   /** latest rate-limit numbers the provider told us */
   measured?: { remainingRequests?: number; remainingTokens?: number; resetAt?: number; at: number; source: string };
+  /** how many prompt tokens this model really reads, learned when it cut a longer prompt (key from contextLimitKey) */
+  contextTokens?: number;
   /** when this entry was written */
   at?: number;
 }
@@ -174,7 +176,7 @@ export interface UsageRecord {
 export const EFFORTS = ['low', 'medium', 'high'] as const;
 export type Effort = (typeof EFFORTS)[number];
 
-export type ErrorKind = 'rate_limit' | 'quota' | 'auth' | 'bad_request' | 'server' | 'network' | 'timeout' | 'cancelled' | 'model_gone' | 'unknown';
+export type ErrorKind = 'rate_limit' | 'quota' | 'auth' | 'bad_request' | 'server' | 'network' | 'timeout' | 'cancelled' | 'model_gone' | 'too_long' | 'unknown';
 
 export interface TaskSpec {
   title: string;
@@ -339,6 +341,8 @@ export class DriverError extends Error {
     public kind: ErrorKind,
     public status?: number,
     public retryAfterMs?: number,
+    /** for too_long: how many prompt tokens the model reported reading */
+    public readTokens?: number,
   ) {
     super(message);
     this.name = 'DriverError';

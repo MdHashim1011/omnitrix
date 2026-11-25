@@ -1,6 +1,7 @@
 import { resolveKey } from '../store.js';
 import { DriverError, type Account, type DriverRequest, type DriverResult } from '../types.js';
 import { getJson, joinUrl, missingKey, postJson, readRateHeaders } from './http.js';
+import { loadedContext } from './ollama.js';
 
 function authHeaders(account: Account): Record<string, string> {
   const key = resolveKey(account);
@@ -48,6 +49,15 @@ export async function runOpenAI(req: DriverRequest): Promise<DriverResult> {
   if (!text && !choice) throw new DriverError(`unexpected response: ${JSON.stringify(json).slice(0, 200)}`, 'server');
 
   const usage = json?.usage ?? {};
+  const read = Number(usage.prompt_tokens ?? usage.input_tokens);
+  const sent = promptTokens(req);
+  if (Number.isFinite(read) && read > 0 && promptCut(sent, read)) {
+    const n = (x: number) => x.toLocaleString('en-US');
+    const hint = account.provider === 'ollama' ? '. Ollama cuts prompts to its working size; start it with OLLAMA_CONTEXT_LENGTH set higher, such as 32768, to give its models more room' : '';
+    // Ollama says how much room it gave the model, which is more than the part of a cut prompt it kept
+    const room = account.provider === 'ollama' && account.baseUrl ? await loadedContext(account.baseUrl, req.model) : undefined;
+    throw new DriverError(`the model read only ${n(read)} of about ${n(sent)} tokens of the prompt and cut the rest, so its answer was not used${hint}`, 'too_long', undefined, undefined, room && room > read ? room : read);
+  }
   return {
     text,
     inputTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0),
@@ -55,6 +65,20 @@ export async function runOpenAI(req: DriverRequest): Promise<DriverResult> {
     costUsd: typeof usage.cost === 'number' ? usage.cost : undefined, // OpenRouter reports this
     rate: readRateHeaders(headers),
   };
+}
+
+/** About how many tokens the text of a request takes: four characters each, pictures not counted. */
+export function promptTokens(req: Pick<DriverRequest, 'system' | 'prompt'>): number {
+  return Math.round(((req.system?.length ?? 0) + req.prompt.length) / 4);
+}
+
+/**
+ * Whether a server read only part of a prompt. Local servers such as Ollama cut a prompt to their working
+ * size without an error, and the model then answers what is left. Counting by characters is rough, so only a
+ * long prompt of which less than half arrived counts.
+ */
+export function promptCut(sent: number, read: number): boolean {
+  return sent > 3000 && read < sent / 2;
 }
 
 export async function listOpenAIModels(account: Account): Promise<string[]> {

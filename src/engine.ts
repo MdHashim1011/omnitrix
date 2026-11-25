@@ -11,7 +11,7 @@ import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
 import { reachable } from './init.js';
 import { budgetBlocks, budgetFor, estimateCost, loadTeam, periodStart, personSpend, readShared, shareRecord, type Reserved, type TeamSummary } from './team.js';
 import { loadQuotas, refreshQuotas } from './quota.js';
-import { route, routeDef, routeList, effectivePrivacy, fit, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
+import { route, routeDef, routeList, effectivePrivacy, fit, contextLimitKey, modelHealthKey, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
@@ -33,7 +33,9 @@ const MAX_TRIES = 12;
 // config.json), so it also rests this long in health.json, which every process reads.
 const GONE_PAUSE_MS = 24 * 60 * 60_000;
 const MODEL_PAUSE_MS = 5 * 60_000;
-const MODEL_FAULTS = new Set(['model_gone', 'server', 'timeout']);
+const MODEL_FAULTS = new Set(['model_gone', 'server', 'timeout', 'too_long']);
+// how long a learned prompt size counts; the server may be given more room meanwhile
+const CONTEXT_MEMORY_MS = 7 * 24 * 60 * 60_000;
 const MAX_FILE_BYTES = 400_000;
 const LOCAL_PROBE_MS = 30_000;
 const PROBE_REASON = 'not answering at';
@@ -1161,7 +1163,7 @@ export class Engine {
       } else if (ctrl.signal.aborted || e.kind === 'cancelled') {
         job.status = 'cancelled';
         job.error = 'cancelled';
-      } else if (job.attempts.filter((a) => a.errorKind !== 'model_gone').length < MAX_ATTEMPTS && job.attempts.length < MAX_TRIES && e.kind !== 'bad_request') {
+      } else if (job.attempts.filter((a) => a.errorKind !== 'model_gone' && a.errorKind !== 'too_long').length < MAX_ATTEMPTS && job.attempts.length < MAX_TRIES && e.kind !== 'bad_request') {
         job.status = 'queued'; // pump() will try the next best account
         job.error = attempt.error;
       } else {
@@ -1231,6 +1233,10 @@ export class Engine {
   private applyFailure(account: Account, e: DriverError, model: string): void {
     const now = Date.now();
     const prev = this.health[account.id];
+    if (e.kind === 'too_long') {
+      if (e.readTokens) this.setHealth(contextLimitKey(account.id, model), { state: 'ready', contextTokens: e.readTokens, until: now + CONTEXT_MEMORY_MS, reason: 'cut a longer prompt' });
+      return;
+    }
     if (e.kind === 'model_gone') {
       this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + GONE_PAUSE_MS, reason: 'not available on this account' });
       return;

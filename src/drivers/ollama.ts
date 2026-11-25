@@ -28,6 +28,22 @@ export async function modelSizes(baseUrl: string): Promise<Record<string, number
   }
 }
 
+/**
+ * The working size in tokens that Ollama gave a loaded model, from /api/ps; undefined when it does not say.
+ * When a prompt is longer, Ollama keeps only part of it, often about half of this size.
+ */
+export async function loadedContext(baseUrl: string, model: string): Promise<number | undefined> {
+  const root = baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
+  try {
+    const ps = await getJson(`${root}/api/ps`, {}, 5000);
+    const loaded = (Array.isArray(ps?.models) ? (ps.models as { name?: unknown; model?: unknown; context_length?: unknown }[]) : []).find((m) => m?.name === model || m?.model === model);
+    const n = Number(loaded?.context_length);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 let gpuCache: { bytes: number | undefined } | undefined;
 
 /**

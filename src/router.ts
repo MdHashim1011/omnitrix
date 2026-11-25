@@ -197,6 +197,12 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
         reject(`paused until ${new Date(paused.until!).toLocaleTimeString()} (${paused.reason ?? 'not answering'})`, model.id);
         continue;
       }
+      // a model that cut a long prompt before gets only prompts that fit what it read then
+      const cut = ctx.health[contextLimitKey(account.id, model.id)];
+      if (cut?.contextTokens && (cut.until ?? 0) > now && Math.round(task.prompt.length / 4) > cut.contextTokens) {
+        reject(`this model reads only about ${cut.contextTokens.toLocaleString('en-US')} tokens of a prompt, and this task is longer${account.provider === 'ollama' ? ' (start Ollama with OLLAMA_CONTEXT_LENGTH set higher to give it more room)' : ''}`, model.id);
+        continue;
+      }
       // Ollama's "-cloud" models run on Ollama's servers, even through a local Ollama
       if (privacy === 'secret' && /[-:]cloud$/i.test(model.id)) { reject('secret task: this model runs in the cloud', model.id); continue; }
       if (task.type === 'vision' && account.local && !model.visionChecked && !model.pinned) { reject('the server has not reported that this model reads images', model.id); continue; }
@@ -266,6 +272,11 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
 
   candidates.sort((a, b) => b.score - a.score);
   return { candidates, rejected };
+}
+
+/** Where the learned prompt size of one model is kept in health.json. */
+export function contextLimitKey(accountId: string, modelId: string): string {
+  return `${modelHealthKey(accountId, modelId)}#context`;
 }
 
 /** Health entries for one model sit next to the account entries, keyed "account/model". */
