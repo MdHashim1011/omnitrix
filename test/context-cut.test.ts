@@ -10,6 +10,12 @@ import { account, chatReply, mockProvider, tempHome, writeConfig } from './helpe
 // itself takes 131,072 tokens; Ollama's default working size cut the rest.
 
 const cleanups: (() => unknown)[] = [];
+
+/**
+ * One reply in both of Ollama's forms: the OpenAI-style answer, and the native one that omnitrix uses for a
+ * long prompt. These fakes ignore the working size asked for, as an Ollama that cuts prompts anyway would.
+ */
+const reply = (text: string, read: number) => ({ ...chatReply(text, { prompt_tokens: read, completion_tokens: 2 }), message: { role: 'assistant', content: text }, prompt_eval_count: read, eval_count: 2 });
 beforeEach(() => tempHome());
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
@@ -22,9 +28,11 @@ const task = (prompt: string, over = {}) => ({ title: 't', type: 'long_context' 
 async function cutting(limit: number, answer = 'Nothing', room?: number) {
   const p = await mockProvider((req) => {
     // Ollama's list of loaded models, with the working size it gave each one
+    // what the model was trained for; these fakes do not say
+    if (req.path.endsWith('/api/show')) return { json: {} };
     if (req.path.endsWith('/api/ps')) return { json: room ? { models: [{ name: 'qwen3:32b', context_length: 40_960 }, { name: 'llama3.2:3b', context_length: room }] } : { models: [] } };
     const sent = Math.round(JSON.stringify(req.body.messages).length / 4);
-    return { json: chatReply(answer, { prompt_tokens: Math.min(sent, limit), completion_tokens: 2 }) };
+    return { json: reply(answer, Math.min(sent, limit)) };
   });
   cleanups.push(p.close);
   return p;
@@ -52,8 +60,9 @@ describe('a prompt that the model only read in part', () => {
     // only the bigger model is set up with a small working size
     const p = await mockProvider((req) => {
       if (req.path.endsWith('/api/ps')) return { json: { models: [] } };
+      if (req.path.endsWith('/api/show')) return { json: {} };
       const sent = Math.round(JSON.stringify(req.body.messages).length / 4);
-      return { json: chatReply('PELICAN', { prompt_tokens: req.body.model === 'llama3.2:3b' ? 2050 : sent, completion_tokens: 2 }) };
+      return { json: reply('PELICAN', req.body.model === 'llama3.2:3b' ? 2050 : sent) };
     });
     cleanups.push(p.close);
     writeConfig([account({ id: 'ollama', provider: 'ollama', baseUrl: p.url, local: true, models: [makeModel('llama3.2:3b'), makeModel('llama3.2:1b')] })]);

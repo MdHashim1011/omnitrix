@@ -1,7 +1,7 @@
 import { resolveKey } from '../store.js';
 import { DriverError, type Account, type DriverRequest, type DriverResult } from '../types.js';
 import { getJson, joinUrl, missingKey, postJson, readRateHeaders } from './http.js';
-import { loadedContext } from './ollama.js';
+import { loadedContext, modelMaxContext, ollamaRoom } from './ollama.js';
 
 function authHeaders(account: Account): Record<string, string> {
   const key = resolveKey(account);
@@ -36,6 +36,19 @@ export async function runOpenAI(req: DriverRequest): Promise<DriverResult> {
       : req.prompt,
   });
 
+  // Ollama's OpenAI-style endpoint cuts a prompt to the model's working size without an error and takes no
+  // size with the request; its own endpoint does. An answer of up to 4,096 tokens is planned for, since local
+  // models seldom write more and memory use grows with the size.
+  if (account.provider === 'ollama') {
+    const need = promptTokens(req) + Math.min(req.maxOutputTokens ?? 4096, 4096);
+    if (ollamaRoom(need) !== undefined) {
+      const auth = authHeaders(account);
+      const [max, loaded] = await Promise.all([modelMaxContext(account.baseUrl, req.model, auth, req.signal), loadedContext(account.baseUrl, req.model, auth)]);
+      const room = ollamaRoom(need, max, loaded);
+      if (room) return runOllamaChat(req, account.baseUrl, room);
+    }
+  }
+
   const body: Record<string, unknown> = { model: req.model, messages, stream: false };
   // OpenAI's reasoning models refuse max_tokens; most other compatible APIs know only max_tokens
   if (req.maxOutputTokens) body[account.provider === 'openai' ? 'max_completion_tokens' : 'max_tokens'] = req.maxOutputTokens;
@@ -65,6 +78,39 @@ export async function runOpenAI(req: DriverRequest): Promise<DriverResult> {
     costUsd: typeof usage.cost === 'number' ? usage.cost : undefined, // OpenRouter reports this
     rate: readRateHeaders(headers),
   };
+}
+
+/** Ollama's own chat endpoint, which takes the working size `room` with the request. */
+async function runOllamaChat(req: DriverRequest, baseUrl: string, room: number): Promise<DriverResult> {
+  const root = baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
+  const messages: Record<string, unknown>[] = [];
+  if (req.system) messages.push({ role: 'system', content: req.system });
+  messages.push({ role: 'user', content: req.prompt, ...(req.images?.length ? { images: req.images.map((i) => i.data) } : {}) });
+  const sent = promptTokens(req);
+  const n = (x: number) => x.toLocaleString('en-US');
+  // Ollama keeps only part of a prompt longer than the room, and the part it keeps can look whole
+  if (sent > room) throw new DriverError(`the prompt has about ${n(sent)} tokens and this model can hold ${n(room)} here, so it was not sent`, 'too_long', undefined, undefined, room);
+  const options: Record<string, number> = { num_ctx: room };
+  if (req.maxOutputTokens) options.num_predict = req.maxOutputTokens;
+  const body: Record<string, unknown> = { model: req.model, messages, stream: false, options };
+  // the same levels that Ollama's OpenAI-style endpoint takes as reasoning_effort
+  if (req.effort) body.think = req.effort;
+  const { json, headers } = await postJson(`${root}/api/chat`, authHeaders(req.account), body, req.timeoutMs, req.signal);
+  const content = json?.message?.content;
+  if (typeof content !== 'string') throw new DriverError(`unexpected response: ${JSON.stringify(json).slice(0, 200)}`, 'server');
+  const read = Number(json?.prompt_eval_count);
+  if (Number.isFinite(read) && read > 0 && promptCut(sent, read)) {
+    // the size asked for did not hold, so what Ollama really loaded, or else what arrived, is the model's limit
+    const loaded = await loadedContext(baseUrl, req.model, authHeaders(req.account));
+    throw new DriverError(
+      `the model read only ${n(read)} of about ${n(sent)} tokens of the prompt, although omnitrix asked Ollama for room for ${n(room)}, so its answer was not used. If this Ollama ignores the size asked for, start it with OLLAMA_CONTEXT_LENGTH set higher, such as 32768`,
+      'too_long',
+      undefined,
+      undefined,
+      loaded && loaded > read && loaded < room ? loaded : read,
+    );
+  }
+  return { text: withoutThinking(content), inputTokens: Number.isFinite(read) ? read : 0, outputTokens: Number(json?.eval_count ?? 0), rate: readRateHeaders(headers) };
 }
 
 /** About how many tokens the text of a request takes: four characters each, pictures not counted. */

@@ -1,5 +1,8 @@
 // Shared pieces for the API drivers: requests with a timeout, and turning provider errors and
 // rate-limit headers into something the router can act on.
+import http from 'node:http';
+import https from 'node:https';
+import zlib from 'node:zlib';
 import { redact } from '../store.js';
 import { DriverError, type Account, type ErrorKind } from '../types.js';
 
@@ -103,6 +106,68 @@ function retiredModel(text: string): boolean {
 // Largest answers read from a provider; anything bigger is a broken or hostile server.
 const MAX_ANSWER = 32 * 1024 * 1024;
 const MAX_LIST = 4 * 1024 * 1024;
+
+interface Reply {
+  status: number;
+  ok: boolean;
+  headers: Headers;
+  text: string;
+}
+
+/**
+ * One POST through Node's own HTTP client. The built-in fetch gives up after 300 seconds without response
+ * headers whatever the caller allows, and an API sends its headers only once the whole answer is ready, so a
+ * slow model failed at five minutes as a network fault. Here only the caller's signal ends the request.
+ */
+function send(url: string, headers: Record<string, string>, body: string, limit: number, signal: AbortSignal): Promise<Reply> {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const client = target.protocol === 'https:' ? https : target.protocol === 'http:' ? http : undefined;
+    if (!client) return reject(new Error(`unsupported address ${target.protocol}`));
+    const sent = { ...headers, 'accept-encoding': 'gzip, deflate, br', 'content-length': String(Buffer.byteLength(body)) };
+    const req = client.request(target, { method: 'POST', headers: sent, signal }, (res) => {
+      const status = res.statusCode ?? 0;
+      // a redirect would carry the key and the prompt to another server, so it is never followed or waited on
+      if (status >= 300 && status < 400) {
+        res.destroy();
+        return reject(new DriverError(`the provider answered HTTP ${status} with a redirect, which omnitrix does not follow`, 'server', status));
+      }
+      const encoding = String(res.headers['content-encoding'] ?? '').trim().toLowerCase();
+      const unpack = encoding === 'gzip' || encoding === 'x-gzip' ? zlib.createGunzip() : encoding === 'deflate' ? zlib.createInflate() : encoding === 'br' ? zlib.createBrotliDecompress() : undefined;
+      const stream = unpack ? res.pipe(unpack) : res;
+      const chunks: Buffer[] = [];
+      // counted after unpacking, so a small packed answer cannot grow past the limit
+      let size = 0;
+      stream.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > limit) {
+          reject(new DriverError(`the answer is too large (over ${Math.round(limit / 1024 / 1024)} MB)`, 'server', status));
+          unpack?.destroy();
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      stream.on('error', reject);
+      res.on('error', reject);
+      res.on('close', () => {
+        if (!res.complete) reject(new Error('the connection closed before the answer was complete'));
+      });
+      stream.on('end', () => {
+        const h = new Headers();
+        for (const [name, value] of Object.entries(res.headers)) for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value]) h.append(name, v);
+        resolve({ status, ok: status >= 200 && status < 300, headers: h, text: Buffer.concat(chunks).toString('utf8') });
+      });
+    });
+    // a server that switches protocols never answers, and Node then closes the request without an error
+    req.on('upgrade', (res, socket) => {
+      socket.destroy();
+      reject(new DriverError(`the provider switched protocols (HTTP ${res.statusCode}) instead of answering`, 'server', res.statusCode));
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
 
 /** Read a response body, stopping once it passes `limit` bytes. */
 export async function readCapped(res: Response, limit: number): Promise<string> {
@@ -210,15 +275,8 @@ export async function postJson(url: string, headers: Record<string, string>, bod
   const onAbort = () => ctrl.abort(new Error('cancelled'));
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-      // a redirect would carry the key and the prompt to another server
-      redirect: 'error',
-    });
-    const text = await readCapped(res, MAX_ANSWER);
+    const res = await send(url, { 'content-type': 'application/json', ...headers }, JSON.stringify(body), MAX_ANSWER, ctrl.signal);
+    const text = res.text;
     if (!res.ok) {
       const kind = classifyStatus(res.status, text);
       // When an answer names a limit per day beside one per minute, its short wait is for the minute; the day

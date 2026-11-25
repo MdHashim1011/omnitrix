@@ -32,13 +32,57 @@ export async function modelSizes(baseUrl: string): Promise<Record<string, number
  * The working size in tokens that Ollama gave a loaded model, from /api/ps; undefined when it does not say.
  * When a prompt is longer, Ollama keeps only part of it, often about half of this size.
  */
-export async function loadedContext(baseUrl: string, model: string): Promise<number | undefined> {
+export async function loadedContext(baseUrl: string, model: string, headers: Record<string, string> = {}): Promise<number | undefined> {
   const root = baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
   try {
-    const ps = await getJson(`${root}/api/ps`, {}, 5000);
+    const ps = await getJson(`${root}/api/ps`, headers, 5000);
     const loaded = (Array.isArray(ps?.models) ? (ps.models as { name?: unknown; model?: unknown; context_length?: unknown }[]) : []).find((m) => m?.name === model || m?.model === model);
     const n = Number(loaded?.context_length);
     return Number.isFinite(n) && n > 0 ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Ollama's usual working size; a request that fits in it needs no size of its own. */
+const OLLAMA_SMALLEST = 4096;
+/** The largest working size omnitrix asks for on its own, since memory use grows with it. */
+const OLLAMA_MOST = 32_768;
+
+/**
+ * The working size to ask Ollama for when a request needs `need` tokens, or undefined when its smallest
+ * usual size is enough. A power of two keeps the same size for similar requests, since Ollama reloads a
+ * model whose size changes. A larger size that is loaded already is kept for the same reason, and the
+ * model's own limit is never passed.
+ */
+export function ollamaRoom(need: number, modelMax?: number, loaded?: number): number | undefined {
+  if (need <= OLLAMA_SMALLEST) return undefined;
+  let room = 4096;
+  while (room < need && room < OLLAMA_MOST) room *= 2;
+  room = Math.max(room, loaded ?? 0);
+  return modelMax ? Math.min(room, modelMax) : room;
+}
+
+// a model can be replaced under the same name, so a size read from it is asked again after a while
+const MAX_CACHE_MS = 10 * 60_000;
+const maxCache = new Map<string, { max: number | undefined; at: number }>();
+
+/**
+ * The longest context a model was trained for, from /api/show; undefined when Ollama does not say. `headers`
+ * carry the account key for a proxy in front of Ollama, and `signal` ends the question when the job is cancelled.
+ */
+export async function modelMaxContext(baseUrl: string, model: string, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<number | undefined> {
+  const root = baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
+  const key = `${root} ${model}`;
+  const hit = maxCache.get(key);
+  if (hit && Date.now() - hit.at < MAX_CACHE_MS) return hit.max;
+  try {
+    const info = (await postJson(`${root}/api/show`, headers, { model }, 10_000, signal)).json?.model_info ?? {};
+    const name = Object.keys(info).find((k) => k.endsWith('.context_length'));
+    const n = Number(name ? info[name] : undefined);
+    const max = Number.isFinite(n) && n > 0 ? n : undefined;
+    maxCache.set(key, { max, at: Date.now() });
+    return max;
   } catch {
     return undefined;
   }
