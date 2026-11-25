@@ -417,7 +417,8 @@ describe('follow-up questions', () => {
     expect(asked).toContain('What is the invoice total?');
     expect(asked).toContain('The total is 20.52.');
     expect(asked).toContain('And how much of it is tax?');
-    expect(a.calls.filter((c) => c.body?.messages)).toHaveLength(0);
+    // the same holds for a: a closed server's port can be reused at once, so only this test's questions count
+    expect(a.calls.filter((c) => /invoice total|how much of it is tax/.test(JSON.stringify(c.body?.messages ?? '')))).toHaveLength(0);
   });
 
   it('refuses a follow-up of a job that has not finished or that changed code', () => {
