@@ -577,6 +577,7 @@ program
   .addOption(new Option('--api-code-agent <opencode|off>', 'let API accounts do code tasks through OpenCode when it is installed, or not').choices(['opencode', 'off']))
   .addOption(new Option('--open-dashboard <on|off>', 'open the dashboard in your browser at the first task of each Claude session, unless a page already shows it').choices(['on', 'off']))
   .addOption(new Option('--auto-effort <on|off>', 'let omnitrix pick the reasoning effort of Codex tasks from their kind when neither Claude nor the account sets one; off leaves it to Codex').choices(['on', 'off']))
+  .addOption(new Option('--codex-tools <lean|all>', 'leave out the Codex tools a worker never needs, such as browser and computer use, which saves about 11,000 input tokens per request; all keeps them').choices(['lean', 'all']))
   .action((o) => {
     const s = updateConfig((cfg) => {
       const s = cfg.settings;
@@ -595,6 +596,7 @@ program
       if (o.apiCodeAgent) s.apiCodeAgent = o.apiCodeAgent;
       if (o.openDashboard) s.openDashboard = o.openDashboard;
       if (o.autoEffort) s.autoEffort = o.autoEffort;
+      if (o.codexTools) s.codexTools = o.codexTools;
       return s;
     });
     console.log(JSON.stringify(s, null, 2));

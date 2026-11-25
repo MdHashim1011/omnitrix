@@ -17,7 +17,7 @@ export interface CliTool {
   /** env var that points the tool at a config folder; "HOME" means override the home folder */
   profileEnv: string;
   /** args for a run; edit=true when the task may change files */
-  args(opts: { model?: string; edit: boolean; cwd: string; outFile: string; effort?: Effort }): string[];
+  args(opts: { model?: string; edit: boolean; cwd: string; outFile: string; effort?: Effort; off?: string[] }): string[];
   parse(stdout: string, outFile: string): { text: string; inputTokens: number; outputTokens: number; costUsd?: number; error?: string };
   loginArgs: string[];
   /** extra env for a run */
@@ -82,9 +82,11 @@ export const CLI_TOOLS: Record<string, CliTool> = {
     id: 'codex',
     command: 'codex',
     profileEnv: 'CODEX_HOME',
-    args: ({ model, edit, cwd, outFile, effort }) => [
+    args: ({ model, edit, cwd, outFile, effort, off }) => [
       'exec', '--json', '--skip-git-repo-check', '--ephemeral',
       ...(effort ? ['-c', `model_reasoning_effort=${effort}`] : []),
+      // as config settings rather than --disable, which refuses the whole run over a name it does not know
+      ...(off ?? []).flatMap((f) => ['-c', `features.${f}=false`]),
       // plain workspace-write still refuses file writes on Windows; --approve-for-me keeps that
       // sandbox but lets Codex's own reviewer approve the edits instead of a human
       ...(edit ? ['--approve-for-me'] : ['--sandbox', 'read-only']),
@@ -463,6 +465,75 @@ export async function runApiAgent(req: DriverRequest): Promise<DriverResult> {
   });
 }
 
+// Codex features whose tools a worker never needs: browsers, computer use, apps and plugins, image
+// generation, sub-agents, goals and skill search. Their tool descriptions ride along with every request;
+// turning them off took a one-word answer from about 25,000 input tokens to about 13,800 (codex-cli
+// 0.167.1). The shell, file edits and view_image stay, so code tasks and pictures in a repo still work.
+const LEAN_OFF = [
+  'apps', 'plugins', 'remote_plugin', 'plugin_discovery_prefetch', 'browser_use', 'browser_use_external',
+  'browser_use_full_cdp_access', 'browser_annotation_api', 'in_app_browser', 'computer_use', 'image_generation',
+  'multi_agent', 'goals', 'skill_search', 'tool_suggest', 'sleep_tool',
+];
+
+/** Feature names from the table that `codex features list` prints, without removed ones. */
+export function readFeatureList(text: string): Set<string> {
+  const names = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^([a-z][a-z0-9_]*)\s+(.+?)\s+(true|false)\s*$/.exec(line.trim());
+    if (m && m[2] !== 'removed') names.add(m[1]!);
+  }
+  return names;
+}
+
+/** The extra features to turn off: only names this Codex lists, so a renamed feature is simply skipped. */
+export function leanFeatures(listed: Set<string>): string[] {
+  return LEAN_OFF.filter((f) => listed.has(f));
+}
+
+const featureCache = new Map<string, Promise<Set<string>>>();
+
+/** Forget the feature lists read so far, such as after Codex was updated. */
+export function forgetCodexFeatures(): void {
+  featureCache.clear();
+}
+
+/** What `codex features list` reports, read once per program; an empty set when it cannot be read. */
+function codexFeatures(resolved: Resolved, env: Record<string, string>): Promise<Set<string>> {
+  const key = [resolved.file, ...resolved.prefix].join('|');
+  let found = featureCache.get(key);
+  if (!found) {
+    found = new Promise<Set<string>>((done) => {
+      const start = launch(resolved, ['features', 'list']);
+      if (start.error) return done(new Set());
+      let out = '';
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn(start.file, start.args, { env: { ...env, ...start.env } as NodeJS.ProcessEnv, windowsVerbatimArguments: start.verbatim, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch {
+        return done(new Set());
+      }
+      const timer = setTimeout(() => {
+        killTree(child.pid);
+        done(new Set());
+      }, 15_000);
+      child.stdout!.setEncoding('utf8');
+      child.stdout!.on('data', (d: string) => {
+        if (out.length < 256 * 1024) out += d;
+      });
+      child.on('error', () => {
+        clearTimeout(timer);
+        done(new Set());
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        done(code === 0 ? readFeatureList(out) : new Set());
+      });
+    });
+    featureCache.set(key, found);
+  }
+  return found;
+}
+
 export async function runCli(req: DriverRequest, edit: boolean, via?: { tool: CliTool; env: Record<string, string> }): Promise<DriverResult> {
   const { account } = req;
   // an abort listener added now would never fire for a job that was already cancelled
@@ -477,14 +548,20 @@ export async function runCli(req: DriverRequest, edit: boolean, via?: { tool: Cl
   const tempCwd = req.cwd ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), 'omnitrix-'));
   const cwd = req.cwd ?? tempCwd!;
   const outFile = path.join(os.tmpdir(), `omnitrix-out-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
-  const start = launch(resolved, tool.args({ model: req.model, edit, cwd, outFile, effort: req.effort }));
+  const profile = account.profileDir ? profileEnv(tool, account.profileDir) : {};
+  const off = tool.id === 'codex' && !via && req.lean ? leanFeatures(await codexFeatures(resolved, childEnv(process.env, profile))) : [];
+  if (req.signal?.aborted) {
+    if (tempCwd) fs.rmSync(tempCwd, { recursive: true, force: true });
+    throw new DriverError('cancelled', 'cancelled');
+  }
+  const start = launch(resolved, tool.args({ model: req.model, edit, cwd, outFile, effort: req.effort, off }));
   if (start.error) {
     if (tempCwd) fs.rmSync(tempCwd, { recursive: true, force: true });
     throw new DriverError(`cannot start ${tool.command} safely: ${start.error}`, 'bad_request');
   }
 
   // never let the parent's keys leak into a worker, which may run whatever a prompt asks
-  const env = childEnv(process.env, via ? { ...via.env, ...start.env } : { ...(account.profileDir ? profileEnv(tool, account.profileDir) : {}), ...(tool.env?.(account) ?? {}), ...start.env });
+  const env = childEnv(process.env, via ? { ...via.env, ...start.env } : { ...profile, ...(tool.env?.(account) ?? {}), ...start.env });
   // some tools (OpenCode among them) take their folder from PWD, which still names the parent's folder
   env.PWD = cwd;
 

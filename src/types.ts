@@ -129,6 +129,8 @@ export interface Settings {
   openDashboard?: 'on' | 'off';
   /** whether omnitrix picks the reasoning effort of a Codex task from its type when nobody chose one; on unless set to off */
   autoEffort?: 'on' | 'off';
+  /** "all" keeps every Codex tool, such as browser and computer use; otherwise those a worker never needs are left out */
+  codexTools?: 'lean' | 'all';
   /** the team file this developer joined, if any */
   team?: { file: string; user: string; sha256: string };
 }
@@ -317,6 +319,8 @@ export interface DriverRequest {
   maxOutputTokens?: number;
   /** how hard a reasoning model should think; unset leaves the provider's default */
   effort?: Effort;
+  /** leave out Codex's tools that a worker never needs; see settings.codexTools */
+  lean?: boolean;
   /** pictures sent with the prompt, for drivers that can send them */
   images?: { mime: string; data: string }[];
 }

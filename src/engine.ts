@@ -1067,6 +1067,7 @@ export class Engine {
           timeoutMs: requestTimeoutMs(agent ? 'cli' : account.driver, job.task.size, cfg.settings.jobTimeoutSec),
           signal: ctrl.signal,
           effort: job.effort,
+          lean: cfg.settings.codexTools !== 'all',
           maxOutputTokens: agent ? undefined : job.task.size === 'small' ? 4000 : job.task.size === 'large' ? 32000 : 16000,
         },
         edit,
