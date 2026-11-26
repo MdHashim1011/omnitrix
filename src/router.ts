@@ -21,6 +21,11 @@ export interface Candidate {
   accountId: string;
   model: string;
   score: number;
+  /** how well this model does this kind of task, from its skills and Claude's past verdicts, without quota,
+   * timing, cost or pins; the queue compares it to decide whether a job waits for a stronger account */
+  strength: number;
+  /** the score before a busy account is halved, so the queue can tell which busy account would rank first */
+  rank: number;
   why: string[];
 }
 
@@ -80,15 +85,18 @@ function costFactor(model: ModelInfo, account: Account, mode: Config['settings']
   return 1 / (1 + (price / 20) * strength);
 }
 
-// These multiply the score after the quota factor. They can reorder accounts of similar fit, not
-// overturn a large difference in fit, and a pin still outranks them.
+// Accuracy comes first: quota left changes the order only once an account runs low. Above this share left,
+// a weaker model never wins on quota alone; below it, the account gives way step by step.
+const QUOTA_EASY = 0.25;
+// These multiply the score after the quota factor. They reorder accounts of about the same strength and
+// cannot overturn a real difference in strength; a pin still outranks them.
 const RESET_SOON_MS = 60 * 60_000;
 const RESET_SOON_MIN_LEFT = 0.2;
-// Big enough to beat an account with somewhat more quota left, since the quota factor otherwise counts
-// soon-to-vanish quota against the account that should spend it.
-const RESET_SOON_BONUS = 1.25;
-const RUNNING_OUT_PENALTY = 0.75;
-const PUBLIC_ONLY_BONUS = 1.15;
+const RESET_SOON_BONUS = 1.05;
+// A big run makes the plan's window look as if it runs out before it resets; that alone must not send hard
+// work to a weaker model.
+const RUNNING_OUT_PENALTY = 0.97;
+const PUBLIC_ONLY_BONUS = 1.03;
 
 /** No price is known. Prices are only set by hand, so this does not prove the model is free. */
 function unpriced(model: ModelInfo): boolean {
@@ -218,12 +226,17 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       const why: string[] = [];
       const f = fit(model.skills, task.type);
       if (task.minFit !== undefined && f < task.minFit) { reject(`weaker at ${task.type} (fit ${f.toFixed(2)}) than the worker it would check`, model.id); continue; }
+      // verdicts saved before versions were recorded still count until the version has its own
+      const exact = acceptanceFactor(ctx.stats, statsKey(model), task.type, now);
+      const acc = exact.samples || !model.digest ? exact : acceptanceFactor(ctx.stats, model.id, task.type, now);
+      const strength = f * acc.factor;
       let score = mode === 'quality' ? f * f : f;
       const basis = basisOf(model);
       why.push(`fit ${f.toFixed(2)}${basis === 'untested' ? ' (untested scores)' : basis === 'estimated' ? ' (estimated scores)' : ''}`);
 
-      // an account with little quota left still qualifies, it just stops being the first pick
-      const q = 0.4 + 0.6 * room;
+      // an account with little quota left still qualifies, it just stops being the first pick; above that,
+      // a little more quota left only breaks ties between accounts of the same strength
+      const q = (room >= QUOTA_EASY ? 1 : 0.4 + 0.6 * (room / QUOTA_EASY)) * (0.97 + 0.03 * room);
       score *= q;
       // without a known limit, the share is an assumption (see headroom), not a reading
       why.push(usage?.percentUsed === undefined
@@ -245,9 +258,6 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
       score *= c;
       if (c < 1) why.push(`cost x${c.toFixed(2)}`);
 
-      // verdicts saved before versions were recorded still count until the version has its own
-      const exact = acceptanceFactor(ctx.stats, statsKey(model), task.type, now);
-      const acc = exact.samples || !model.digest ? exact : acceptanceFactor(ctx.stats, model.id, task.type, now);
       score *= acc.factor;
       if (acc.samples) why.push(`past results x${acc.factor.toFixed(2)} (${acc.samples} rated)`);
 
@@ -267,6 +277,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
         why.push(known ? `typical ${(typical / 1000).toFixed(typical < 10_000 ? 1 : 0).replace(/\.0$/, '')} s` : 'speed not measured yet');
       }
 
+      const rank = score - account.priority * 0.0001;
       if (busy) { score *= 0.5; why.push('busy, will queue'); }
 
       const pinIndex = pins.findIndex((p) => p === account.id || p === `${account.id}/${model.id}`);
@@ -274,7 +285,7 @@ export function route(task: TaskSpec, ctx: RouteContext): { candidates: Candidat
 
       // tiny tie-breaker so the order is stable
       score -= account.priority * 0.0001;
-      candidates.push({ accountId: account.id, model: model.id, score, why });
+      candidates.push({ accountId: account.id, model: model.id, score, strength, rank: pinIndex >= 0 ? rank + 10 - pinIndex : rank, why });
     }
   }
 

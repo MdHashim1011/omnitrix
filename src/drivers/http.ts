@@ -34,6 +34,9 @@ export function classifyStatus(status: number, body: string): ErrorKind {
   if (status === 402) {
     // OpenRouter's limit on spending in flight passes in a moment
     if (/in_flight_budget/.test(text)) return 'rate_limit';
+    // Mistral's "You need a subscription to access this API" and SambaNova's "A payment method is required" are
+    // about the whole account: none of its models work until the owner changes the plan
+    if (/(need a subscription|payment method is required|add a payment method)/.test(text)) return 'quota';
     // Free keys at OpenRouter or Mistral answer 402 for the paid models only; the account's free models still
     // work. The engine pauses just that model, or the whole account when it has no other.
     return 'paid_model';
@@ -52,6 +55,8 @@ export function classifyStatus(status: number, body: string): ErrorKind {
     if (/limit: 0(?![\d.])/.test(text)) return 'model_gone';
     // OpenRouter's daily allowance of free requests is the key's, shared by all its free models
     if (/free-models-per-day/.test(text)) return 'quota';
+    // OpenRouter's "Provider returned error" is the upstream provider of one model, not the key's own limit
+    if (/provider returned error/.test(text)) return 'server';
     // A limit per minute passes in a minute, however the provider words it ("tokens per minute", "per min",
     // Gemini's "PerMinutePerProject", Google's "per_minute_per_project"), even with an upgrade offer beside it.
     // Alibaba's DashScope reports its limit per minute as "exceeded your current quota" with a link to "token-limit".

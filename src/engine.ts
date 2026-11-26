@@ -50,6 +50,17 @@ const WAIT_FOR_REST_MS = 2 * 60_000;
 const MAX_RESTING_WAIT_MS = 5 * 60_000;
 /** The shortest rest after a limit, even when a provider says to try again at once. */
 const MIN_REST_MS = 2000;
+// A limit per minute can refuse again the moment a short rest ends; Cerebras did 29 times, 3 seconds apart. Each
+// refusal that comes this soon after the previous rest ended doubles the rest, up to a minute.
+const RATE_REPEAT_MS = 60_000;
+const MAX_RATE_REST_MS = 60_000;
+// A local model whose server process died (Ollama's llama-server, often out of graphics memory) would most
+// likely die again on the next request, so it rests longer than a model that was merely slow.
+const CRASH_PAUSE_MS = 60 * 60_000;
+// "out of memory" alone is left out: one prompt too big for the graphics memory says that without a crash.
+const LOCAL_CRASH = /(process has terminated|cuda error)/i;
+// The provider wants a plan or a payment method before any model works; that lasts until the owner acts.
+const PLAN_REST_MS = 24 * 60 * 60_000;
 // how long a learned prompt size counts; the server may be given more room meanwhile
 const CONTEXT_MEMORY_MS = 7 * 24 * 60 * 60_000;
 const MAX_FILE_BYTES = 400_000;
@@ -139,6 +150,28 @@ export interface PoolAccountView {
   pausedModels: string[];
   /** the provider may train on prompts, so only public tasks go here */
   trainsOnData: boolean;
+  /** comes from the team file, which also sets its name */
+  team?: boolean;
+  /** how many jobs it runs at once */
+  seats: number;
+}
+
+// A free account counts as strong enough for a job when it has at least this share of the strength of the best
+// busy account ranked above it; below that, the job waits for the stronger one.
+const STRONG_ENOUGH = 0.9;
+// Waiting for the stronger account ends here. Another omnitrix process can keep that account busy for as long
+// as its own queue lasts, and a job must not sit queued all that time while other accounts are free.
+const MAX_STRONGER_WAIT_MS = 10 * 60_000;
+
+/**
+ * Whether a job waits for a stronger busy account. Bulk work, a task that asked for speed, and the cheap route
+ * (with which an escalating task starts) go to whichever account is free.
+ */
+export function waitsForStronger(t: TaskSpec, settings: Config['settings']): boolean {
+  if (t.type === 'bulk' || t.fast) return false;
+  const name = t.route ?? (t.escalate ? 'cheap' : undefined);
+  const via = name ? routeDef(name, settings) : undefined;
+  return !via?.fast && (via?.mode ?? settings.mode) !== 'saver';
 }
 
 /** An unknown route is a mistake to report, not a reason to route the task some other way. */
@@ -443,6 +476,8 @@ export class Engine {
         local: a.local,
         pausedModels,
         trainsOnData: a.trainsOnData,
+        team: a.team || undefined,
+        seats: a.concurrency,
       };
     });
   }
@@ -1016,10 +1051,26 @@ export class Engine {
       const faulted = new Set(job.attempts.filter((a) => a.errorKind === 'server' || a.errorKind === 'timeout').map((a) => a.accountId));
       const fresh = candidates.filter((c) => !tried.has(c.accountId)).sort((x, y) => Number(faulted.has(x.accountId)) - Number(faulted.has(y.accountId)));
       // The account's limit counts jobs from every omnitrix process, so a seat is needed as well as local room.
+      // Accuracy comes first: a job waits for a seat on a busy account ranked above, rather than go to one much
+      // weaker at this kind of task, unless the task asked for speed or for the cheap models first.
+      const strict = waitsForStronger(job.task, cfg.settings) && Date.now() - job.createdAt < MAX_STRONGER_WAIT_MS;
       let seat: string | undefined;
+      let waitFor: Candidate | undefined;
+      const fullNow = (id: string) => full.has(id) || (this.running[id] ?? 0) >= findAccount(cfg, id)!.concurrency;
+      // the strongest busy account that would rank above this one if it were free and is clearly stronger at the
+      // task; an account that just failed this job with a server error or timeout is not worth waiting for
+      const stronger = (c: Candidate) => {
+        let best: Candidate | undefined;
+        for (const d of fresh) {
+          if (d.rank > c.rank && !faulted.has(d.accountId) && fullNow(d.accountId) && c.strength < STRONG_ENOUGH * d.strength && (!best || d.strength > best.strength)) best = d;
+        }
+        return best;
+      };
       const free = fresh.find((c) => {
         const acc = findAccount(cfg, c.accountId)!;
-        if (full.has(acc.id) || (this.running[c.accountId] ?? 0) >= acc.concurrency) return false;
+        if (fullNow(acc.id)) return false;
+        const better = strict ? stronger(c) : undefined;
+        if (better) { waitFor ??= better; return false; }
         seat = takeSeat(acc.id, acc.concurrency, job.id);
         if (seat === undefined) full.add(acc.id);
         return seat !== undefined;
@@ -1042,6 +1093,7 @@ export class Engine {
         if (back !== undefined) {
           if (job.waitingUntil !== back) {
             job.waitingUntil = back;
+            job.waitingFor = undefined;
             job.updatedAt = Date.now();
             this.saveJob(job);
             this.notify();
@@ -1050,6 +1102,7 @@ export class Engine {
         }
         job.status = 'failed';
         job.waitingUntil = undefined;
+        job.waitingFor = undefined;
         const lastError = job.attempts.at(-1)?.error;
         const reasons = lastingReasons(job.task, ctx!, rejected).slice(0, 8).map((r) => `${r.accountId}${r.model ? '/' + r.model : ''}: ${r.reason}`);
         job.error = lastError
@@ -1059,7 +1112,16 @@ export class Engine {
         this.saveJob(job);
         this.notify();
       }
-      // otherwise every suitable account is busy: stay queued; tick() tries again every second
+      // otherwise every suitable account is busy, or every free one is too weak: stay queued; tick() tries
+      // again every second
+      const reason = waitFor ? `${waitFor.accountId}, which is stronger at this task than the free accounts`
+        : fresh.length ? `${fresh[0]!.accountId}; every account that can take it is busy` : undefined;
+      if (reason && job.waitingFor !== reason) {
+        job.waitingFor = reason;
+        job.updatedAt = Date.now();
+        this.saveJob(job);
+        this.notify();
+      }
     }
   }
 
@@ -1128,6 +1190,7 @@ export class Engine {
   private async start(job: Job, cand: Candidate, cfg: Config, seat?: string): Promise<void> {
     const account = findAccount(cfg, cand.accountId)!;
     job.waitingUntil = undefined;
+    job.waitingFor = undefined;
     this.running[account.id] = (this.running[account.id] ?? 0) + 1;
     const ctrl = new AbortController();
     this.controllers.set(job.id, ctrl);
@@ -1212,7 +1275,7 @@ export class Engine {
 
       // the provider's own figure when it gives one, otherwise the model's price per million tokens
       const costUsd = result.costUsd ?? estimateCost(account.models.find((m) => m.id === cand.model), result.inputTokens, result.outputTokens);
-      this.record(account, { ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ok: true, latencyMs: Date.now() - t0, costUsd }, cfg);
+      this.record(account, { ts: Date.now(), accountId: account.id, model: cand.model, jobId: job.id, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ok: true, latencyMs: Date.now() - t0, costUsd, ...(result.costUsd === undefined && costUsd !== undefined ? { costEstimated: true } : {}) }, cfg);
       // Codex saves its model list on its first run, so the next task can choose among the real models
       if (cand.model === 'default' && account.provider === 'codex') {
         try {
@@ -1391,19 +1454,26 @@ export class Engine {
     }
     if (e.kind === 'server' || e.kind === 'timeout') {
       // pause just this model; the router skips it and the job moves on to the account's other models
-      this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + MODEL_PAUSE_MS, reason: e.kind === 'timeout' ? 'no answer' : 'provider error' });
+      const crashed = e.kind === 'server' && account.local && LOCAL_CRASH.test(e.message);
+      this.setHealth(modelHealthKey(account.id, model), { state: 'cooling', until: now + (crashed ? CRASH_PAUSE_MS : MODEL_PAUSE_MS), reason: crashed ? 'its server process crashed' : e.kind === 'timeout' ? 'no answer' : 'provider error' });
       if (account.models.length > 1) return;
     }
     switch (e.kind) {
-      case 'rate_limit':
+      case 'rate_limit': {
         // at least a short rest, since a job may come back to this account once the rest is over
-        this.setHealth(account.id, { state: 'cooling', until: now + Math.max(e.retryAfterMs ?? 60_000, MIN_REST_MS), reason: 'rate limited', measured: prev?.measured });
+        // only a refusal after the last rest ended counts; others from the same burst arrive while it still runs
+        const since = prev?.until ? now - prev.until : -1;
+        const again = prev?.reason === 'rate limited' && prev.at && since >= 0 && since < RATE_REPEAT_MS ? prev.until! - prev.at : 0;
+        const rest = Math.max(e.retryAfterMs ?? 60_000, MIN_REST_MS, Math.min(MAX_RATE_REST_MS, again * 2));
+        this.setHealth(account.id, { state: 'cooling', until: now + rest, reason: 'rate limited', measured: prev?.measured });
         break;
+      }
       case 'quota':
       case 'model_quota':
       case 'paid_model':
         // the provider rarely says when quota comes back; check again in an hour unless told otherwise
-        this.setHealth(account.id, { state: 'exhausted', until: now + Math.max(e.retryAfterMs ?? 3600_000, MIN_REST_MS), reason: e.message.slice(0, 160), measured: prev?.measured });
+        if (e.kind === 'quota' && e.status === 402) this.setHealth(account.id, { state: 'exhausted', until: now + PLAN_REST_MS, reason: `needs a paid plan or a payment method at the provider; after adding one, run "omnitrix test ${account.id}": ${e.message.slice(0, 120)}`, measured: prev?.measured });
+        else this.setHealth(account.id, { state: 'exhausted', until: now + Math.max(e.retryAfterMs ?? 3600_000, MIN_REST_MS), reason: e.message.slice(0, 160), measured: prev?.measured });
         break;
       case 'auth':
         this.setHealth(account.id, { state: 'auth_error', reason: e.message.slice(0, 160) });

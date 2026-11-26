@@ -178,6 +178,8 @@ export interface UsageRecord {
   latencyMs: number;
   /** reported by the provider, or estimated from the model's price */
   costUsd?: number;
+  /** costUsd is the estimate from the model's price */
+  costEstimated?: boolean;
   /** who sent it, and for which team, when the request used a team account */
   user?: string;
   team?: string;
@@ -295,6 +297,8 @@ export interface Job {
   error?: string;
   /** while queued: every account that can take the job is resting, and it is tried again at this time */
   waitingUntil?: number;
+  /** while queued: the account the job waits for, and why, such as every account being busy */
+  waitingFor?: string;
   /** the task forced an account or model that could not serve, so it went to another one */
   /** attempts: how many attempts the job had made when it moved */
   movedFrom?: { use: string; reason: string; attempts: number };

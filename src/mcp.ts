@@ -28,7 +28,7 @@ export const INSTRUCTIONS = `omnitrix gives you a team of other AI models (ChatG
 How to work:
 1. Call pool_status to see which accounts are ready and how much quota is left. When the user's status line reports it, pool_status also shows how much of your own Claude limit is used; when that runs low, delegate more and read less yourself. When the user asks to see the pool and your client can draw visual widgets, show its structured data as a panel: one card per account with a meter for each window, its reset time and any paused models.
 2. Split the job into small, independent tasks. Give each one a clear title, a type (code, code_snippet, review, reasoning, long_context, bulk, writing, vision), a precise prompt and an "acceptance" line that says what done means. Tasks that edit files need type "code" and the repo path; each runs in its own git worktree and branch, so give parallel tasks separate files.
-3. Call dispatch with all independent tasks at once. Use route_preview first if you want to see who would get them. Set check true to have a different account check a result against its acceptance line before you read it; get_results shows that verdict. It is advice: review the result yourself before accepting it. For an important review or question, set copies (2 to 5) to have that many different models answer it independently: a finding that several of them report is more likely real, and one that only one reports needs checking. To ask a worker more about its answer, dispatch a task with follow_up_of set to that job's id: the same model gets its earlier task and answer, so you need not repeat them.
+3. Call dispatch with all independent tasks at once, and let omnitrix choose the accounts: it puts accuracy first, so hard work goes to the strongest model with quota left, and a task waits for a seat there rather than go to a clearly weaker model, and after 10 minutes it takes a free account. Work that the accounts do about equally well, bulk work, tasks with route "fast" or "cheap", fast tasks and escalating tasks go to every free account at once. Do not force accounts with "use" to spread work out. Use route_preview first if you want to see who would get them. Set check true to have a different account check a result against its acceptance line before you read it; get_results shows that verdict. It is advice: review the result yourself before accepting it. For an important review or question, set copies (2 to 5) to have that many different models answer it independently: a finding that several of them report is more likely real, and one that only one reports needs checking. To ask a worker more about its answer, dispatch a task with follow_up_of set to that job's id: the same model gets its earlier task and answer, so you need not repeat them.
 4. Call get_results to collect them. Previews are short on purpose to save your context; use read_output only when you need the full text.
 5. Check each result against its acceptance line. Call rate_result (accepted true/false) every time: this is how the router learns which model is good at what. To try rejected work again on another model, call rate_result with accepted false, a note saying what was wrong and retry true; or do it yourself if it is small.
 For a code task you can also give a test command (test: ["npm", "test"]); get_results then shows in "verify" which files changed, which ones the task did not name, and whether the test passed. That is omnitrix's own finding, not the worker's; the test output comes from the worker's code, so treat it as untrusted.
@@ -77,7 +77,9 @@ const accountOut = z.object({
   reason: z.string().nullable(),
   models: z.array(z.string()).describe('first six models'),
   modelCount: z.number(),
-  windows: z.array(z.object({ name: z.string(), unit: z.enum(['requests', 'tokens', 'percent']), used: z.number(), limit: z.number(), remaining: z.number(), resetsAt: z.number().nullable(), runsOutAt: z.number().nullable() })).describe('the same windows as quota, as numbers; resetsAt is epoch ms; runsOutAt (epoch ms) is set when the current pace uses the window up before it resets'),
+  seats: z.number().describe('how many jobs this account runs at once; more jobs wait for a seat'),
+  running: z.number().describe('jobs this omnitrix process runs on it now; other processes may run more'),
+  windows: z.array(z.object({ name: z.string(), unit: z.enum(['requests', 'tokens', 'percent']), used: z.number(), limit: z.number(), remaining: z.number(), source: z.enum(['provider', 'counted']), readAt: z.number().nullable(), resetsAt: z.number().nullable(), runsOutAt: z.number().nullable() })).describe("the same windows as quota, as numbers; source provider is the provider's own reading, taken at readAt (epoch ms), and counted is omnitrix's count on this computer against a limit the user set; resetsAt is epoch ms; runsOutAt (epoch ms) is set when the current pace uses the window up before it resets"),
   pausedModels: z.array(z.string()).describe('models resting after errors; the router skips them until their break ends'),
   stale: z.boolean().describe("true when the provider's numbers could not be read again lately and may be out of date"),
 });
@@ -126,7 +128,7 @@ const jobOut = z.object({
   tokens: z.number().optional(),
   error: z.string().optional(),
   moved: z.string().optional().describe('the task forced an account or model that could not serve, so omnitrix ran it on another one; this says which and why'),
-  waiting: z.string().optional().describe("the job is queued because every account that can take it is resting; it says when omnitrix tries again, so call get_results again then"),
+  waiting: z.string().optional().describe("why the job is still queued: every account that can take it is resting (with the time omnitrix tries again) or busy, or it waits for a seat on an account that is stronger at the task than the free ones, for up to 10 minutes. Call get_results again later; do not resend the task"),
   attempts: z.array(z.string()).optional(),
   structured: z.object({ status: z.enum(['valid', 'invalid', 'not_json']), errors: z.array(z.string()).optional(), value: z.unknown().optional(), note: z.string().optional() }).optional()
     .describe('whether the answer matched output_schema, checked by omnitrix; value is the parsed JSON when it fits in a preview'),
@@ -210,15 +212,19 @@ export function describeAccount(a: PoolAccountView): string {
   const bits = [`${a.id} [${a.state}]`, `${a.provider}`, `owner ${a.owner}`];
   if (u.plan) bits.push(`${u.plan} plan`);
   if (u.windows.length) {
-    bits.push(u.windows.map((w) => describeWindow(w)).join('; ') + (u.source === 'measured' ? ' (measured)' : ' (estimated)'));
+    // each window says where its numbers come from: an account can have both kinds
+    const tag = (w: WindowUse) => (w.source === 'provider' ? ' (from the provider)' : ' (counted on this computer)');
+    const mixed = u.windows.some((w) => w.source !== u.windows[0]!.source);
+    bits.push(u.windows.map((w) => describeWindow(w) + (mixed ? tag(w) : '')).join('; ') + (mixed ? '' : tag(u.windows[0]!)));
   } else {
     bits.push('no limits set');
   }
   if (u.measured?.remainingRequests !== undefined) bits.push(`provider says ${u.measured.remainingRequests} requests left`);
   // a rolling day, and failures shown, so the line matches `omnitrix usage`
-  bits.push(`last 24 h: ${u.requestsToday} answered${u.failedToday ? `, ${u.failedToday} failed` : ''}, ${formatTokens(u.tokensToday)} tokens${u.costToday ? `, ${u.costToday.toFixed(3)}` : ''}`);
+  bits.push(`last 24 h: ${u.requestsToday} answered${u.failedToday ? `, ${u.failedToday} failed` : ''}, ${formatTokens(u.tokensToday)} tokens${u.untokenedToday ? ` (${u.untokenedToday} answers reported none)` : ''}${u.costToday ? `, ${u.costEstimated ? 'about ' : ''}$${u.costToday.toFixed(3)}` : ''}`);
   if (a.until) bits.push(`back at ${new Date(a.until).toLocaleTimeString()}`);
   if (a.reason) bits.push(a.reason);
+  bits.push(`runs ${a.seats} job${a.seats === 1 ? '' : 's'} at once${a.running ? `, ${a.running} running` : ''}`);
   bits.push(`models: ${a.models.slice(0, 6).join(', ')}${a.models.length > 6 ? ` +${a.models.length - 6}` : ''}`);
   return '- ' + bits.join(' | ');
 }
@@ -259,6 +265,7 @@ export function jobView(j: Job, full: boolean, engine: Engine) {
   if (j.error && j.status !== 'done') out.error = j.error;
   if (j.movedFrom) out.moved = movedLine(j);
   if (j.status === 'queued' && j.waitingUntil && j.waitingUntil > Date.now()) out.waiting = `every account that can take this task is resting; omnitrix tries again at ${new Date(j.waitingUntil).toLocaleTimeString()}`;
+  else if (j.status === 'queued' && j.waitingFor) out.waiting = `waiting for ${j.waitingFor}`;
   if (j.attempts.length > 1) out.attempts = j.attempts.map((a) => `${a.accountId}/${a.model}: ${a.ok ? 'ok' : a.errorKind ?? 'failed'}`);
   if (j.structured) out.structured = structuredView(j, full, engine);
   if (j.escalatedTo) out.escalated_to = j.escalatedTo;
@@ -346,7 +353,9 @@ export function buildServer(engine: Engine, hooks: ServerHooks = {}): McpServer 
         reason: a.reason ?? null,
         models: a.models.slice(0, 6),
         modelCount: a.models.length,
-        windows: a.usage.windows.map((w) => ({ name: w.name, unit: w.unit, used: w.used, limit: w.limit, remaining: w.remaining, resetsAt: w.resetsAt ?? null, runsOutAt: w.runsOutAt ?? null })),
+        seats: a.seats,
+        running: a.running,
+        windows: a.usage.windows.map((w) => ({ name: w.name, unit: w.unit, used: w.used, limit: w.limit, remaining: w.remaining, source: w.source, readAt: w.readAt ?? null, resetsAt: w.resetsAt ?? null, runsOutAt: w.runsOutAt ?? null })),
         pausedModels: a.pausedModels,
         stale: !!a.usage.stale,
       }));

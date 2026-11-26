@@ -18,7 +18,7 @@ describe('quota summaries', () => {
       { name: '7 days', usedPercent: 81, resetsAt: now + 86400_000 },
     ];
     const s = summarize(account({ id: 'summary' }), [], undefined, now, { at: now, plan: 'plus', windows });
-    expect(s.windows).toEqual(windows.map((w) => ({ name: w.name, unit: 'percent', limit: 100, used: w.usedPercent, remaining: 100 - w.usedPercent, resetsAt: w.resetsAt })));
+    expect(s.windows).toEqual(windows.map((w) => ({ name: w.name, unit: 'percent', limit: 100, used: w.usedPercent, remaining: 100 - w.usedPercent, source: 'provider', readAt: now, resetsAt: w.resetsAt })));
     expect(s.source).toBe('measured');
     expect(s.plan).toBe('plus');
     expect(s.percentUsed).toBe(81);

@@ -17,7 +17,7 @@ describe('a model that needs payment or is busy', () => {
   afterEach(async () => { for (const c of closers.splice(0)) await c(); });
 
   it('reads 402 as the model needing payment, and "high demand" as a busy model', () => {
-    expect(classifyStatus(402, '{"error":{"message":"You need a subscription"}}')).toBe('paid_model');
+    expect(classifyStatus(402, '{"error":{"message":"This request requires more credits, or fewer max_tokens."}}')).toBe('paid_model');
     expect(classifyStatus(429, '{"error":{"message":"Model GLM-5.3 is under high demand, try again later"}}')).toBe('server');
     expect(classifyStatus(429, 'The model is overloaded')).toBe('server');
     expect(classifyStatus(429, 'Rate limit reached for requests')).toBe('rate_limit');

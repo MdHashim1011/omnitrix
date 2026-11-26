@@ -187,6 +187,10 @@ export interface WindowUse {
   limit: number;
   remaining: number;
   unit: 'requests' | 'tokens' | 'percent';
+  /** provider: read from the provider's own numbers; counted: omnitrix's count on this PC against a limit set by hand */
+  source: 'provider' | 'counted';
+  /** for a provider window, when that reading was taken */
+  readAt?: number;
   resetsAt?: number;
   /** when the window runs out if use keeps its current pace; only set when that comes before any reset */
   runsOutAt?: number;
@@ -198,12 +202,17 @@ export interface UsageSummary {
   /** requests in the last 24 hours that got no answer, such as timeouts, which requestsToday leaves out */
   failedToday: number;
   tokensToday: number;
+  /** answers in the last 24 hours whose provider reported no token use, so tokensToday leaves them out */
+  untokenedToday: number;
   tokensMonth: number;
   costToday: number;
+  /** part of costToday is estimated from the prices set in omnitrix, not reported by the provider */
+  costEstimated?: boolean;
   windows: WindowUse[];
   /** highest percent used across all limits, 0-100; undefined when no limits are known */
   percentUsed?: number;
-  /** where the numbers come from */
+  /** where the limit numbers come from: measured when any window, or without windows the rate-limit headers,
+   * come from the provider; estimated when every window is omnitrix's own count */
   source: 'measured' | 'estimated' | 'untracked';
   measured?: AccountHealth['measured'];
   /** subscription plan, when the provider reports one */
@@ -242,6 +251,8 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
   let day = 0;
   let dayTokens = 0;
   let dayCost = 0;
+  let dayCostEstimated = false;
+  let untokened = 0;
   let monthTokens = 0;
   let hour = 0;
   let hourTokens = 0;
@@ -250,6 +261,7 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
   for (const r of records) {
     if (r.accountId !== account.id) continue;
     if (!r.ok && r.ts >= now - DAY) failed++;
+    if (r.ok && r.ts >= now - DAY && !r.inputTokens && !r.outputTokens) untokened++;
     // failed calls that never reached the model do not count against a quota
     if (!(r.ok || r.errorKind === 'rate_limit' || r.errorKind === 'quota' || r.errorKind === 'model_quota')) continue;
     const t = r.inputTokens + r.outputTokens;
@@ -264,6 +276,7 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
       day++;
       dayTokens += t;
       dayCost += r.costUsd ?? 0;
+      if (r.costEstimated && r.costUsd) dayCostEstimated = true;
     }
     if (r.ts >= monthFrom) monthTokens += t;
   }
@@ -275,7 +288,7 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
     if (!limit || limit <= 0) return;
     const remaining = Math.max(0, limit - used);
     const perMs = paced ? (unit === 'tokens' ? hourTokens : hour) / HOUR : 0;
-    windows.push({ name, used, limit, remaining, unit, runsOutAt: runOut(remaining, perMs, now, horizonMs) });
+    windows.push({ name, used, limit, remaining, unit, source: 'counted', runsOutAt: runOut(remaining, perMs, now, horizonMs) });
   };
   const l = account.limits;
   add('1 minute', minute, l.requestsPerMinute, 'requests', 0);
@@ -297,7 +310,7 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
     const enough = w.minutes! * MIN > DAY ? DAY : MIN_PACE_MS;
     const end = elapsed >= enough ? runOut(100 - w.usedPercent, w.usedPercent / elapsed, at, w.resetsAt! - at) : undefined;
     const runsOutAt = end && end > now ? end : undefined;
-    windows.push({ name: w.name, used: w.usedPercent, limit: 100, remaining: 100 - w.usedPercent, unit: 'percent', resetsAt: w.resetsAt, runsOutAt });
+    windows.push({ name: w.name, used: w.usedPercent, limit: 100, remaining: 100 - w.usedPercent, unit: 'percent', source: 'provider', readAt: quota!.at, resetsAt: w.resetsAt, runsOutAt });
   }
 
   let percentUsed: number | undefined;
@@ -310,15 +323,18 @@ export function summarize(account: Account, records: UsageRecord[], health: Acco
   // A fresh number straight from the provider beats our own count.
   const m = health?.measured;
   const fresh = m && now - m.at < 10 * MIN && (!m.resetAt || m.resetAt > now);
-  const source: UsageSummary['source'] = fresh || live.length ? 'measured' : windows.length ? 'estimated' : 'untracked';
+  // A rate-limit header says only what is left, not of what limit, so it never makes a counted bar measured.
+  const source: UsageSummary['source'] = live.length ? 'measured' : windows.length ? 'estimated' : fresh ? 'measured' : 'untracked';
 
   return {
     accountId: account.id,
     requestsToday: day,
     failedToday: failed,
     tokensToday: dayTokens,
+    untokenedToday: untokened,
     tokensMonth: monthTokens,
     costToday: dayCost,
+    costEstimated: dayCostEstimated || undefined,
     windows,
     percentUsed,
     source,

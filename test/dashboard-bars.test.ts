@@ -49,7 +49,7 @@ describe('limit bars on an account card', () => {
   it('holds a full window only while another one is empty, on the card', () => {
     // the card passes the first other empty window, or the provider's stop when the account is out of quota
     expect(PAGE).toContain("var empty=u.windows.filter(function(w){return leftOf(w)<=0});");
-    expect(PAGE).toContain("windowHtml(w,empty.filter(function(o){return o!==w})[0]||(a.state==='exhausted'?{}:null))");
+    expect(PAGE).toContain("windowHtml(w,empty.filter(function(o){return o!==w})[0]||(a.state==='exhausted'?{}:null),");
     // the provider note only when every bar still has room, since an empty bar is omnitrix's own limit
     expect(PAGE).toContain("u.windows.every(function(w){return w.remaining>0})");
   });

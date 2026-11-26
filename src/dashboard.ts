@@ -446,12 +446,15 @@ header{display:flex;align-items:center;justify-content:space-between;gap:16px;fl
 .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
 .fresh.stale .dot{background:var(--warn)}.fresh.stale{color:var(--warn)}
 .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:28px}
-.kpi{background:var(--tile);border-radius:var(--r);padding:14px 16px}
-.kpi span{display:block;font-size:13px;color:var(--ink-2)}
-.kpi b{display:block;font-size:26px;font-weight:600;line-height:1.15;margin-top:4px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.kpi{background:var(--tile);border-radius:var(--r);padding:16px 18px;display:flex;flex-direction:column;min-width:0}
+.kpi>span{display:block;font-size:13px;font-weight:500;line-height:1.35;color:var(--ink-2);text-wrap:balance}
+.kpi>b{display:block;font-size:26px;font-weight:600;line-height:1.15;margin-top:6px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 h2{font-size:15px;font-weight:600;margin:0 0 12px;letter-spacing:-.005em;display:flex;align-items:baseline;gap:8px}
 h2 small{font-size:13px;font-weight:400;color:var(--ink-3)}
-.kpi em{display:block;font-style:normal;font-size:13px;color:var(--warn);margin-top:2px}.kpi small{display:block;font-size:13px;color:var(--ink-2);margin-top:2px}
+.kpi em{display:block;font-style:normal;font-size:13px;line-height:1.4;color:var(--warn);margin-top:6px}.kpi>small{display:block;font-size:13px;line-height:1.4;color:var(--ink-3);margin-top:6px;font-variant-numeric:tabular-nums}
+.kpi-sub{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:12.5px;line-height:1.45;color:var(--ink-3)}
+.kpi-sub span{display:block}.kpi-sub span+span{margin-top:3px;color:var(--ink-2)}
+.kpi-sub b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
 .ver{font-size:13px;color:var(--ink-3)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:14px;margin-bottom:32px;position:relative}
 .grip{flex:none;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;margin:-6px -4px -6px -10px;padding:0;border:0;border-radius:8px;background:none;color:var(--ink-3);cursor:grab;touch-action:none}
@@ -461,22 +464,45 @@ h2 small{font-size:13px;font-weight:400;color:var(--ink-3)}
 body.sorting{overflow-x:clip}
 body.sorting,body.sorting *{cursor:grabbing!important;-webkit-user-select:none;user-select:none}
 #order-msg:empty{display:none}#order-msg{margin:0 0 12px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.card{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .title{display:flex;align-items:center;gap:10px;min-width:0}
 .title svg{flex:none;color:var(--ink-2)}
 .title h3{font-size:16px;font-weight:600;margin:0;line-height:1.3;letter-spacing:-.01em;overflow-wrap:break-word}
-.name{display:flex;align-items:center;gap:2px;min-width:0}
-.ren{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-4px 0;padding:0;border:0;border-radius:7px;background:none;color:var(--ink-3);font-size:14px;cursor:pointer;opacity:.55}
-.card:hover .ren,.ren:focus-visible{opacity:1}
-.ren:hover{background:var(--tile);color:var(--ink)}
-.name-in{font:inherit;font-size:16px;font-weight:600;width:100%;min-width:0;padding:3px 7px;margin:-4px 0;border:1px solid var(--line-strong);border-radius:7px;background:var(--bg);color:var(--ink)}
-.sub{font-size:13px;color:var(--ink-3);margin-top:1px;overflow-wrap:break-word}
+.name{display:flex;align-items:center;gap:6px;min-width:0}
+.card.editing .title,.card.editing .title>div{flex:1;min-width:0}
+.card.editing .more{display:none}
+.name.editing{flex-wrap:wrap;gap:8px;margin:-4px 0 4px}
+.name-in{font:inherit;font-size:16px;font-weight:600;flex:1 1 100%;width:100%;min-width:0;height:32px;padding:3px 8px;border:1px solid var(--line-strong);border-radius:8px;background:var(--bg);color:var(--ink)}
+.name-in:focus-visible{outline-offset:0;border-color:var(--focus)}
+.nbtn{flex:none;height:32px;padding:0 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+.nbtn:hover{background:var(--tile)}
+.nbtn.primary{background:var(--accent);border-color:var(--accent);color:var(--surface)}
+.nbtn.primary:hover{background:var(--accent);filter:brightness(1.08)}
+.nbtn[aria-disabled="true"]{opacity:.55;cursor:default;filter:none}
+.side{position:relative;flex:none;display:flex;align-items:center;gap:4px;margin:-4px -8px 0 0}
+.more{flex:none;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:0;border-radius:8px;background:none;color:var(--ink-3);cursor:pointer}
+.more:hover,.more[aria-expanded="true"]{background:var(--tile);color:var(--ink)}
+.more:disabled{opacity:.4;cursor:default;background:none}
+.card.menu-open{z-index:3}
+.menu{position:absolute;z-index:6;top:calc(100% + 6px);right:0;min-width:200px;max-width:min(280px,calc(100vw - 32px));margin:0;padding:4px;background:var(--surface);border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.16),0 2px 6px rgba(0,0,0,.06)}
+.menu [role="menuitem"]{display:flex;align-items:flex-start;gap:10px;width:100%;min-height:36px;padding:8px 10px;border:0;border-radius:6px;background:none;color:var(--ink);font:inherit;font-size:14px;line-height:1.35;text-align:left;cursor:pointer}
+.menu [role="menuitem"] svg{flex:none;margin-top:1px;color:var(--ink-2)}
+.menu [role="menuitem"]:hover,.menu [role="menuitem"]:focus{background:var(--tile);outline:none}
+.menu [role="menuitem"]:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.menu [role="menuitem"][aria-disabled="true"]{color:var(--ink-3);cursor:default}
+.menu [role="menuitem"][aria-disabled="true"]:hover,.menu [role="menuitem"][aria-disabled="true"]:focus{background:none}
+.menu [role="menuitem"][aria-disabled="true"] svg{color:var(--ink-3)}
+@media (prefers-color-scheme:dark){.menu{box-shadow:0 12px 32px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.3)}}
+@media (pointer:coarse){.more{width:44px;height:44px}.side{margin:-10px -14px -6px 0}.menu [role="menuitem"]{min-height:44px}}
+.menu small{display:block;font-size:12.5px;color:var(--ink-3);margin-top:2px}
+.sub{font-size:13px;line-height:1.45;color:var(--ink-3);margin-top:3px;overflow-wrap:break-word}
+.sub .who{color:var(--ink-2)}.sub code{font:12px var(--mono);color:var(--ink-3)}
 .state{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;padding:4px 10px;border-radius:999px;white-space:nowrap}
 .state i{width:7px;height:7px;border-radius:50%;background:currentColor}
 .s-ok{background:var(--ok-bg);color:var(--ok)}.s-busy{background:var(--accent-bg);color:var(--accent)}
 .s-warn{background:var(--warn-bg);color:var(--warn)}.s-bad{background:var(--bad-bg);color:var(--bad)}.s-idle{background:var(--idle-bg);color:var(--idle)}
-.note{font-size:13.5px;border-radius:var(--r-sm);padding:9px 11px;background:var(--tile);color:var(--ink-2)}
+.note{font-size:13.5px;line-height:1.5;border-radius:var(--r-sm);padding:10px 12px;background:var(--tile);color:var(--ink-2)}
 .note.warn{background:var(--warn-bg);color:var(--warn)}.note.bad{background:var(--bad-bg);color:var(--bad)}
 .note code,.empty code,.job .vf code{font:12.5px var(--mono);background:var(--surface);color:var(--ink);padding:1px 6px;border-radius:5px;border:1px solid var(--line)}
 .win+.win{margin-top:10px}
@@ -489,7 +515,8 @@ body.sorting,body.sorting *{cursor:grabbing!important;-webkit-user-select:none;u
 .when{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3)}
 .when.pace{color:var(--warn)}
 .prov{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);display:flex;align-items:center;gap:6px}
-.stats{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--ink-2);border-top:1px solid var(--line);padding-top:10px}
+.stats{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px;font-size:13px;line-height:1.4;color:var(--ink-2);border-top:1px solid var(--line);padding-top:12px}
+.stats .lbl{color:var(--ink-3)}
 .stats b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
 .stats .prov{margin-left:auto}
 details{font-size:13px;color:var(--ink-2)}
@@ -518,12 +545,14 @@ summary:active{color:var(--ink)}
 .empty ol{margin:10px 0 0;padding-left:20px;line-height:2}
 footer{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);margin-top:28px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.kpi-sub span{text-wrap:balance}
+@media (max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:720px){.wrap{padding:6px 16px 40px}header{margin:0 -16px 16px;padding:12px 16px}html{scroll-padding-top:112px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi b{font-size:22px}.job{grid-template-columns:auto minmax(0,1fr)}.job .r{grid-column:2;text-align:left}.job details{grid-column:1/3}.job .vf{grid-column:2/3}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media (max-height:500px){header{position:static}html{scroll-padding-top:0}}
 @media (prefers-reduced-transparency:reduce),(prefers-contrast:more){header{background:var(--bg);-webkit-backdrop-filter:none;backdrop-filter:none;border-bottom:1px solid var(--line)}}
-@media (prefers-contrast:more){:root{--line:var(--line-strong);--ink-3:var(--ink-2)}.card,.jobs,.kpi,.bar{border:1px solid var(--ink-3)}}
-@media (forced-colors:active){.bar{border:1px solid CanvasText}.bar i,.dot,.state i{forced-color-adjust:none;background:Highlight}header{background:Canvas;-webkit-backdrop-filter:none;backdrop-filter:none}}
+@media (prefers-contrast:more){:root{--line:var(--line-strong);--ink-3:var(--ink-2)}.menu{border-color:var(--ink-3)}.card,.jobs,.kpi,.bar{border:1px solid var(--ink-3)}}
+@media (forced-colors:active){.menu{border:1px solid CanvasText}.menu [role="menuitem"]:focus{outline:2px solid Highlight;outline-offset:-2px}.bar{border:1px solid CanvasText}.bar i,.dot,.state i{forced-color-adjust:none;background:Highlight}header{background:Canvas;-webkit-backdrop-filter:none;backdrop-filter:none}}
 </style>
 </head>
 <body>
@@ -544,6 +573,8 @@ footer{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);margin-top:28px
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
 var fmt=function(n){n=Number(n)||0;return n>=999500?(n/1e6).toFixed(1)+'M':n>=1e3?(Math.round(n/100)/10)+'k':String(Math.round(n))};
 var money=function(c){c=Number(c)||0;return c>0&&c<0.005?'under $0.01':'$'+c.toFixed(2)};
+// a cost estimated from prices; "under $0.01" already says it is not exact
+var about=function(c,est){var m=money(c);return est&&m.indexOf('under')!==0?'about '+m:m};
 var clock=function(t){return new Date(t).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})};
 var span=function(ms){var m=Math.max(0,Math.round(ms/60000));return m<1?'under a minute':m<60?m+' min':m<1440?Math.floor(m/60)+' h'+(m%60?' '+(m%60)+' min':''):Math.floor(m/1440)+' d '+Math.floor(m%1440/60)+' h'};
 var ago=function(t){var s=Math.round((Date.now()-t)/1000);return s<60?s+' s ago':s<3600?Math.round(s/60)+' min ago':s<172800?Math.round(s/3600)+' h ago':Math.round(s/86400)+' days ago'};
@@ -555,11 +586,12 @@ function icon(name){
   return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
 }
 var STATES={ready:['Ready','s-ok'],busy:['Working','s-busy'],cooling:['Resting','s-warn'],exhausted:['Out of quota','s-bad'],offline:['Offline','s-warn'],auth_error:['Needs sign-in','s-bad'],disabled:['Turned off','s-idle']};
-var SOURCES={measured:'Measured by the provider',estimated:'Counted by omnitrix against your limits',untracked:'Not tracked'};
+var SOURCES={provider:'Read from the provider',counted:'Counted by omnitrix on this PC against the limits you set'};
+function sourceOf(w,stale){return w.source==='provider'?SOURCES.provider+(w.readAt&&!stale?', '+ago(w.readAt):''):SOURCES.counted}
 function leftOf(w){return w.unit==='percent'?Math.max(0,Math.min(100,w.remaining)):(w.limit>0?Math.max(0,Math.min(100,w.remaining/w.limit*100)):0)}
 // held: an empty window of the same account, or the provider's own limit, that stops this one being used.
 // Its bar then looks set aside, not ready: a full minute window means nothing while the day is used up.
-function windowHtml(w,held){
+function windowHtml(w,held,from){
   var pct=w.unit==='percent', left=leftOf(w);
   var cls=left<=0?'out':held?'held':left<20?'low':'';
   // providers report whole percents, so a little use shows as 100% left; say so instead of looking unused
@@ -574,14 +606,16 @@ function windowHtml(w,held){
   }
   // the server only sends runsOutAt when the current pace empties the window before it resets
   if(cls!=='held'&&w.runsOutAt&&w.runsOutAt>Date.now())reset+='<div class="when pace">At this pace it runs out in about '+esc(span(w.runsOutAt-Date.now()))+', '+esc(clock(w.runsOutAt))+'</div>';
+  if(from)reset+='<div class="when">'+esc(from)+'</div>';
   return '<div class="win'+(cls==='held'?' held':'')+'"><div class="row"><span>'+label+'</span><b class="'+cls+'">'+amount+'</b></div>'
     +'<div class="bar" role="progressbar" aria-label="'+label+' remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(left)+'" aria-valuetext="'+esc(spoken)+'"><i class="'+cls+'" style="width:'+left.toFixed(1)+'%"></i></div>'+reset+'</div>';
 }
 var GRIP='<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="3.5" r="1.4"/><circle cx="10.5" cy="3.5" r="1.4"/><circle cx="5.5" cy="8" r="1.4"/><circle cx="10.5" cy="8" r="1.4"/><circle cx="5.5" cy="12.5" r="1.4"/><circle cx="10.5" cy="12.5" r="1.4"/></svg>';
+var DOTS='<svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="9" r="1.6"/><circle cx="9" cy="9" r="1.6"/><circle cx="14.5" cy="9" r="1.6"/></svg>';
 function cardHtml(a,open,movable){
   var u=a.usage, st=STATES[a.state]||['Unknown','s-idle'];
   var ico=a.local?'chip':a.driver==='cli'?'terminal':'cloud';
-  var facts=[a.owner?'Owned by '+esc(a.owner):'',esc(a.id),u.plan?esc(u.plan)+' plan':'',a.local?'Runs on this PC':'',a.trainsOnData?'Public tasks only':'',a.running?a.running+' job'+(a.running>1?'s':'')+' running':''];
+  var facts=[a.owner?'<span class="who">Owned by '+esc(a.owner)+'</span>':'','<code>'+esc(a.id)+'</code>',u.plan?esc(u.plan)+' plan':'',a.local?'Runs on this PC':'',a.trainsOnData?'Public tasks only':'',a.running?a.running+' job'+(a.running>1?'s':'')+' running':''];
   var sub=facts.filter(Boolean).join(' · ');
   var notes='';
   if(a.state!=='ready'&&a.state!=='busy'){
@@ -602,20 +636,36 @@ function cardHtml(a,open,movable){
   var paused=a.pausedModels||[];
   if(paused.length)notes+='<div class="note warn">Resting after errors: '+esc(paused.join(', '))+'.'+(paused.length<(a.models||[]).length?' omnitrix uses the other models meanwhile.':'')+'</div>';
   // a window is of no use while another one of the account is empty, or while the provider has stopped it
+  var m=u.measured, said='';
+  if(m&&(m.remainingRequests!=null||m.remainingTokens!=null)&&!u.windows.some(function(w){return w.source==='provider'})){
+    var left=[m.remainingRequests!=null?fmt(m.remainingRequests)+' requests':'',m.remainingTokens!=null?fmt(m.remainingTokens)+' tokens':''].filter(Boolean).join(' and ');
+    said='<div class="note">The provider&#39;s last reply, '+esc(ago(m.at))+', said '+esc(left)+' left'+(m.resetAt&&m.resetAt>Date.now()?' until '+esc(clock(m.resetAt)):'')+'.</div>';
+  }
   var empty=u.windows.filter(function(w){return leftOf(w)<=0});
-  var quota=u.windows.length?u.windows.map(function(w){return windowHtml(w,empty.filter(function(o){return o!==w})[0]||(a.state==='exhausted'?{}:null))}).join('')
+  var mixed=u.windows.some(function(w){return w.source!==u.windows[0].source});
+  var quota=u.windows.length?u.windows.map(function(w){return windowHtml(w,empty.filter(function(o){return o!==w})[0]||(a.state==='exhausted'?{}:null),mixed?sourceOf(w,u.stale):'')}).join('')
     :a.local?'<div class="note">No usage limit. It runs on this PC.</div>'
     :a.state==='auth_error'||a.state==='disabled'?''
+    // a reading drops out once its window resets; until the next one, say so rather than that there is none
+    :a.driver==='cli'&&u.updatedAt?'<div class="note">The last reading of this plan&#39;s limits, from '+esc(clock(u.updatedAt))+', has passed its reset time. omnitrix reads them again when the account is next used.</div>'
     :a.driver==='cli'?'<div class="note">This plan does not publish its limits, so omnitrix shows what it has sent below.</div>'
+    :said?''
     :'<div class="note">No limit is known for this account, so omnitrix cannot show what is left. To track one, run <code>omnitrix set '+esc(a.id)+' --rpd 1000</code> with your real daily limit.</div>';
+  notes+=said;
+  // answers whose provider gave no token count are not counted as zero tokens
+  var untok=u.untokenedToday||0;
+  var tokens=untok&&untok>=u.requestsToday?'<span>tokens not reported</span>'
+    :'<span><b>'+fmt(u.tokensToday)+'</b> tokens'+(untok?', '+untok+' answer'+(untok>1?'s':'')+' without a count':'')+'</span>';
+  var cost=u.costToday?'<span'+(u.costEstimated?' title="Estimated from the prices set in omnitrix"':'')+'><b>'+about(u.costToday,u.costEstimated)+'</b></span>':'';
   var models=a.models||[], shown=models.slice(0,40);
   var modelHtml=models.length?'<details data-key="m-'+esc(a.id)+'"'+(open['m-'+a.id]?' open':'')+'><summary>'+models.length+' model'+(models.length>1?'s':'')+'</summary><ul class="models">'+shown.map(function(m){return '<li>'+esc(m)+'</li>'}).join('')+(models.length>shown.length?'<li>and '+(models.length-shown.length)+' more</li>':'')+'</ul></details>':'';
   var grip=movable?'<button type="button" class="grip" data-move="'+esc(a.id)+'" aria-label="Move '+esc(a.label)+'. Drag it, or use the arrow keys." title="Drag to move">'+GRIP+'</button>':'';
-  return '<article class="card" data-id="'+esc(a.id)+'" aria-label="'+esc(a.label)+'">'
-    +'<div class="head"><div class="title">'+grip+icon(ico)+'<div><div class="name"><h3>'+esc(a.label)+'</h3><button type="button" class="ren" data-rename="'+esc(a.id)+'" aria-label="Rename '+esc(a.label)+'" title="Rename">&#9998;</button></div><div class="sub">'+sub+'</div></div></div><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span></div>'
+  return '<article class="card" data-id="'+esc(a.id)+'"'+(a.team?' data-team=""':'')+' aria-label="'+esc(a.label)+'">'
+    +'<div class="head"><div class="title">'+grip+icon(ico)+'<div><div class="name"><h3>'+esc(a.label)+'</h3></div><div class="sub">'+sub+'</div></div></div>'
+    +'<div class="side"><span class="state '+st[1]+'"><i aria-hidden="true"></i>'+st[0]+'</span><button type="button" class="more" data-menu="'+esc(a.id)+'" aria-haspopup="menu" aria-expanded="false" aria-label="Actions for '+esc(a.label)+'" title="Actions">'+DOTS+'</button></div></div>'
     +(quota?'<div>'+quota+'</div>':'')+notes
-    +'<div class="stats"><span title="Every request to this account in the last 24 hours: jobs, failed attempts, second-model checks and omnitrix test, including jobs no longer in the list below">Last 24 h, all requests</span><span><b>'+u.requestsToday+'</b> answered</span>'+(u.failedToday?'<span class="warn"><b>'+u.failedToday+'</b> failed</span>':'')+'<span><b>'+fmt(u.tokensToday)+'</b> tokens</span>'+(u.costToday?'<span><b>'+money(u.costToday)+'</b></span>':'')
-    +(u.windows.length?'<span class="prov">'+esc(SOURCES[u.source]||u.source)+(u.updatedAt&&!u.stale?', updated '+esc(ago(u.updatedAt)):'')+'</span>':'')+'</div>'
+    +'<div class="stats"><span class="lbl" title="Every request to this account in the last 24 hours: jobs, failed attempts, second-model checks and omnitrix test, including jobs no longer in the list below">Last 24 h, all requests</span><span><b>'+u.requestsToday+'</b> answered</span>'+(u.failedToday?'<span class="warn"><b>'+u.failedToday+'</b> failed</span>':'')+tokens+cost
+    +(u.windows.length&&!mixed?'<span class="prov">'+esc(sourceOf(u.windows[0],u.stale))+'</span>':'')+'</div>'
     +(u.stale&&u.updatedAt?'<div class="note warn">omnitrix could not read these numbers again. They are from '+esc(clock(u.updatedAt))+' and may be out of date.</div>':'')
     +modelHtml+'</article>';
 }
@@ -698,22 +748,23 @@ function draw(d){
     // the work other accounts did instead of Claude, counted from the usage log
     +(function(g,o){g=g||{jobs:0,tokens:0,accepted:0};return '<div class="kpi"><span>Done by other accounts, 7 days</span><b>'+g.jobs+' job'+(g.jobs===1?'':'s')+'</b><small>'+esc(fmt(g.tokens))+' tokens'+(g.accepted?', '+g.accepted+' accepted':'')+'</small>'
       // Claude's own part, from Claude Code's session files (omnitrix overhead); absent until measured
-      +(o?'<small title="Output tokens of Claude&#39;s replies that called omnitrix, and an estimate of the omnitrix results it read, over the same 7 days. Claude&#39;s plan limit also counts all its other work, so it is much higher">Claude, omnitrix calls only: '+esc(fmt(o.outputTokens))+' written, '+esc(fmt(o.resultTokens))+' read</small>':'')
+      +(o?'<div class="kpi-sub" title="Output tokens of Claude&#39;s replies that called omnitrix, and an estimate of the omnitrix results it read, over the same 7 days. Claude&#39;s plan limit also counts all its other work, so it is much higher"><span>Claude, omnitrix calls only</span><span><b>'+esc(fmt(o.outputTokens))+'</b> written &middot; about <b>'+esc(fmt(o.resultTokens))+'</b> read</span></div>':'')
       +'</div>'})(d.delegated,d.overhead)
-    +'<div class="kpi"><span>Known cost, last 24 h</span><b>'+esc(money(sum('costToday')))+'</b></div>';
+    +'<div class="kpi"><span>Known cost, last 24 h</span><b>'+esc(about(sum('costToday'),acc.some(function(a){return a.usage.costEstimated})))+'</b></div>';
   document.getElementById('acc-sub').textContent=acc.length?acc.length+' connected'+(acc.length>1?'. Drag a card by its handle to arrange them.':''):'';
   // The order just given here, until the server confirms it, so a live update in between does not undo it.
   // Shortly after the save the server's order wins in any case, for example when another page changed it since.
   if(localOrder&&!saving&&(JSON.stringify(d.order||[])===JSON.stringify(localOrder)||Date.now()>localUntil))localOrder=null;
   var cards=localOrder?byOrder(acc,localOrder):acc;
-  var activeGrip=document.activeElement&&document.activeElement.closest?document.activeElement.closest('.grip'):null;
-  var gripId=activeGrip?activeGrip.getAttribute('data-move'):null;
+  // a card's handle or menu button that has focus gets it back after the redraw, so the keyboard keeps its place
+  var activeBtn=document.activeElement&&document.activeElement.closest?document.activeElement.closest('.grip,.more'):null;
+  var btnKey=activeBtn?btnKeyOf(activeBtn):null;
   var cardsHtml=leadHtml(d.lead)+(acc.length?cards.map(function(a){return cardHtml(a,open,acc.length>1)}).join('')
     :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix init --apply</code> connects the AI tools, API keys and local models it finds on this PC</li><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>');
   // rebuilt only when something on the cards changed, so a card the owner just moved is not redrawn mid-motion
   if(cardsHtml!==drawnCards){
     document.getElementById('accounts').innerHTML=cardsHtml;drawnCards=cardsHtml;
-    if(gripId){var gs=document.querySelectorAll('.grip');for(var k=0;k<gs.length;k++)if(gs[k].getAttribute('data-move')===gripId)gs[k].focus({preventScroll:true})}
+    if(btnKey){var gs=document.querySelectorAll('.grip,.more');for(var k=0;k<gs.length;k++)if(btnKeyOf(gs[k])===btnKey)gs[k].focus({preventScroll:true})}
   }
   document.getElementById('jobs').innerHTML=d.jobs.length?'<ul class="jobs">'+d.jobs.map(function(j){return jobHtml(j,open)}).join('')+'</ul>'
     :'<div class="empty"><h3>No jobs yet</h3>Ask Claude to hand out a task, and it shows up here.</div>';
@@ -727,7 +778,7 @@ function show(raw,live){
   if(live){last=Date.now();connected=true}
   // While a card is being moved, or is still sliding into place, the newest state waits and is drawn after.
   // This comes first, so a state that returns to the one on screen also replaces an older one that waits.
-  if(sorting||renaming||Date.now()<settleUntil){held=raw;heldLive=heldLive||live;tick();if(!sorting&&!renaming)release();return}
+  if(sorting||renaming||menu||Date.now()<settleUntil){held=raw;heldLive=heldLive||live;tick();if(!sorting&&!renaming&&!menu)release();return}
   // drawn now, so a state held back earlier is older and must not be drawn over this one later
   held=null;heldLive=false;clearTimeout(heldTimer);
   if(raw===lastRaw&&minute===drawnMinute){tick();return}
@@ -749,7 +800,9 @@ function connect(){
   // Some embedded browsers, such as the browser pane of a desktop app, hold a live stream back; the page
   // then asks for the state every few seconds instead of waiting on a stream that never arrives.
   setTimeout(function(){if(!got&&!polling&&stream){stream.close();stream=null;poll()}},4000);
-  stream.addEventListener('alive',function(){down=false;last=Date.now();connected=true;if(lastRaw)show(lastRaw,false);tick()});
+  // a sign of life redraws what is on screen, for times such as 5 min ago; a newer state that waits is kept, not
+  // replaced by the older one on screen
+  stream.addEventListener('alive',function(){down=false;last=Date.now();connected=true;if(lastRaw&&!held)show(lastRaw,false);tick()});
   stream.onerror=function(){down=true;tick()};
 }
 async function poll(){
@@ -772,59 +825,6 @@ async function hide(body){
 }
 document.getElementById('jobs').addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-hide]');if(b){b.disabled=true;hide({ids:[b.getAttribute('data-hide')]})}});
 document.getElementById('clear-failed').addEventListener('click',function(){hide({failed:true})});
-// Renaming an account: its name becomes a text box, Enter or leaving the box saves, Escape keeps the old name.
-// Live updates wait meanwhile, so a redraw cannot wipe what is being typed.
-var renaming=null;
-// Ends the edit and draws the cards again. A saved name is written into the state drawn, which may be older
-// than the save. Focus goes back to the pencil only when the edit ended in the box; after Tab or a click it
-// stays where the user moved it.
-function endRename(id,text,warn,label,refocus){
-  renaming=null;drawnCards='';
-  var raw=held||lastRaw;held=null;heldLive=false;
-  if(raw&&label!==undefined){try{var d=JSON.parse(raw);d.accounts.forEach(function(a){if(a.id===id)a.label=label});raw=JSON.stringify(d)}catch(e){}}
-  if(raw){lastRaw='';show(raw,false)}
-  var b=document.querySelector('button[data-rename="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]');if(b&&refocus)b.focus({preventScroll:true});
-  note(text,warn);
-}
-// one line under the Accounts heading: a warning, or a plain confirmation; empty clears it
-function note(text,warn){var m=document.getElementById('order-msg');text=text?text.charAt(0).toUpperCase()+text.slice(1):'';m.textContent=text;m.classList.toggle('warn',!!warn);if(text)say(text)}
-function startRename(btn){
-  var id=btn.getAttribute('data-rename'), row=btn.parentNode, h=row.querySelector('h3'), old=h.textContent;
-  renaming=id;note('',false);
-  // no length limit in the box: the browser would count an emoji as several characters; omnitrix checks the name
-  var box=document.createElement('input');box.type='text';box.className='name-in';box.value=old;
-  box.setAttribute('aria-label','New name for '+old+'. Press Enter to save or Escape to keep it.');box.setAttribute('autocomplete','off');box.spellcheck=false;
-  row.replaceChildren(box);box.focus();box.select();
-  var busy=false, done=false;
-  // inBox: the edit ended with Enter in the box, not by leaving it
-  async function save(inBox){
-    if(busy||done)return;
-    var text=box.value;
-    if(text.trim()===old){done=true;endRename(id,'',false,undefined,inBox);return}
-    // while the name is on its way the box is read-only and Escape waits, so nothing typed meanwhile is lost
-    busy=true;box.readOnly=true;
-    var fail=function(text){
-      busy=false;box.readOnly=false;
-      // after leaving the box, the old name stays and the user's focus is not taken back
-      if(inBox){note(text,true);box.focus()}else{done=true;endRename(id,text+' The name stays '+old+'.',true,undefined,false)}
-    };
-    try{
-      var r=await fetch('/api/rename',{method:'POST',headers:{'content-type':'application/json','x-omnitrix-token':TOKEN},body:JSON.stringify({id:id,label:text})});
-      if(r.status===403){done=true;endRename(id,'omnitrix restarted since this page loaded. Reload the page, then rename the account again.',true,undefined,inBox);return}
-      var a=await r.json().catch(function(){return {}});
-      if(!r.ok){fail(a.error?a.error.charAt(0).toUpperCase()+a.error.slice(1)+'.':'omnitrix could not save the name.');return}
-      done=true;endRename(id,'Renamed to '+a.label+'.',false,a.label,inBox);
-    }catch(e){fail('Could not rename: omnitrix did not answer.')}
-  }
-  box.addEventListener('keydown',function(e){
-    // a key that picks a word in an input method for Chinese, Japanese and other languages is not for us
-    if(e.isComposing||e.keyCode===229)return;
-    if(e.key==='Enter'){e.preventDefault();save(true)}
-    else if(e.key==='Escape'){e.preventDefault();if(!busy){done=true;endRename(id,'',false,undefined,true)}}
-  });
-  box.addEventListener('blur',function(){if(!busy&&!done)save(false)});
-}
-document.getElementById('accounts').addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-rename]');if(b&&!renaming)startRename(b)});
 // Arranging the account cards: drag one by its handle with a mouse, pen or finger, or give its handle focus and
 // use the arrow keys, Home and End. omnitrix keeps the order, so every browser shows it; routing ignores it.
 var grid=document.getElementById('accounts');
@@ -855,7 +855,7 @@ function flip(change,skip){
 function release(){
   clearTimeout(heldTimer);
   heldTimer=setTimeout(function(){
-    if(sorting||renaming)return;
+    if(sorting||renaming||menu)return;
     if(Date.now()<settleUntil){release();return}
     var h=held, live=heldLive;held=null;heldLive=false;
     if(h){lastRaw='';show(h,live)}
@@ -977,6 +977,151 @@ function drop(cancel){
     else say(nameOf(c)+' stayed in place.');
   }
   if(held)release();
+}
+// The menu on each account card. One is open at a time, and live updates wait while it is open, as they do
+// while a name is edited, so a redraw cannot take the menu away under the pointer or the keyboard.
+// More actions go in ACTIONS; each gets the account's id and its card.
+var ACTIONS=[{key:'rename',label:'Rename',
+  icon:'<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 2.5l3 3L6 13H3v-3z"/><path d="M9 4l3 3"/></svg>',
+  // a team account takes its name from the team file
+  off:function(card){return card.hasAttribute('data-team')?'Its name is set in the team file.':''},
+  run:function(id){startRename(id)}}];
+var menu=null, menuCount=0;
+function btnKeyOf(b){return b.className.split(' ')[0]+'|'+(b.getAttribute('data-move')||b.getAttribute('data-menu'))}
+function cardOf(id){var cs=cardEls();for(var i=0;i<cs.length;i++)if(cs[i].getAttribute('data-id')===id)return cs[i];return null}
+function menuItems(){return menu?Array.prototype.slice.call(menu.el.querySelectorAll('[role="menuitem"]')):[]}
+function openMenu(btn,toLast){
+  closeMenu(false);
+  var card=btn.closest('.card'), el=document.createElement('div');
+  el.className='menu';el.id='card-menu-'+(++menuCount);el.setAttribute('role','menu');el.setAttribute('aria-label','Actions for '+nameOf(card));
+  el.innerHTML=ACTIONS.map(function(a){
+    var off=a.off?a.off(card):'';
+    return '<button type="button" role="menuitem" tabindex="-1" data-act="'+a.key+'"'+(off?' aria-disabled="true"':'')+'>'+a.icon+'<span>'+esc(a.label)+(off?'<small>'+esc(off)+'</small>':'')+'</span></button>';
+  }).join('');
+  btn.parentNode.appendChild(el);
+  btn.setAttribute('aria-expanded','true');btn.setAttribute('aria-controls',el.id);card.classList.add('menu-open');
+  menu={el:el,btn:btn,id:card.getAttribute('data-id')};
+  var items=menuItems();items[toLast?items.length-1:0].focus();
+}
+// refocus: the menu closed from inside it (Escape, Tab, the button), so the keyboard goes back to its button
+function closeMenu(refocus){
+  var m=menu;if(!m)return;
+  menu=null;
+  m.el.remove();m.btn.setAttribute('aria-expanded','false');m.btn.removeAttribute('aria-controls');
+  var card=m.btn.closest('.card');if(card)card.classList.remove('menu-open');
+  if(refocus)m.btn.focus({preventScroll:true});
+  if(held&&!renaming)release();
+}
+function act(item){
+  if(!menu||item.getAttribute('aria-disabled')==='true')return;
+  var id=menu.id, a=ACTIONS.filter(function(x){return x.key===item.getAttribute('data-act')})[0];
+  closeMenu(false);
+  if(a)a.run(id);
+}
+// The menu button last pressed. A press that ends a rename redraws the cards, so the release lands on a new
+// button and the browser sends the click to the grid instead; the press still counts.
+var pressed=null;
+grid.addEventListener('pointerdown',function(e){var b=e.target.closest&&e.target.closest('button[data-menu]');pressed=b?b.getAttribute('data-menu'):null},true);
+grid.addEventListener('click',function(e){
+  var item=e.target.closest&&e.target.closest('.menu [role="menuitem"]');
+  if(item){act(item);return}
+  var b=e.target.closest&&e.target.closest('button[data-menu]');
+  if(!b&&e.target===grid&&pressed){var c=cardOf(pressed);b=c&&c.querySelector('.more')}
+  pressed=null;
+  // another card's menu, pressed while a name is edited: it opens once leaving the box has ended the edit
+  if(b&&renaming){openAfter=b.getAttribute('data-menu');return}
+  if(!b||sorting)return;
+  if(menu&&menu.btn===b)closeMenu(true);else openMenu(b,false);
+});
+grid.addEventListener('keydown',function(e){
+  var b=e.target.closest&&e.target.closest('button[data-menu]');
+  if(b&&!menu&&!renaming&&!sorting&&(e.key==='ArrowDown'||e.key==='ArrowUp')){e.preventDefault();openMenu(b,e.key==='ArrowUp');return}
+  if(!menu||!menu.el.contains(e.target))return;
+  var items=menuItems(), i=items.indexOf(document.activeElement), n=items.length;
+  var to={ArrowDown:(i+1)%n,ArrowUp:(i-1+n)%n,Home:0,End:n-1}[e.key];
+  if(to!==undefined){e.preventDefault();items[to].focus();return}
+  if(e.key==='Escape'){e.preventDefault();closeMenu(true);return}
+  // Tab leaves the menu from its button, so focus moves on to the next control as it would from there
+  if(e.key==='Tab'){closeMenu(true);return}
+  // a disabled item still has focus, so Enter and Space on it do nothing rather than reach the page
+  if((e.key==='Enter'||e.key===' ')&&items[i]&&items[i].getAttribute('aria-disabled')==='true')e.preventDefault();
+  // the first letter of an item moves to it
+  if(e.key.length===1&&e.key!==" "){var k=e.key.toLowerCase();for(var j=1;j<=n;j++){var it=items[(i+j)%n];if(it.textContent.trim().charAt(0).toLowerCase()===k){it.focus();break}}}
+});
+// a press anywhere outside the menu and its button closes it, and leaves the focus where the press put it
+document.addEventListener('pointerdown',function(e){if(menu&&!menu.el.contains(e.target)&&!menu.btn.contains(e.target))closeMenu(false)});
+document.addEventListener('focusin',function(e){if(menu&&!menu.el.contains(e.target)&&e.target!==menu.btn)closeMenu(false)});
+window.addEventListener('blur',function(){if(menu)closeMenu(false)});
+
+// Renaming an account: its name becomes a text box with Done and Cancel. Enter or Done saves, and so does
+// leaving the box for another part of the page; Escape or Cancel keeps the old name. Live updates wait
+// meanwhile, so a redraw cannot wipe what is being typed.
+var renaming=null, openAfter=null;
+// Ends the edit and draws the cards again. A saved name is written into the state drawn, which may be older
+// than the save. Focus goes back to the card's menu button only when the edit ended inside it; after Tab or a
+// click elsewhere it stays where the user moved it.
+function endRename(id,text,warn,label,refocus){
+  renaming=null;drawnCards='';
+  var raw=held||lastRaw;held=null;heldLive=false;
+  if(raw&&label!==undefined){try{var d=JSON.parse(raw);d.accounts.forEach(function(a){if(a.id===id)a.label=label});raw=JSON.stringify(d)}catch(e){}}
+  if(raw){lastRaw='';show(raw,false)}
+  var card=cardOf(id), b=card&&card.querySelector('.more');if(b&&refocus)b.focus({preventScroll:true});
+  note(text,warn);
+  var other=openAfter&&cardOf(openAfter);openAfter=null;
+  if(other&&!refocus)openMenu(other.querySelector('.more'),false);
+}
+// one line under the Accounts heading: a warning, or a plain confirmation; empty clears it
+function note(text,warn){var m=document.getElementById('order-msg');text=text?text.charAt(0).toUpperCase()+text.slice(1):'';m.textContent=text;m.classList.toggle('warn',!!warn);if(text)say(text)}
+function startRename(id){
+  var card=cardOf(id);if(!card||renaming)return;
+  var row=card.querySelector('.name'), old=row.querySelector('h3').textContent, more=card.querySelector('.more');
+  renaming=id;openAfter=null;note('',false);
+  // no length limit in the box: the browser would count an emoji as several characters; omnitrix checks the name
+  var box=document.createElement('input');box.type='text';box.className='name-in';box.value=old;
+  box.setAttribute('aria-label','New name for '+old);box.setAttribute('aria-describedby','rename-hint');box.setAttribute('autocomplete','off');box.spellcheck=false;
+  var mk=function(text,cls){var b=document.createElement('button');b.type='button';b.className='nbtn'+(cls?' '+cls:'');b.textContent=text;return b};
+  var ok=mk('Done','primary'), no=mk('Cancel','');
+  var hint=document.createElement('span');hint.id='rename-hint';hint.className='sr';hint.textContent='Press Enter to save, or Escape to keep the old name.';
+  card.classList.add('editing');row.classList.add('editing');row.replaceChildren(box,ok,no,hint);
+  if(more)more.disabled=true;
+  box.focus();box.select();
+  var busy=false, done=false;
+  var wait=function(on){busy=on;box.readOnly=on;if(on)say('Saving the name.');[ok,no].forEach(function(b){if(on)b.setAttribute('aria-disabled','true');else b.removeAttribute('aria-disabled')})};
+  // inBox: the edit ended with Enter or Done, not by leaving it
+  async function save(inBox){
+    if(busy||done)return;
+    var text=box.value;
+    if(text.trim()===old){done=true;endRename(id,'',false,undefined,inBox);return}
+    // while the name is on its way the box is read-only and Escape and Cancel wait, so nothing typed meanwhile is lost
+    wait(true);
+    var fail=function(text){
+      wait(false);
+      // after leaving the box, the old name stays and the user's focus is not taken back
+      if(inBox){note(text,true);box.setAttribute('aria-invalid','true');box.setAttribute('aria-describedby','order-msg rename-hint');box.focus()}else{done=true;endRename(id,text+' The name stays '+old+'.',true,undefined,false)}
+    };
+    try{
+      var r=await fetch('/api/rename',{method:'POST',headers:{'content-type':'application/json','x-omnitrix-token':TOKEN},body:JSON.stringify({id:id,label:text})});
+      if(r.status===403){done=true;endRename(id,'omnitrix restarted since this page loaded. Reload the page, then rename the account again.',true,undefined,inBox);return}
+      var a=await r.json().catch(function(){return {}});
+      if(!r.ok){fail(a.error?a.error.charAt(0).toUpperCase()+a.error.slice(1)+'.':'omnitrix could not save the name.');return}
+      done=true;endRename(id,'Renamed to '+a.label+'.',false,a.label,inBox);
+    }catch(e){fail('Could not rename: omnitrix did not answer.')}
+  }
+  var cancel=function(){if(!busy&&!done){done=true;endRename(id,'',false,undefined,true)}};
+  row.addEventListener('keydown',function(e){
+    // a key that picks a word in an input method for Chinese, Japanese and other languages is not for us
+    if(e.isComposing||e.keyCode===229)return;
+    if(e.key==='Enter'&&e.target===box){e.preventDefault();save(true)}
+    else if(e.key==='Escape'){e.preventDefault();cancel()}
+  });
+  // a press on Done or Cancel keeps the focus in the box, so it does not count as leaving it
+  [ok,no].forEach(function(b){b.addEventListener('pointerdown',function(e){if(e.button===0)e.preventDefault()})});
+  ok.addEventListener('click',function(){if(!busy)save(true)});
+  no.addEventListener('click',cancel);
+  box.addEventListener('input',function(){box.removeAttribute('aria-invalid');box.setAttribute('aria-describedby','rename-hint')});
+  // Leaving saves once the focus has landed, so the redraw that ends the edit can give it back to a card's
+  // handle, menu button or model list, instead of taking it away mid-move.
+  row.addEventListener('focusout',function(e){if(!busy&&!done&&!(e.relatedTarget&&row.contains(e.relatedTarget)))setTimeout(function(){if(!busy&&!done&&!row.contains(document.activeElement))save(false)},0)});
 }
 connect();setInterval(tick,1000);
 </script>

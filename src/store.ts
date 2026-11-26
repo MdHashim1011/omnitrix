@@ -249,6 +249,8 @@ export function loadConfig(): Config {
     const own = new Set(cfg.accounts.map((a) => a.id));
     cfg.accounts.push(...loadTeam(cfg.settings.team).accounts.filter((a) => !own.has(a.id)));
   }
+  // a hand-edited account without a valid job limit runs one job at a time, rather than without any limit
+  for (const a of cfg.accounts) if (!Number.isInteger(a.concurrency) || a.concurrency < 1) a.concurrency = 1;
   return cfg;
 }
 
