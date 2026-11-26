@@ -484,6 +484,8 @@ body.sorting,body.sorting *{cursor:grabbing!important;-webkit-user-select:none;u
 .more{flex:none;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:0;border-radius:8px;background:none;color:var(--ink-3);cursor:pointer}
 .more:hover,.more[aria-expanded="true"]{background:var(--tile);color:var(--ink)}
 .more:disabled{opacity:.4;cursor:default;background:none}
+/* focus given back after a mouse click on Done or Cancel: no ring until a key is pressed */
+.more.quiet:focus-visible{outline:none}
 .card.menu-open{z-index:3}
 .menu{position:absolute;z-index:6;top:calc(100% + 6px);right:0;min-width:200px;max-width:min(280px,calc(100vw - 32px));margin:0;padding:4px;background:var(--surface);border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.16),0 2px 6px rgba(0,0,0,.06)}
 .menu [role="menuitem"]{display:flex;align-items:flex-start;gap:10px;width:100%;min-height:36px;padding:8px 10px;border:0;border-radius:6px;background:none;color:var(--ink);font:inherit;font-size:14px;line-height:1.35;text-align:left;cursor:pointer}
@@ -564,7 +566,7 @@ footer{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);margin-top:28px
 </header>
 <main>
   <section class="kpis" id="kpis" aria-label="Summary for the last 24 hours"></section>
-  <section aria-labelledby="acc-h"><h2 id="acc-h">Accounts <small id="acc-sub"></small></h2><p id="order-msg" class="note warn" role="status"></p><div class="grid" id="accounts"></div></section>
+  <section aria-labelledby="acc-h"><h2 id="acc-h">Accounts <small id="acc-sub"></small></h2><p id="order-msg" class="note warn"></p><div class="grid" id="accounts"></div></section>
   <section aria-labelledby="job-h"><div class="jobs-h"><h2 id="job-h">Recent jobs <small>newest first</small></h2><button type="button" class="hide" id="clear-failed" hidden>Remove failed jobs</button></div><p id="hide-msg" class="note" role="status"></p><div id="jobs"></div></section>
 </main>
 <footer>This page shows status and keeps the order you give the accounts; that order does not change which account omnitrix picks. Change accounts and settings with the omnitrix command.</footer>
@@ -758,13 +760,13 @@ function draw(d){
   var cards=localOrder?byOrder(acc,localOrder):acc;
   // a card's handle or menu button that has focus gets it back after the redraw, so the keyboard keeps its place
   var activeBtn=document.activeElement&&document.activeElement.closest?document.activeElement.closest('.grip,.more'):null;
-  var btnKey=activeBtn?btnKeyOf(activeBtn):null;
+  var btnKey=activeBtn?btnKeyOf(activeBtn):null, quiet=!!activeBtn&&activeBtn.classList.contains('quiet');
   var cardsHtml=leadHtml(d.lead)+(acc.length?cards.map(function(a){return cardHtml(a,open,acc.length>1)}).join('')
     :'<div class="empty"><h3>Connect your first account</h3>omnitrix has no accounts yet. In a terminal:<ol><li><code>omnitrix init --apply</code> connects the AI tools, API keys and local models it finds on this PC</li><li><code>omnitrix providers</code> lists what you can connect</li><li><code>omnitrix add ollama</code> adds models on this PC</li><li><code>omnitrix setup-claude</code> connects omnitrix to Claude Code</li></ol></div>');
   // rebuilt only when something on the cards changed, so a card the owner just moved is not redrawn mid-motion
   if(cardsHtml!==drawnCards){
     document.getElementById('accounts').innerHTML=cardsHtml;drawnCards=cardsHtml;
-    if(btnKey){var gs=document.querySelectorAll('.grip,.more');for(var k=0;k<gs.length;k++)if(btnKeyOf(gs[k])===btnKey)gs[k].focus({preventScroll:true})}
+    if(btnKey){var gs=document.querySelectorAll('.grip,.more');for(var k=0;k<gs.length;k++)if(btnKeyOf(gs[k])===btnKey){if(quiet)gs[k].classList.add('quiet');gs[k].focus({preventScroll:true})}}
   }
   document.getElementById('jobs').innerHTML=d.jobs.length?'<ul class="jobs">'+d.jobs.map(function(j){return jobHtml(j,open)}).join('')+'</ul>'
     :'<div class="empty"><h3>No jobs yet</h3>Ask Claude to hand out a task, and it shows up here.</div>';
@@ -820,7 +822,7 @@ async function hide(body){
     var r=await fetch('/api/hide',{method:'POST',headers:{'content-type':'application/json','x-omnitrix-token':TOKEN},body:JSON.stringify(body)});
     if(r.status===403){msg.textContent='omnitrix restarted since this page loaded. Reload the page, then try again.';return}
     if(!r.ok)throw new Error(String(r.status));
-    var n=(await r.json()).hidden;msg.textContent=n?'Removed '+n+' job'+(n===1?'':'s')+' from the list.':'Nothing to remove.';
+    var n=(await r.json()).hidden;msg.textContent=n?'Removed '+n+' job'+(n===1?'':'s')+' from the list.':'Nothing to remove.';fadeLater(msg);
   }catch(e){msg.textContent='Could not remove: omnitrix did not answer.'}
 }
 document.getElementById('jobs').addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-hide]');if(b){b.disabled=true;hide({ids:[b.getAttribute('data-hide')]})}});
@@ -832,7 +834,9 @@ function reduced(){return !!(window.matchMedia&&window.matchMedia('(prefers-redu
 function cardEls(){return Array.prototype.slice.call(grid.querySelectorAll('.card[data-id]'))}
 function idsNow(){return cardEls().map(function(c){return c.getAttribute('data-id')})}
 function nameOf(c){return c.getAttribute('aria-label')||c.getAttribute('data-id')}
-function say(t){document.getElementById('announce').textContent=t}
+// the one live region for the Accounts section, so a line is read once; the visible line above the cards is not live.
+// It is emptied first, so that the same line said again is read again.
+function say(t){var a=document.getElementById('announce');a.textContent='';setTimeout(function(){a.textContent=t},0)}
 function byOrder(list,order){
   var rank=function(id){var i=order.indexOf(id);return i<0?order.length:i};
   return list.map(function(a,i){return [a,i]}).sort(function(x,y){return rank(x[0].id)-rank(y[0].id)||x[1]-y[1]}).map(function(x){return x[0]});
@@ -1059,19 +1063,27 @@ window.addEventListener('blur',function(){if(menu)closeMenu(false)});
 var renaming=null, openAfter=null;
 // Ends the edit and draws the cards again. A saved name is written into the state drawn, which may be older
 // than the save. Focus goes back to the card's menu button only when the edit ended inside it; after Tab or a
-// click elsewhere it stays where the user moved it.
-function endRename(id,text,warn,label,refocus){
+// click elsewhere it stays where the user moved it. After a mouse click on Done or Cancel (byKey false) the
+// button gets the focus without a ring, since the box before it always shows one and the browser would carry it on.
+function endRename(id,text,warn,label,refocus,byKey){
   renaming=null;drawnCards='';
   var raw=held||lastRaw;held=null;heldLive=false;
   if(raw&&label!==undefined){try{var d=JSON.parse(raw);d.accounts.forEach(function(a){if(a.id===id)a.label=label});raw=JSON.stringify(d)}catch(e){}}
   if(raw){lastRaw='';show(raw,false)}
-  var card=cardOf(id), b=card&&card.querySelector('.more');if(b&&refocus)b.focus({preventScroll:true});
+  var card=cardOf(id), b=card&&card.querySelector('.more');
+  if(b&&refocus){if(!byKey)b.classList.add('quiet');b.focus({preventScroll:true})}
   note(text,warn);
   var other=openAfter&&cardOf(openAfter);openAfter=null;
   if(other&&!refocus)openMenu(other.querySelector('.more'),false);
 }
 // one line under the Accounts heading: a warning, or a plain confirmation; empty clears it
-function note(text,warn){var m=document.getElementById('order-msg');text=text?text.charAt(0).toUpperCase()+text.slice(1):'';m.textContent=text;m.classList.toggle('warn',!!warn);if(text)say(text)}
+function note(text,warn){var m=document.getElementById('order-msg');text=text?text.charAt(0).toUpperCase()+text.slice(1):'';m.textContent=text;m.classList.toggle('warn',!!warn);if(text)say(text);if(!warn)fadeLater(m)}
+// A confirmation goes after a few seconds; a warning stays until the next action replaces it.
+var NOTE_MS=6000, fades={};
+function fadeLater(el){clearTimeout(fades[el.id]);var text=el.textContent;if(text)fades[el.id]=setTimeout(function(){if(el.textContent===text)el.textContent=''},NOTE_MS)}
+// a ring held back after a mouse click returns with the first key press, or once the button loses focus
+document.addEventListener('keydown',function(){var q=document.querySelector('.more.quiet');if(q)q.classList.remove('quiet')},true);
+document.addEventListener('focusout',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('quiet'))e.target.classList.remove('quiet')});
 function startRename(id){
   var card=cardOf(id);if(!card||renaming)return;
   var row=card.querySelector('.name'), old=row.querySelector('h3').textContent, more=card.querySelector('.more');
@@ -1088,10 +1100,10 @@ function startRename(id){
   var busy=false, done=false;
   var wait=function(on){busy=on;box.readOnly=on;if(on)say('Saving the name.');[ok,no].forEach(function(b){if(on)b.setAttribute('aria-disabled','true');else b.removeAttribute('aria-disabled')})};
   // inBox: the edit ended with Enter or Done, not by leaving it
-  async function save(inBox){
+  async function save(inBox,byKey){
     if(busy||done)return;
     var text=box.value;
-    if(text.trim()===old){done=true;endRename(id,'',false,undefined,inBox);return}
+    if(text.trim()===old){done=true;endRename(id,'',false,undefined,inBox,byKey);return}
     // while the name is on its way the box is read-only and Escape and Cancel wait, so nothing typed meanwhile is lost
     wait(true);
     var fail=function(text){
@@ -1101,23 +1113,27 @@ function startRename(id){
     };
     try{
       var r=await fetch('/api/rename',{method:'POST',headers:{'content-type':'application/json','x-omnitrix-token':TOKEN},body:JSON.stringify({id:id,label:text})});
-      if(r.status===403){done=true;endRename(id,'omnitrix restarted since this page loaded. Reload the page, then rename the account again.',true,undefined,inBox);return}
+      if(r.status===403){done=true;endRename(id,'omnitrix restarted since this page loaded. Reload the page, then rename the account again.',true,undefined,inBox,byKey);return}
       var a=await r.json().catch(function(){return {}});
       if(!r.ok){fail(a.error?a.error.charAt(0).toUpperCase()+a.error.slice(1)+'.':'omnitrix could not save the name.');return}
-      done=true;endRename(id,'Renamed to '+a.label+'.',false,a.label,inBox);
+      done=true;endRename(id,'Renamed to '+a.label+'.',false,a.label,inBox,byKey);
     }catch(e){fail('Could not rename: omnitrix did not answer.')}
   }
-  var cancel=function(){if(!busy&&!done){done=true;endRename(id,'',false,undefined,true)}};
+  var cancel=function(byKey){if(!busy&&!done){done=true;endRename(id,'',false,undefined,true,byKey)}};
   row.addEventListener('keydown',function(e){
     // a key that picks a word in an input method for Chinese, Japanese and other languages is not for us
     if(e.isComposing||e.keyCode===229)return;
-    if(e.key==='Enter'&&e.target===box){e.preventDefault();save(true)}
-    else if(e.key==='Escape'){e.preventDefault();cancel()}
+    if(e.key==='Enter'&&e.target===box){e.preventDefault();save(true,true)}
+    else if(e.key==='Escape'){e.preventDefault();cancel(true)}
   });
   // a press on Done or Cancel keeps the focus in the box, so it does not count as leaving it
   [ok,no].forEach(function(b){b.addEventListener('pointerdown',function(e){if(e.button===0)e.preventDefault()})});
-  ok.addEventListener('click',function(){if(!busy)save(true)});
-  no.addEventListener('click',cancel);
+  // Only a click that a pointer started gives the focus back without a ring. Keys, speech input and switch access
+  // send a click without a pointerdown on the button, so the ring stays for them.
+  var pointer=false, byPointer=function(){pointer=true}, byKey=function(){pointer=false};
+  [ok,no].forEach(function(b){b.addEventListener('pointerdown',byPointer);b.addEventListener('keydown',byKey)});
+  ok.addEventListener('click',function(){var k=!pointer;pointer=false;if(!busy)save(true,k)});
+  no.addEventListener('click',function(){var k=!pointer;pointer=false;cancel(k)});
   box.addEventListener('input',function(){box.removeAttribute('aria-invalid');box.setAttribute('aria-describedby','rename-hint')});
   // Leaving saves once the focus has landed, so the redraw that ends the edit can give it back to a card's
   // handle, menu button or model list, instead of taking it away mid-move.

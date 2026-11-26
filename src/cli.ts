@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { serveDashboard } from './dashboard.js';
-import { DEFAULT_PORT, ensureDashboard, stopDashboard } from './dashboard-launch.js';
+import { DEFAULT_PORT, dashboardOpening, ensureDashboard, paneHint, stopDashboard } from './dashboard-launch.js';
 import { codexModelInfo, discoverModels, runDriver, upgradeCodexModels } from './drivers/index.js';
 import { CLI_TOOLS, loginCli, providerTool, resolveCommand } from './drivers/cli.js';
 import { Engine } from './engine.js';
@@ -763,12 +763,11 @@ program
 
 /** Start or find the background dashboard and open it, unless a tab is already open. */
 async function showDashboard(port: number, open: boolean, onlyToLook = false): Promise<void> {
-  // test runs and CI machines have no one to look at a browser
-  const quiet = !open || process.env.OMNITRIX_NO_BROWSER === '1' || !!process.env.CI;
-  // after setup the dashboard is for looking at; with nobody to look, it is not started
-  if (quiet && onlyToLook) return console.log('See everything live with "omnitrix dashboard".');
-  const d = await ensureDashboard({ port, open: quiet ? false : undefined });
-  console.log(`dashboard: ${d.url}${d.started ? ' (started in the background; stop it with "omnitrix dashboard --stop")' : ''}${d.opened ? '' : quiet ? '' : ' (already open in a browser tab)'}`);
+  const how = dashboardOpening(open, onlyToLook);
+  if (!how.start) return console.log('See everything live with "omnitrix dashboard".');
+  const d = await ensureDashboard({ port, open: how.browser ? undefined : false });
+  console.log(`dashboard: ${d.url}${d.started ? ' (started in the background; stop it with "omnitrix dashboard --stop")' : ''}${how.browser && !d.opened ? ' (already open in a browser tab)' : ''}`);
+  if (how.paneHint) console.log(paneHint(d.url));
 }
 
 program

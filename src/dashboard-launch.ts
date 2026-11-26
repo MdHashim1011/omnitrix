@@ -31,6 +31,23 @@ export async function ping(port: number): Promise<Ping | undefined> {
   return p?.omnitrix && typeof p.version === 'string' && Number.isInteger(p.pid) ? { version: p.version, pid: p.pid, viewers: Number(p.viewers) || 0 } : undefined;
 }
 
+/**
+ * What `omnitrix dashboard` does with a browser. The Claude desktop app's terminal sets TERM_PROGRAM to
+ * claude-desktop; only Claude can open the app's browser pane, so a page opened from there would land in the
+ * system browser instead, beside the app. There it prints how to see the dashboard in the pane.
+ */
+export function dashboardOpening(open: boolean, onlyToLook: boolean, env: NodeJS.ProcessEnv = process.env): { start: boolean; browser: boolean; paneHint: boolean } {
+  // test runs and CI machines have no one to look at a browser
+  const nobody = !open || env.OMNITRIX_NO_BROWSER === '1' || !!env.CI;
+  const inClaude = !nobody && env.TERM_PROGRAM === 'claude-desktop';
+  // after setup the dashboard is for looking at; with nobody to look, it is not started
+  return { start: !(nobody && onlyToLook), browser: !nobody && !inClaude, paneHint: inClaude };
+}
+
+export function paneHint(url: string): string {
+  return `To see it beside Claude, ask Claude to show the dashboard, or open Claude's browser pane and go to ${url}. A command cannot open that pane, so omnitrix does not open your web browser from the Claude app's terminal.`;
+}
+
 /** Opens a page in the default browser. */
 export function openBrowser(url: string): void {
   const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
