@@ -57,6 +57,11 @@ export interface OverheadFigures {
   calls: number;
   outputTokens: number;
   resultTokens: number;
+  /** all of Claude's work in the same period, with or without omnitrix */
+  requests: number;
+  omnitrixRequests: number;
+  allOutputTokens: number;
+  allInputTokens: number;
 }
 
 /**
@@ -74,7 +79,9 @@ export function overheadReader(ttlMs = 10 * 60_000, measure: (dir: string, since
       startedAt = now;
       measure(claudeProjectsDir(), now - 7 * 24 * 3600_000)
         .then((o) => {
-          value = o.calls ? { calls: o.calls, outputTokens: o.outputTokens, resultTokens: resultTokens(o) } : undefined;
+          value = o.all.requests
+            ? { calls: o.calls, outputTokens: o.outputTokens, resultTokens: resultTokens(o), requests: o.all.requests, omnitrixRequests: o.omnitrixRequests, allOutputTokens: o.all.outputTokens, allInputTokens: o.all.inputTokens }
+            : undefined;
         })
         .catch(() => {
           // keep the last figures; the next period tries again
@@ -573,7 +580,7 @@ footer{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);margin-top:28px
 </div>
 <script>
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
-var fmt=function(n){n=Number(n)||0;return n>=999500?(n/1e6).toFixed(1)+'M':n>=1e3?(Math.round(n/100)/10)+'k':String(Math.round(n))};
+var fmt=function(n){n=Number(n)||0;return n>=9995e5?(n/1e9).toFixed(2)+'B':n>=999500?(n/1e6).toFixed(1)+'M':n>=1e3?(Math.round(n/100)/10)+'k':String(Math.round(n))};
 var money=function(c){c=Number(c)||0;return c>0&&c<0.005?'under $0.01':'$'+c.toFixed(2)};
 // a cost estimated from prices; "under $0.01" already says it is not exact
 var about=function(c,est){var m=money(c);return est&&m.indexOf('under')!==0?'about '+m:m};
@@ -750,7 +757,9 @@ function draw(d){
     // the work other accounts did instead of Claude, counted from the usage log
     +(function(g,o){g=g||{jobs:0,tokens:0,accepted:0};return '<div class="kpi"><span>Done by other accounts, 7 days</span><b>'+g.jobs+' job'+(g.jobs===1?'':'s')+'</b><small>'+esc(fmt(g.tokens))+' tokens'+(g.accepted?', '+g.accepted+' accepted':'')+'</small>'
       // Claude's own part, from Claude Code's session files (omnitrix overhead); absent until measured
-      +(o?'<div class="kpi-sub" title="Output tokens of Claude&#39;s replies that called omnitrix, and an estimate of the omnitrix results it read, over the same 7 days. Claude&#39;s plan limit also counts all its other work, so it is much higher"><span>Claude, omnitrix calls only</span><span><b>'+esc(fmt(o.outputTokens))+'</b> written &middot; about <b>'+esc(fmt(o.resultTokens))+'</b> read</span></div>':'')
+      +(o&&o.calls?'<div class="kpi-sub" title="Output tokens of Claude&#39;s replies that called omnitrix, and an estimate of the omnitrix results it read, over the same 7 days. Claude&#39;s plan limit also counts all its other work, so it is much higher"><span>Claude, omnitrix calls only</span><span><b>'+esc(fmt(o.outputTokens))+'</b> written &middot; about <b>'+esc(fmt(o.resultTokens))+'</b> read</span></div>':'')
+      // all of Claude's work in the same days, which is what its plan limit counts
+      +(o&&o.requests?'<div class="kpi-sub" title="Every request Claude Code sent Claude in the same 7 days, with or without omnitrix. Each step of a session reads the whole conversation again, which is most of what it reads"><span>Claude, all work</span><span><b>'+esc(fmt(o.allOutputTokens))+'</b> written &middot; <b>'+esc(fmt(o.allInputTokens))+'</b> read</span><span>'+esc(o.requests.toLocaleString('en-US'))+' requests, '+esc(o.omnitrixRequests?Math.max(1,Math.round(100*o.omnitrixRequests/o.requests))+'%':'none')+' with omnitrix</span></div>':'')
       +'</div>'})(d.delegated,d.overhead)
     +'<div class="kpi"><span>Known cost, last 24 h</span><b>'+esc(about(sum('costToday'),acc.some(function(a){return a.usage.costEstimated})))+'</b></div>';
   document.getElementById('acc-sub').textContent=acc.length?acc.length+' connected'+(acc.length>1?'. Drag a card by its handle to arrange them.':''):'';

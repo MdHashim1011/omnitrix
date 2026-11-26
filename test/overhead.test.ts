@@ -55,6 +55,9 @@ describe("Claude's own work on omnitrix", () => {
     session('proj/s1/subagents/fork.jsonl', first.slice(0, 2).concat(result('tu1', 'x'.repeat(400))));
     const m = await measureOverhead(path.join(claude, 'projects'), NOW - 30 * DAY);
     expect(m).toMatchObject({ calls: 2, byTool: { dispatch: 1, get_results: 1 }, outputTokens: 150, resultChars: 600, sessions: 2, files: 2, unreadable: 0 });
+    // all of Claude's work in the period, omnitrix or not: four replies, each counted once, the old one left out
+    expect(m.omnitrixRequests).toBe(2);
+    expect(m.all).toEqual({ requests: 4, sessions: 2, outputTokens: 2148, inputTokens: 4 * 90_005, cacheWriteTokens: 0, cacheReadTokens: 4 * 90_000 });
   });
 
   it('reads nothing but numbers: no prompt, answer or result text ends up in what it returns', async () => {
@@ -74,7 +77,7 @@ describe("Claude's own work on omnitrix", () => {
 
   it('puts the two sides next to each other without converting one into the other', () => {
     const text = formatOverhead(
-      { found: true, files: 3, unreadable: 1, sessions: 2, calls: 12, byTool: { dispatch: 4, get_results: 6, rate_result: 2 }, outputTokens: 45_000, resultChars: 480_000 },
+      { found: true, files: 3, unreadable: 1, sessions: 2, calls: 12, byTool: { dispatch: 4, get_results: 6, rate_result: 2 }, outputTokens: 45_000, resultChars: 480_000, omnitrixRequests: 10, all: { requests: 4_000, sessions: 9, outputTokens: 2_900_000, inputTokens: 1_270_000_000, cacheWriteTokens: 9_000_000, cacheReadTokens: 1_260_000_000 } },
       { tokens: 3_000_000, acceptedTokens: 2_700_000 },
       30,
     );
@@ -83,6 +86,10 @@ describe("Claude's own work on omnitrix", () => {
     expect(text).toContain('In the same period the workers used 2.7M tokens on work Claude accepted, 3.0M in all.');
     expect(text).toMatch(/not converted/);
     expect(text).toMatch(/1 session file could not be read/);
+    // the omnitrix part set against all of Claude's work, which is what the plan limit counts
+    expect(text).toContain("All of Claude's work in the last 30 days: Claude Code sent Claude 4,000 requests in 9 sessions, and 10 replies of them (under 1%) called omnitrix.");
+    expect(text).toContain('Claude wrote 2.9M output tokens and read 1.27B tokens of conversation, 1.26B of them again from the cache.');
+    expect(text).toContain('Each request read about 317.5k tokens on average');
   });
 
   it('looks in CLAUDE_CONFIG_DIR when it is set, and in ~/.claude otherwise', () => {
@@ -106,15 +113,15 @@ describe("Claude's own work on omnitrix", () => {
     expect(read()).toBeUndefined();
     expect(read()).toBeUndefined();
     expect(runs).toBe(1);
-    finish({ found: true, files: 1, unreadable: 0, sessions: 1, calls: 3, byTool: {}, outputTokens: 1200, resultChars: 4000 });
+    finish({ found: true, files: 1, unreadable: 0, sessions: 1, calls: 3, byTool: {}, outputTokens: 1200, resultChars: 4000, omnitrixRequests: 2, all: { requests: 50, sessions: 1, outputTokens: 9000, inputTokens: 800_000, cacheWriteTokens: 0, cacheReadTokens: 700_000 } });
     await new Promise((r) => setTimeout(r, 0));
-    expect(read()).toEqual({ calls: 3, outputTokens: 1200, resultTokens: 1000 });
+    expect(read()).toEqual({ calls: 3, outputTokens: 1200, resultTokens: 1000, requests: 50, omnitrixRequests: 2, allOutputTokens: 9000, allInputTokens: 800_000 });
     now += 9 * 60_000;
     read();
     expect(runs).toBe(1);
     // after the period, the old figures stay on the page while a new run goes
     now += 2 * 60_000;
-    expect(read()).toEqual({ calls: 3, outputTokens: 1200, resultTokens: 1000 });
+    expect(read()).toEqual({ calls: 3, outputTokens: 1200, resultTokens: 1000, requests: 50, omnitrixRequests: 2, allOutputTokens: 9000, allInputTokens: 800_000 });
     expect(runs).toBe(2);
     // even with no waiting period, a run still going is never started twice
     let slow = 0;
@@ -138,15 +145,20 @@ describe("Claude's own work on omnitrix", () => {
     const scripts = [...PAGE.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)].map((m) => m[1]!);
     expect(scripts.length).toBeGreaterThan(0);
     for (const s of scripts) expect(() => new Function(s)).not.toThrow();
+    expect(PAGE).toContain('<span>Claude, all work</span>');
     expect(PAGE).toContain(`<span>Claude, omnitrix calls only</span><span><b>'+esc(fmt(o.outputTokens))+'</b> written &middot; about <b>'+esc(fmt(o.resultTokens))+'</b> read</span>`);
   });
 
-  it('shows nothing on the dashboard when Claude made no omnitrix calls', async () => {
+  it('shows nothing on the dashboard when Claude did no work, and all its work when none of it called omnitrix', async () => {
     const { overheadReader } = await import('../src/dashboard.js');
-    const read = overheadReader(60_000, async () => ({ found: true, files: 2, unreadable: 0, sessions: 0, calls: 0, byTool: {}, outputTokens: 0, resultChars: 0 }));
+    const read = overheadReader(60_000, async () => ({ found: true, files: 2, unreadable: 0, sessions: 0, calls: 0, byTool: {}, outputTokens: 0, resultChars: 0, omnitrixRequests: 0, all: { requests: 0, sessions: 0, outputTokens: 0, inputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0 } }));
     read();
     await new Promise((r) => setTimeout(r, 0));
     expect(read()).toBeUndefined();
+    const busy = overheadReader(60_000, async () => ({ found: true, files: 2, unreadable: 0, sessions: 0, calls: 0, byTool: {}, outputTokens: 0, resultChars: 0, omnitrixRequests: 0, all: { requests: 7, sessions: 1, outputTokens: 70, inputTokens: 7000, cacheWriteTokens: 0, cacheReadTokens: 6000 } }));
+    busy();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(busy()).toEqual({ calls: 0, outputTokens: 0, resultTokens: 0, requests: 7, omnitrixRequests: 0, allOutputTokens: 70, allInputTokens: 7000 });
   });
 
   it('runs as omnitrix overhead, next to the workers\' accepted tokens, and as JSON', () => {
@@ -166,7 +178,8 @@ describe("Claude's own work on omnitrix", () => {
     const r = spawnSync(process.execPath, [cli, 'overhead'], { env, encoding: 'utf8' });
     expect(r.stdout).toContain('Claude made 1 omnitrix tool call (1 dispatch)');
     expect(r.stdout).toContain('the workers used 10.0k tokens on work Claude accepted, 15.0k in all');
+    expect(r.stdout).toContain('Claude Code sent Claude 1 request in 1 session, and 1 reply of them (100%) called omnitrix.');
     const j = JSON.parse(spawnSync(process.execPath, [cli, 'overhead', '--json'], { env, encoding: 'utf8' }).stdout);
-    expect(j).toMatchObject({ days: 30, claude: { calls: 1, outputTokens: 300, resultTokens: 1000 }, workers: { acceptedTokens: 10000, tokens: 15000 } });
+    expect(j).toMatchObject({ days: 30, claude: { calls: 1, outputTokens: 300, resultTokens: 1000, all: { requests: 1, outputTokens: 300 } }, workers: { acceptedTokens: 10000, tokens: 15000 } });
   }, 30_000);
 });
