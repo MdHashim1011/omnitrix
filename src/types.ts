@@ -203,6 +203,8 @@ export interface TaskSpec {
   acceptance?: string;
   /** force a model: "accountId" or "accountId/modelId" */
   use?: string;
+  /** with use: never move the task to another account, even when the forced one cannot serve */
+  strict?: boolean;
   /** small, medium or large; used to estimate tokens */
   size?: 'small' | 'medium' | 'large';
   effort?: Effort;
@@ -293,6 +295,9 @@ export interface Job {
   error?: string;
   /** while queued: every account that can take the job is resting, and it is tried again at this time */
   waitingUntil?: number;
+  /** the task forced an account or model that could not serve, so it went to another one */
+  /** attempts: how many attempts the job had made when it moved */
+  movedFrom?: { use: string; reason: string; attempts: number };
   /** gitDir is the checkout's git folder, recorded before the worker ran */
   worktree?: { path: string; branch: string; diffStat?: string; gitDir?: string };
   usage?: { inputTokens: number; outputTokens: number; costUsd?: number };

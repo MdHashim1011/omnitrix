@@ -585,7 +585,8 @@ program
   .description('send one task through the router and print the answer')
   .addOption(new Option('--type <type>', 'task type').choices([...TASK_TYPES]).default('writing'))
   .addOption(new Option('--privacy <level>').choices(['public', 'private', 'secret']))
-  .option('--use <account[/model]>', 'force an account or model')
+  .option('--use <account[/model]>', 'force an account or model; when it cannot serve, the task goes to another one and says so')
+  .option('--strict', 'with --use: run only on that account or model, never on another')
   .addOption(new Option('--effort <level>', 'how hard a reasoning model should think').choices([...EFFORTS]))
   .option('--repo <path>', 'git repo for code tasks')
   .option('--fast', 'prefer models that answered quickly before')
@@ -594,12 +595,14 @@ program
   .action(async (words: string[], o) => {
     const engine = new Engine();
     const prompt = words.join(' ');
-    const [job] = engine.dispatch([{ title: prompt.slice(0, 60), type: o.type as TaskType, prompt, privacy: o.privacy, use: o.use, effort: o.effort, fast: o.fast, route: o.route, repo: o.repo ? path.resolve(o.repo) : undefined }]);
+    const [job] = engine.dispatch([{ title: prompt.slice(0, 60), type: o.type as TaskType, prompt, privacy: o.privacy, use: o.use, strict: o.strict, effort: o.effort, fast: o.fast, route: o.route, repo: o.repo ? path.resolve(o.repo) : undefined }]);
     // wait a moment first so the chosen account is printed before the answer arrives
     let done = await engine.wait([job!.id], 1);
     if (done[0]?.accountId && !o.quiet) process.stderr.write(`-> ${done[0].accountId}/${done[0].model}\n`);
     while (done[0] && (done[0].status === 'queued' || done[0].status === 'running')) done = await engine.wait([job!.id], 30);
     const j = done[0]!;
+    // shown even with --quiet: someone who forced an account may be testing that very account
+    if (j.movedFrom) process.stderr.write(`${j.movedFrom.use} could not take it (${j.movedFrom.reason}), so it went to another account\n`);
     if (j.status !== 'done') {
       fail(j.error ?? j.status);
       return;

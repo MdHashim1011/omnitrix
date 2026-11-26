@@ -44,7 +44,8 @@ const taskSchema = z.object({
   privacy: z.enum(['public', 'private', 'secret']).optional().describe('private (default): no providers that train on data; secret: local models only'),
   files: z.array(z.string()).max(50).optional().describe('files whose content the worker needs (paths relative to repo, or absolute)'),
   repo: z.string().optional().describe('absolute path of a git repo; required for type "code"'),
-  use: z.string().optional().describe('force an account ("accountId") or model ("accountId/modelId")'),
+  use: z.string().optional().describe('force an account ("accountId") or model ("accountId/modelId"). When it cannot serve, because it is resting, out of quota, signed out or too small for the prompt, the task goes to the best other account at once and get_results says so under "moved"; a route usually fits better than forcing'),
+  strict: z.boolean().optional().describe('with use: run only there, and fail or wait instead of moving to another account'),
   size: z.enum(['small', 'medium', 'large']).optional(),
   effort: z.enum(EFFORTS).optional().describe('how hard a reasoning model should think: low, medium or high. Higher is slower and uses more quota. Leave it unset unless the task is clearly easier or harder than its type suggests: on ChatGPT (Codex) accounts omnitrix then picks low for bulk, writing, code_snippet and vision, medium for code and long_context, and high for review and reasoning, unless the user set a level for the account'),
   check: z.boolean().optional().describe("after the result, a different account checks it against 'acceptance' (required) and reports pass or fail. Uses that account's quota too. For code tasks it reads the worker's report, not the diff"),
@@ -124,6 +125,7 @@ const jobOut = z.object({
   branch: z.string().optional(),
   tokens: z.number().optional(),
   error: z.string().optional(),
+  moved: z.string().optional().describe('the task forced an account or model that could not serve, so omnitrix ran it on another one; this says which and why'),
   waiting: z.string().optional().describe("the job is queued because every account that can take it is resting; it says when omnitrix tries again, so call get_results again then"),
   attempts: z.array(z.string()).optional(),
   structured: z.object({ status: z.enum(['valid', 'invalid', 'not_json']), errors: z.array(z.string()).optional(), value: z.unknown().optional(), note: z.string().optional() }).optional()
@@ -232,6 +234,14 @@ function structuredView(j: Job, full: boolean, engine: Engine): Record<string, u
   return { status: s.status, value: found.value };
 }
 
+/** What happened to a task that left its forced account, said only from what the job did afterwards. */
+function movedLine(j: Job): string {
+  const m = j.movedFrom!;
+  const went = j.attempts.length > m.attempts || j.status === 'running' || j.status === 'done';
+  const where = went && j.accountId ? `ran it on ${j.accountId}/${j.model} instead` : j.status === 'queued' ? 'is sending it to another account' : 'tried other accounts, but none could take it either';
+  return `${m.use} could not take it (${m.reason}), so omnitrix ${where}`;
+}
+
 export function jobView(j: Job, full: boolean, engine: Engine) {
   const out: Record<string, unknown> = {
     job_id: j.id,
@@ -247,6 +257,7 @@ export function jobView(j: Job, full: boolean, engine: Engine) {
     if (j.usage) out.tokens = j.usage.inputTokens + j.usage.outputTokens;
   }
   if (j.error && j.status !== 'done') out.error = j.error;
+  if (j.movedFrom) out.moved = movedLine(j);
   if (j.status === 'queued' && j.waitingUntil && j.waitingUntil > Date.now()) out.waiting = `every account that can take this task is resting; omnitrix tries again at ${new Date(j.waitingUntil).toLocaleTimeString()}`;
   if (j.attempts.length > 1) out.attempts = j.attempts.map((a) => `${a.accountId}/${a.model}: ${a.ok ? 'ok' : a.errorKind ?? 'failed'}`);
   if (j.structured) out.structured = structuredView(j, full, engine);

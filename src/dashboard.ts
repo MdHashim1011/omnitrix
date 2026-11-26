@@ -485,7 +485,7 @@ body.sorting,body.sorting *{cursor:grabbing!important;-webkit-user-select:none;u
 .row b.low{color:var(--warn)}.row b.out{color:var(--bad)}
 .bar{height:8px;border-radius:99px;background:var(--track);overflow:hidden;margin:6px 0 4px}
 .bar i{display:block;height:100%;border-radius:99px;background:var(--accent);transition:width .4s ease}
-.bar i.low{background:var(--warn)}.bar i.out{background:var(--bad)}
+.bar i.low{background:var(--warn)}.bar i.out{background:var(--bad)}.bar i.held{background:var(--ink-3);opacity:.45}.win b.held{color:var(--ink-3);font-weight:500}
 .when{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3)}
 .when.pace{color:var(--warn)}
 .prov{font-size:12.5px;letter-spacing:.005em;color:var(--ink-3);display:flex;align-items:center;gap:6px}
@@ -556,17 +556,26 @@ function icon(name){
 }
 var STATES={ready:['Ready','s-ok'],busy:['Working','s-busy'],cooling:['Resting','s-warn'],exhausted:['Out of quota','s-bad'],offline:['Offline','s-warn'],auth_error:['Needs sign-in','s-bad'],disabled:['Turned off','s-idle']};
 var SOURCES={measured:'Measured by the provider',estimated:'Counted by omnitrix against your limits',untracked:'Not tracked'};
-function windowHtml(w){
-  var pct=w.unit==='percent', left=pct?Math.max(0,Math.min(100,w.remaining)):(w.limit>0?Math.max(0,Math.min(100,w.remaining/w.limit*100)):0);
-  var cls=left<=0?'out':left<20?'low':'';
+function leftOf(w){return w.unit==='percent'?Math.max(0,Math.min(100,w.remaining)):(w.limit>0?Math.max(0,Math.min(100,w.remaining/w.limit*100)):0)}
+// held: an empty window of the same account, or the provider's own limit, that stops this one being used.
+// Its bar then looks set aside, not ready: a full minute window means nothing while the day is used up.
+function windowHtml(w,held){
+  var pct=w.unit==='percent', left=leftOf(w);
+  var cls=left<=0?'out':held?'held':left<20?'low':'';
   // providers report whole percents, so a little use shows as 100% left; say so instead of looking unused
   var amount=pct?(left>=100&&w.used===0?'under 1% used':Math.round(left)+'% left'):fmt(w.remaining)+' of '+fmt(w.limit)+' '+esc(w.unit)+' left';
   var label=esc(w.name)+(pct?'':' ('+esc(w.unit)+')');
   var reset=w.resetsAt?'<div class="when">Resets in '+esc(span(w.resetsAt-Date.now()))+', '+esc(clock(w.resetsAt))+'</div>':'';
+  var spoken=amount;
+  if(cls==='held'){
+    var until=held.name?'the '+held.name+' limit resets'+(held.resetsAt?', '+clock(held.resetsAt):''):'the provider lets this account work again';
+    spoken+=', not usable until '+until;
+    reset='<div class="when">Not usable until '+esc(until)+'</div>';
+  }
   // the server only sends runsOutAt when the current pace empties the window before it resets
-  if(w.runsOutAt&&w.runsOutAt>Date.now())reset+='<div class="when pace">At this pace it runs out in about '+esc(span(w.runsOutAt-Date.now()))+', '+esc(clock(w.runsOutAt))+'</div>';
-  return '<div class="win"><div class="row"><span>'+label+'</span><b class="'+cls+'">'+amount+'</b></div>'
-    +'<div class="bar" role="progressbar" aria-label="'+label+' remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(left)+'" aria-valuetext="'+esc(amount)+'"><i class="'+cls+'" style="width:'+left.toFixed(1)+'%"></i></div>'+reset+'</div>';
+  if(cls!=='held'&&w.runsOutAt&&w.runsOutAt>Date.now())reset+='<div class="when pace">At this pace it runs out in about '+esc(span(w.runsOutAt-Date.now()))+', '+esc(clock(w.runsOutAt))+'</div>';
+  return '<div class="win'+(cls==='held'?' held':'')+'"><div class="row"><span>'+label+'</span><b class="'+cls+'">'+amount+'</b></div>'
+    +'<div class="bar" role="progressbar" aria-label="'+label+' remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(left)+'" aria-valuetext="'+esc(spoken)+'"><i class="'+cls+'" style="width:'+left.toFixed(1)+'%"></i></div>'+reset+'</div>';
 }
 var GRIP='<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="3.5" r="1.4"/><circle cx="10.5" cy="3.5" r="1.4"/><circle cx="5.5" cy="8" r="1.4"/><circle cx="10.5" cy="8" r="1.4"/><circle cx="5.5" cy="12.5" r="1.4"/><circle cx="10.5" cy="12.5" r="1.4"/></svg>';
 function cardHtml(a,open,movable){
@@ -585,13 +594,16 @@ function cardHtml(a,open,movable){
     var fix=a.state==='auth_error'?' Run <code>omnitrix login '+esc(a.id)+'</code> to sign in again.':a.state==='disabled'?' Run <code>omnitrix enable '+esc(a.id)+'</code> to turn it on.':'';
     var text=(why?esc(why)+'.':'')+back+fix;
     if(text)notes+='<div class="note '+(st[1]==='s-bad'?'bad':st[1]==='s-warn'?'warn':'')+'">'+text+'</div>';
-    // bars counted by omnitrix can show room while the provider refuses with a limit of its own
-    if((a.state==='exhausted'||a.state==='cooling')&&u.source==='estimated'&&u.windows.some(function(w){return w.remaining>0}))
+    // bars counted by omnitrix can show room while the provider refuses with a limit of its own; when one of
+    // them is empty, that limit of omnitrix's own is the reason, and the provider has not said anything
+    if((a.state==='exhausted'||a.state==='cooling')&&u.source==='estimated'&&u.windows.length&&u.windows.every(function(w){return w.remaining>0}))
       notes+='<div class="note">The bars count only the limits set in omnitrix. The provider stopped this account with a limit of its own, given above.</div>';
   }
   var paused=a.pausedModels||[];
   if(paused.length)notes+='<div class="note warn">Resting after errors: '+esc(paused.join(', '))+'.'+(paused.length<(a.models||[]).length?' omnitrix uses the other models meanwhile.':'')+'</div>';
-  var quota=u.windows.length?u.windows.map(windowHtml).join('')
+  // a window is of no use while another one of the account is empty, or while the provider has stopped it
+  var empty=u.windows.filter(function(w){return leftOf(w)<=0});
+  var quota=u.windows.length?u.windows.map(function(w){return windowHtml(w,empty.filter(function(o){return o!==w})[0]||(a.state==='exhausted'?{}:null))}).join('')
     :a.local?'<div class="note">No usage limit. It runs on this PC.</div>'
     :a.state==='auth_error'||a.state==='disabled'?''
     :a.driver==='cli'?'<div class="note">This plan does not publish its limits, so omnitrix shows what it has sent below.</div>'

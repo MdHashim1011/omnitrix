@@ -11,7 +11,7 @@ import { beat, isMine, OWNER, ownerAlive, sweepOwners } from './owner.js';
 import { reachable } from './init.js';
 import { budgetBlocks, budgetFor, estimateCost, loadTeam, periodStart, personSpend, readShared, shareRecord, type Reserved, type TeamSummary } from './team.js';
 import { loadQuotas, refreshQuotas } from './quota.js';
-import { route, routeDef, routeList, effectivePrivacy, fit, contextLimitKey, minuteLimitKey, modelHealthKey, answerRoom, answerTokens, type Candidate, type Rejected, type RouteContext } from './router.js';
+import { route, splitUse, routeDef, routeList, effectivePrivacy, fit, contextLimitKey, minuteLimitKey, modelHealthKey, answerRoom, answerTokens, type Candidate, type Rejected, type RouteContext } from './router.js';
 import { freeSeat, takeSeat } from './seats.js';
 import { loadStats, recordVerdict } from './stats.js';
 import { dropModel, ensureHome, files, findAccount, homeDir, inside, JOB_ID, loadConfig, loadHealth, processAlive, readJson, redact, saveHealth, writeJson } from './store.js';
@@ -110,6 +110,11 @@ function lastingReasons(task: TaskSpec, ctx: RouteContext, rejected: Rejected[])
     const lasting = later.filter((l) => l.accountId === r.accountId && !l.until && (r.model === undefined || l.model === r.model));
     return lasting.length ? lasting : [r];
   });
+}
+
+/** A follow-up's prompt for a model other than the one that wrote the earlier answer. */
+function otherModelPrompt(task: TaskSpec): string {
+  return task.followUpOf ? task.prompt.replace('## Your earlier answer', '## The earlier answer') : task.prompt;
 }
 
 function newId(prefix: string): string {
@@ -512,6 +517,7 @@ export class Engine {
         if (problem) throw new Error(`task "${t.title}": output_schema cannot be used: ${problem}`);
       }
       if (t.escalate && !t.check && !t.outputSchema && !(t.type === 'code' && t.test?.length)) throw new Error(`task "${t.title}": escalate needs "check" with an acceptance line, "output_schema", or "test" for a code task, so that omnitrix can tell when the cheap attempt failed`);
+      if (t.strict && !t.use && !t.followUpOf) throw new Error(`task "${t.title}": strict keeps a task on the account named in use, so it needs use`);
       if (t.escalate && (t.use || t.route || t.copies !== undefined || t.followUpOf)) throw new Error(`task "${t.title}": escalate chooses the models itself, so it cannot be combined with use, route, copies or follow_up_of`);
       if (t.check && !t.acceptance?.trim()) throw new Error(`task "${t.title}": a check needs "acceptance", the line the result is checked against`);
       if (t.copies !== undefined && (!Number.isInteger(t.copies) || t.copies < 2 || t.copies > 5)) throw new Error(`task "${t.title}": "copies" is a whole number from 2 to 5`);
@@ -758,11 +764,13 @@ export class Engine {
     if (job.checkOf || job.retriedAs) return undefined;
     if (job.verdict !== 'rejected') this.verdict(id, false, note);
     if (job.check?.status === 'pending') this.cancel(job.id);
-    const { use: _forced, ...task } = job.task;
+    // A follow-up's prompt already holds the earlier task and answer; dispatching it as a follow-up again would
+    // add them twice and force the model that was just rejected.
+    const { use: _forced, strict: _strict, followUpOf: _built, ...task } = job.task;
     const [again] = this.dispatch([{
       ...task,
       avoid: [...(task.avoid ?? []), `${job.accountId}/${job.model}`],
-      prompt: `${task.prompt}\n\n## An earlier attempt was rejected\n${note}`,
+      prompt: `${otherModelPrompt(job.task)}\n\n## An earlier attempt was rejected\n${note}`,
     }], { retryOf: job.id });
     if (again) {
       const latest = this.getJob(job.id) ?? job;
@@ -1023,6 +1031,12 @@ export class Engine {
         continue;
       }
       if (fresh.length === 0) {
+        // a forced account or model that cannot serve now does not hold the task up: it goes to the best other
+        // one at once, in this same pass
+        if (this.moveForced(job, ctx!, rejected)) {
+          queued.push(job);
+          continue;
+        }
         // every account that could take it is resting for a short while: wait for the first one back
         const back = this.nextChance(job, ctx!, rejected, tried);
         if (back !== undefined) {
@@ -1072,6 +1086,33 @@ export class Engine {
       for (const r of later.rejected) if (r.until && r.until > end && r.until <= cutoff) ends.add(r.until);
     }
     return undefined;
+  }
+
+  /**
+   * Frees a job from its forced account or model when that one cannot serve now: it rests, is out of quota,
+   * signed out or over a team budget, the prompt is too long for it, or it already failed in this job. The
+   * test is whether the target could take the task at all once rests, limits, budgets and sign-in are set
+   * aside; when it could not, the task itself is wrong, such as a model the account does not have or a cloud
+   * account for a secret task, and the job fails as before. So does every job with "strict". A job moves once,
+   * and the target it left is avoided.
+   */
+  private moveForced(job: Job, ctx: RouteContext, rejected: Rejected[]): boolean {
+    const use = job.task.use;
+    if (!use || job.task.strict || job.movedFrom) return false;
+    const [forced] = splitUse(use);
+    const failed = job.attempts.filter((a) => a.accountId === forced).at(-1);
+    // a model that failed in this job is avoided for the rest of it; that is a fault of now, not of the task
+    const mine = (a: string) => a === forced || a.startsWith(`${forced}/`);
+    const asked = failed ? { ...job.task, avoid: job.task.avoid?.filter((a) => !mine(a)) } : job.task;
+    if (!route(asked, { ...ctx, health: {}, usage: {}, blocked: {} }).candidates.length) return false;
+    const reason = rejected.find((r) => r.accountId === forced)?.reason ?? (failed ? `${failed.errorKind ?? 'failed'}: ${(failed.error ?? '').slice(0, 120)}` : 'not available');
+    job.movedFrom = { use, reason: reason.slice(0, 200), attempts: job.attempts.length };
+    const { use: _left, ...task } = job.task;
+    job.task = { ...task, prompt: otherModelPrompt(task), avoid: [...(task.avoid ?? []), use] };
+    job.updatedAt = Date.now();
+    this.saveJob(job);
+    this.notify();
+    return true;
   }
 
   /**
