@@ -54,7 +54,7 @@ export function openBrowser(url: string): void {
   spawnSync(cmd as string, args as string[], { stdio: 'ignore', windowsHide: true });
 }
 
-function recorded(port: number): { pid?: number; port?: number } {
+function recorded(port: number): { pid?: number; port?: number; background?: boolean } {
   try {
     return JSON.parse(fs.readFileSync(dashboardFile(port), 'utf8'));
   } catch {
@@ -137,8 +137,16 @@ export async function refreshDashboards(opts: { cli?: string } = {}): Promise<nu
   for (const name of names) {
     const port = Number(/\d+/.exec(name)![0]);
     const p = await ping(port);
-    const pid = recorded(port).pid;
+    const rec = recorded(port);
+    const pid = rec.pid;
     if (p ? pid !== p.pid || !olderVersion(p.version, VERSION) : !Number.isInteger(pid) || processAlive(pid)) continue;
+    // A dashboard run by hand with --serve that ended without Ctrl+C, for example when its window closed or a
+    // tool stopped it, leaves its record behind. It was not started to keep running, so it is not started again
+    // in the background; its record is only litter. Records written before this was recorded have no flag.
+    if (!p && rec.background === false) {
+      fs.rmSync(dashboardFile(port), { force: true });
+      continue;
+    }
     try {
       await ensureDashboard({ port, cli: opts.cli, open: false });
       refreshed.push(port);
@@ -186,7 +194,7 @@ export async function ensureDashboard(opts: EnsureOptions = {}): Promise<{ url: 
   if (!running) {
     const cli = opts.cli ?? process.argv[1]!;
     const args = [cli, 'dashboard', '--serve', '--port', String(port)];
-    const child = spawn(process.execPath, process.platform === 'win32' ? ['-e', LAUNCHER, ...args] : args, { detached: true, stdio: 'ignore', windowsHide: true, env: process.env });
+    const child = spawn(process.execPath, process.platform === 'win32' ? ['-e', LAUNCHER, ...args] : args, { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, OMNITRIX_DASHBOARD_BACKGROUND: '1' } });
     child.unref();
     for (let i = 0; i < 80 && !running; i++) {
       await new Promise((r) => setTimeout(r, 100));

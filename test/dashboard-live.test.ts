@@ -229,6 +229,41 @@ describe('after review', () => {
     expect((await ping(port))?.version).toBe(VERSION);
   }, 30_000);
 
+  it('does not bring back a dashboard run by hand, and removes the record it left', async () => {
+    // seen in real use: dashboards run with --serve on two other ports by preview tools were stopped without
+    // Ctrl+C, and the next Claude start brought both back in the background beside the real one
+    writeConfig([]);
+    const byHand = await freePort();
+    const background = await freePort();
+    writeJson(path.join(home, `dashboard-${byHand}.json`), { pid: 999999, port: byHand, version: VERSION, background: false });
+    writeJson(path.join(home, `dashboard-${background}.json`), { pid: 999998, port: background, version: VERSION, background: true });
+    // if the code is wrong it starts real dashboards here, which must not outlive the test
+    cleanups.push(() => stopDashboard(byHand), () => stopDashboard(background));
+    const { refreshDashboards } = await import('../src/dashboard-launch.js');
+    expect(await refreshDashboards({ cli })).toEqual([background]);
+    expect(await ping(byHand)).toBeUndefined();
+    expect(fs.existsSync(path.join(home, `dashboard-${byHand}.json`))).toBe(false);
+    expect((await ping(background))?.version).toBe(VERSION);
+  }, 30_000);
+
+  it('records whether a dashboard was started in the background or run by hand', async () => {
+    writeConfig([]);
+    const started = await freePort();
+    cleanups.push(() => stopDashboard(started));
+    await ensureDashboard({ port: started, cli, open: false });
+    expect(JSON.parse(fs.readFileSync(path.join(home, `dashboard-${started}.json`), 'utf8')).background).toBe(true);
+    const byHand = await freePort();
+    const { spawn } = await import('node:child_process');
+    // the background marker of this test process must not reach a dashboard run by hand
+    const env = { ...process.env };
+    delete env.OMNITRIX_DASHBOARD_BACKGROUND;
+    const child = spawn(process.execPath, [cli, 'dashboard', '--serve', '--port', String(byHand)], { stdio: 'ignore', env });
+    cleanups.push(() => child.kill());
+    const file = path.join(home, `dashboard-${byHand}.json`);
+    await expect.poll(() => fs.existsSync(file), { timeout: 10_000 }).toBe(true);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).background).toBe(false);
+  }, 30_000);
+
   it.skipIf(process.platform !== 'win32')('starts the dashboard outside the process tree of whatever started it', async () => {
     // a program that closes its helpers closes their whole process tree on Windows, detached children included
     writeConfig([]);

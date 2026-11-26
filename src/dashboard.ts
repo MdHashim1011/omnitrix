@@ -383,6 +383,9 @@ export function startDashboard(port: number): { url: string; server: http.Server
 
 /** Run the dashboard until the process is stopped, recording where it runs. */
 export function serveDashboard(port: number): void {
+  // set only by ensureDashboard; a dashboard run by hand in a terminal is not brought back after it ends
+  const background = process.env.OMNITRIX_DASHBOARD_BACKGROUND === '1';
+  delete process.env.OMNITRIX_DASHBOARD_BACKGROUND;
   const d = startDashboard(port);
   d.server.on('error', (err: NodeJS.ErrnoException) => {
     process.stderr.write(err.code === 'EADDRINUSE' ? `port ${port} is already in use\n` : `dashboard: ${err.message}\n`);
@@ -391,7 +394,7 @@ export function serveDashboard(port: number): void {
   d.server.on('listening', () => {
     try {
       ensureHome();
-      writeJson(dashboardFile(port), { pid: process.pid, port, version: VERSION, startedAt: Date.now() });
+      writeJson(dashboardFile(port), { pid: process.pid, port, version: VERSION, startedAt: Date.now(), background });
     } catch {
       // the dashboard works without it; `omnitrix dashboard --stop` then cannot find it
     }
