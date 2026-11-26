@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { account, chatReply, mockProvider, tempHome, writeConfig } from './helpers.js';
 import { files, writeJson } from '../src/store.js';
 import { Engine } from '../src/engine.js';
-import { buildServer } from '../src/mcp.js';
+import { buildServer, INSTRUCTIONS, INSTRUCTIONS_LIMIT } from '../src/mcp.js';
 
 const cli = path.resolve(__dirname, '..', 'dist', 'cli.js');
 
@@ -61,8 +61,7 @@ describe('MCP server (real stdio process)', () => {
   it('lists the tools and gives instructions', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(['cancel_job', 'dispatch', 'get_results', 'list_jobs', 'pool_status', 'rate_result', 'read_output', 'route_preview']);
-    // subagents run on Claude's own limit; the pool's workers do not
-    expect(client.getInstructions()).toMatch(/Claude subagents use your own Claude limit.*dispatch/s);
+    expect(client.getInstructions()).toBe(INSTRUCTIONS);
   });
 
   it('shows the pool, runs a task and learns from the verdict', async () => {
@@ -138,6 +137,46 @@ describe('MCP server (real stdio process)', () => {
     await client.callTool({ name: 'rate_result', arguments: { job_id: id, accepted: false, note: 'missed the second step' } });
     const saved = JSON.parse(fs.readFileSync(path.join(process.env.OMNITRIX_HOME!, 'jobs', `${id}.json`), 'utf8'));
     expect(saved).toMatchObject({ verdict: 'rejected', verdictNote: 'missed the second step' });
+  });
+});
+
+describe('what the MCP instructions tell Claude', () => {
+  const how = INSTRUCTIONS.indexOf('How to work');
+
+  it('fit within what Claude Code keeps, so no rule is cut off', () => {
+    expect(INSTRUCTIONS_LIMIT).toBe(4096);
+    expect(INSTRUCTIONS.length).toBeLessThanOrEqual(INSTRUCTIONS_LIMIT);
+  });
+
+  it('say when to delegate before how, with sizes Claude can check', () => {
+    const when = INSTRUCTIONS.indexOf('When to delegate, without waiting to be asked');
+    expect(when).toBeGreaterThan(0);
+    expect(when).toBeLessThan(how);
+    const rule = INSTRUCTIONS.slice(when, how);
+    expect(rule).toMatch(/Dispatch a step to the pool instead of doing it yourself when it means reading or summarizing more than about 5 files or 500 lines/);
+    expect(rule).toMatch(/longer than about 200 lines/);
+    expect(rule).toMatch(/first draft longer than about 100 lines/);
+    expect(rule).toMatch(/Pass the paths in "files"/);
+    // subagents run on Claude's own limit; the pool's workers do not
+    expect(rule).toMatch(/Claude subagents use your own Claude limit just as you do, so keep them for work that needs Claude itself/);
+    expect(rule).toMatch(/Do it yourself when the whole job is small, when it needs this conversation's context/);
+    expect(rule).not.toMatch(/\b(never|do not|don't) (dispatch|delegate)/i);
+  });
+
+  it('keep the privacy levels ahead of the workflow', () => {
+    const at = INSTRUCTIONS.indexOf('Mark anything confidential as privacy "private" (no providers that train on prompts) or "secret" (local models only)');
+    expect(at).toBeGreaterThan(0);
+    expect(at).toBeLessThan(how);
+  });
+
+  it('keep the workflow steps after the rule', () => {
+    for (const step of ['1. Call pool_status', '3. Call dispatch', '5. Check each result', '6. For code, read "verify"', 'route_preview', 'omnitrix lockcheck', 'git merge omnitrix/<job id>']) {
+      expect(INSTRUCTIONS.indexOf(step)).toBeGreaterThan(how);
+    }
+  });
+
+  it('make no claim about how much is saved', () => {
+    expect(INSTRUCTIONS).not.toMatch(/\d+ ?%|saves? (about|up to)|cuts? .* by/i);
   });
 });
 

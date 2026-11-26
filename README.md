@@ -159,7 +159,7 @@ omnitrix setup-claude
 
 These commands list the available providers, add your local Ollama models and a DeepSeek key, sign in to Codex with your ChatGPT plan, confirm that DeepSeek responds, and register omnitrix with Claude Code as both an MCP server and a status line.
 
-Restart Claude Code and give it a substantial task, such as "add tests for the billing module and document the API". Claude receives the omnitrix tools along with brief instructions on when to delegate work.
+Restart Claude Code and give it a substantial task, such as "add tests for the billing module and document the API". Claude receives the omnitrix tools along with brief instructions on when to delegate work. Those instructions ask Claude to hand a step to the pool without being asked when it means reading or summarizing more than about 5 files or 500 lines that Claude will not edit itself, reading a log longer than about 200 lines, writing a first draft longer than about 100 lines, making the same change in many files, or getting a review. Small changes, work that needs the conversation's context, the plan and the final review stay with Claude. Claude Code keeps only the first 4,096 characters of a server's instructions, so they are kept shorter than that.
 
 ## How tasks are routed
 
