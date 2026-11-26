@@ -191,6 +191,10 @@ export class Engine {
   /** tests that run after a code job, so cancel_job can stop them */
   private testControllers = new Map<string, AbortController>();
   private compactedAt = Date.now();
+  private timer: NodeJS.Timeout;
+  private closed = false;
+  /** engines not yet closed, so a test can close the ones it made before the next test changes the data folder */
+  private static open = new Set<Engine>();
 
   constructor() {
     ensureHome();
@@ -199,7 +203,31 @@ export class Engine {
     beat();
     sweepOwners();
     this.recoverJobs();
-    setInterval(() => this.tick(), 1000).unref();
+    this.timer = setInterval(() => this.tick(), 1000);
+    this.timer.unref();
+    Engine.open.add(this);
+  }
+
+  /**
+   * Stop this engine: no more ticks and no new starts. Its own unfinished jobs are cancelled, and the call
+   * returns once their attempts and tests have ended, so nothing it started writes to the data folder later.
+   */
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    clearInterval(this.timer);
+    Engine.open.delete(this);
+    for (const job of [...this.jobs.values()]) {
+      if (isMine(job) && (!ended(job) || this.testControllers.has(job.id))) this.cancel(job.id);
+    }
+    const deadline = Date.now() + 10_000;
+    while ((this.controllers.size || this.testControllers.size) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    this.listeners.clear();
+  }
+
+  /** Close every engine still open. */
+  static async closeAll(): Promise<void> {
+    await Promise.all([...Engine.open].map((e) => e.close()));
   }
 
   /**
@@ -1032,6 +1060,7 @@ export class Engine {
 
   /** Start every queued job that has a free account. */
   private pump(): void {
+    if (this.closed) return;
     const cfg = this.config();
     // only start our own jobs; another live process is responsible for its queue
     const queued = [...this.jobs.values()].filter((j) => j.status === 'queued' && isMine(j)).sort((a, b) => a.createdAt - b.createdAt);
